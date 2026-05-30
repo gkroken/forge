@@ -86,6 +86,8 @@ func (s *Server) Routes() http.Handler {
 	}
 	mux.HandleFunc("/api/v1/tokens", s.handleTokens)
 	mux.HandleFunc("/api/v1/tokens/", s.handleTokens)
+	mux.HandleFunc("/api/v1/repos", s.handleAdminRepos)
+	mux.HandleFunc("/api/v1/repos/", s.handleAdminRepos)
 	// Auth middleware wraps every /repository/ route.
 	mux.Handle("/repository/", s.Enforcer.Middleware(http.HandlerFunc(s.handleRepo)))
 	// OCI Distribution Spec: /v2/ is the API root.

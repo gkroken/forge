@@ -80,8 +80,14 @@ func main() {
 	reg.Register(cran.New())
 	reg.Register(oci.New())
 
-	// Configure repositories. In production these come from a DB + admin API.
+	// Repository manager: load persisted repos from the meta store, then seed
+	// defaults on first run (when the store is empty).
 	mgr := repo.NewManager()
+	must(mgr.WithStore(metaStore))
+
+	if mgr.Len() == 0 {
+		slog.Info("seeding default repositories")
+	}
 	for _, r := range []repo.Repository{
 		// Hosted repos: writes always require a token; reads require one too
 		// unless auth is disabled (eval mode) or AnonymousRead is set.
@@ -109,7 +115,10 @@ func main() {
 		{Name: "cran-public", Format: "cran", Kind: repo.Group,
 			Members: []string{"cran-hosted", "cran-proxy"}, AnonymousRead: true},
 	} {
-		must(mgr.Add(r))
+		// Add only if not already persisted (idempotent first-run seeding).
+		if err := mgr.Add(r); err != nil {
+			slog.Debug("skipping repo seed (already exists)", "name", r.Name)
+		}
 	}
 
 	// Prometheus metrics — one registry per process.
