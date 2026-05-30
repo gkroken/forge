@@ -11,7 +11,10 @@ test:
 test/integration:
 	go test -tags integration -race -timeout 120s ./...
 
-test/all: test test/integration
+test/conformance:
+	go test -tags conformance -timeout 600s -v ./internal/conformance/...
+
+test/all: test test/integration test/conformance
 
 lint:
 	go vet ./...
