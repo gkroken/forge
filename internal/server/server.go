@@ -11,6 +11,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -38,9 +39,15 @@ func New(m *repo.Manager, reg *format.Registry, b blob.Store, mt meta.Store) *Se
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", handleProbe)
+	mux.HandleFunc("/readyz", handleProbe)
 	mux.HandleFunc("/repository/", s.handleRepo)
 	mux.HandleFunc("/", s.handleIndex)
 	return logging(mux)
+}
+
+func handleProbe(w http.ResponseWriter, _ *http.Request) {
+	io.WriteString(w, "ok\n")
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -87,6 +94,10 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 
 func logging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		start := time.Now()
 		next.ServeHTTP(w, r)
 		fmt.Printf("%s %s (%s)\n", r.Method, r.URL.Path, time.Since(start).Round(time.Millisecond))

@@ -1,0 +1,20 @@
+services:
+  forge:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - forge-data:/data
+    read_only: true
+    restart: unless-stopped
+    healthcheck:
+      # Uses the forge binary's built-in -healthcheck mode — works in the
+      # distroless image without needing curl or wget.
+      test: ["CMD", "/forge", "-healthcheck", "-addr", ":8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  forge-data:

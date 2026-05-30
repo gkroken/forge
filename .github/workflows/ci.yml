@@ -60,3 +60,17 @@ jobs:
           cache: true
       - name: Run integration tests
         run: go test -tags integration -race -timeout 120s -v ./internal/testutil/
+
+  docker:
+    name: Docker image build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          platforms: linux/amd64,linux/arm64
+          tags: forge:ci
