@@ -13,15 +13,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 
 	"forge/internal/auth"
 	"forge/internal/blob"
 	"forge/internal/format"
 	"forge/internal/indexer"
 	"forge/internal/meta"
+	"forge/internal/obs"
 	"forge/internal/queue"
 	"forge/internal/repo"
 )
@@ -43,6 +48,8 @@ type Server struct {
 	Auth     auth.Store     // nil = auth not enabled (eval mode)
 	Enforcer *auth.Enforcer // always non-nil; uses AllowAll when Auth is nil
 	Queue    queue.Queue    // nil = no async index regen (eval / tests)
+	Metrics  *obs.Metrics   // nil = no instrumentation (tests)
+	reg      prometheus.Gatherer
 	client   *http.Client
 }
 
@@ -52,6 +59,14 @@ func New(m *repo.Manager, reg *format.Registry, b blob.Store, mt meta.Store, a a
 		Enforcer: auth.NewEnforcer(a, m),
 		client:   &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+// WithMetrics attaches a Prometheus registry + instruments to the server.
+// Call before Routes() so the /metrics endpoint and middleware are active.
+func (s *Server) WithMetrics(metrics *obs.Metrics, gatherer prometheus.Gatherer) *Server {
+	s.Metrics = metrics
+	s.reg = gatherer
+	return s
 }
 
 // WithQueue attaches a queue to the server and starts the indexer worker in
@@ -66,6 +81,9 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handleProbe)
 	mux.HandleFunc("/readyz", handleProbe)
+	if s.reg != nil {
+		mux.Handle("/metrics", obs.Handler(s.reg))
+	}
 	mux.HandleFunc("/api/v1/tokens", s.handleTokens)
 	mux.HandleFunc("/api/v1/tokens/", s.handleTokens)
 	// Auth middleware wraps every /repository/ route.
@@ -83,7 +101,7 @@ func (s *Server) Routes() http.Handler {
 		s.Enforcer.MiddlewareOCI(http.HandlerFunc(s.handleOCI)).ServeHTTP(w, r)
 	})
 	mux.HandleFunc("/", s.handleIndex)
-	return logging(mux)
+	return s.middleware(mux)
 }
 
 func handleProbe(w http.ResponseWriter, _ *http.Request) {
@@ -166,14 +184,76 @@ func (s *Server) handleOCI(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func logging(next http.Handler) http.Handler {
+// statusRecorder captures the HTTP status code written by a handler so the
+// middleware can log and record it after the fact.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (sr *statusRecorder) WriteHeader(code int) {
+	sr.status = code
+	sr.ResponseWriter.WriteHeader(code)
+}
+
+func (sr *statusRecorder) written() int {
+	if sr.status == 0 {
+		return http.StatusOK
+	}
+	return sr.status
+}
+
+// routeLabel returns a low-cardinality route label for Prometheus.
+// Repo/artifact sub-paths are collapsed to avoid label explosion.
+func routeLabel(path string) string {
+	switch {
+	case path == "/healthz":
+		return "/healthz"
+	case path == "/readyz":
+		return "/readyz"
+	case path == "/metrics":
+		return "/metrics"
+	case strings.HasPrefix(path, "/repository/"):
+		return "/repository/{repo}"
+	case strings.HasPrefix(path, "/v2/"):
+		return "/v2/{repo}"
+	case strings.HasPrefix(path, "/api/v1/tokens"):
+		return "/api/v1/tokens"
+	default:
+		return "other"
+	}
+}
+
+// middleware is the outermost handler: structured access log + Prometheus metrics.
+// Probe endpoints (/healthz, /readyz) are passed through without logging to
+// keep log volume low during liveness checks.
+func (s *Server) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
 			next.ServeHTTP(w, r)
 			return
 		}
+
 		start := time.Now()
-		next.ServeHTTP(w, r)
-		fmt.Printf("%s %s (%s)\n", r.Method, r.URL.Path, time.Since(start).Round(time.Millisecond))
+		rec := &statusRecorder{ResponseWriter: w}
+		next.ServeHTTP(rec, r)
+
+		status := rec.written()
+		dur := time.Since(start)
+		route := routeLabel(r.URL.Path)
+
+		slog.Info("request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", status,
+			"duration_ms", dur.Milliseconds(),
+			"remote", r.RemoteAddr,
+		)
+
+		if s.Metrics != nil {
+			s.Metrics.HTTPRequests.WithLabelValues(r.Method, route, strconv.Itoa(status)).Inc()
+			s.Metrics.HTTPDuration.WithLabelValues(r.Method, route).Observe(dur.Seconds())
+		}
+
 	})
 }

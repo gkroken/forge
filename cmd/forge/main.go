@@ -8,12 +8,14 @@ package main
 import (
 	"context"
 	"flag"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 
 	"forge/internal/auth"
 	"forge/internal/blob"
@@ -24,6 +26,7 @@ import (
 	"forge/internal/format/npm"
 	"forge/internal/format/oci"
 	"forge/internal/meta"
+	"forge/internal/obs"
 	"forge/internal/queue"
 	"forge/internal/repo"
 	"forge/internal/server"
@@ -35,7 +38,10 @@ func main() {
 	healthcheck := flag.Bool("healthcheck", false, "probe /healthz and exit 0/1")
 	drainTimeout := flag.Duration("drain-timeout", 30*time.Second, "graceful shutdown drain timeout")
 	enableAuth := flag.Bool("auth", false, "enable token authentication (creates token store in data dir)")
+	logFormat := flag.String("log-format", "json", "log format: json or text")
 	flag.Parse()
+
+	obs.InitLog(*logFormat)
 
 	if *healthcheck {
 		resp, err := http.Get("http://127.0.0.1" + *addr + "/healthz")
@@ -61,9 +67,8 @@ func main() {
 				{Repo: "*", Role: auth.RoleAdmin},
 			}, nil)
 			must(err)
-			log.Printf("forge: auth enabled — bootstrap admin token created")
-			log.Printf("forge: token id=%s secret=%s", tok.ID, secret)
-			log.Printf("forge: store this secret; it will not be shown again")
+			slog.Info("auth enabled: bootstrap admin token created", "id", tok.ID, "secret", secret)
+			slog.Warn("store the bootstrap secret; it will not be shown again")
 		}
 	}
 
@@ -107,6 +112,10 @@ func main() {
 		must(mgr.Add(r))
 	}
 
+	// Prometheus metrics — one registry per process.
+	promReg := prometheus.NewRegistry()
+	metrics := obs.NewMetrics(promReg)
+
 	// In eval mode (FS stores) use an in-memory queue; in production the caller
 	// would pass a queue.NewPG(metaPG.DB()) here instead.
 	workerCtx, workerCancel := context.WithCancel(context.Background())
@@ -114,8 +123,9 @@ func main() {
 	q := queue.NewMem(256)
 
 	srv := &http.Server{
-		Addr:    *addr,
+		Addr: *addr,
 		Handler: server.New(mgr, reg, blobStore, metaStore, authStore).
+			WithMetrics(metrics, promReg).
 			WithQueue(workerCtx, q).
 			Routes(),
 	}
@@ -124,24 +134,26 @@ func main() {
 	signal.Notify(quit, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
 		<-quit
-		log.Println("forge: draining in-flight requests...")
+		slog.Info("draining in-flight requests")
 		ctx, cancel := context.WithTimeout(context.Background(), *drainTimeout)
 		defer cancel()
 		if err := srv.Shutdown(ctx); err != nil {
-			log.Printf("forge: shutdown error: %v", err)
+			slog.Error("shutdown error", "err", err)
 		}
-		workerCancel() // stop the indexer worker after HTTP drain
+		workerCancel()
 	}()
 
-	log.Printf("forge listening on %s", *addr)
+	slog.Info("forge listening", "addr", *addr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatal(err)
+		slog.Error("server error", "err", err)
+		os.Exit(1)
 	}
-	log.Println("forge: stopped")
+	slog.Info("forge stopped")
 }
 
 func must(err error) {
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("fatal", "err", err)
+		os.Exit(1)
 	}
 }
