@@ -364,3 +364,144 @@ func TestErrNotFound_IsDistinctFromErrUpstreamFailed(t *testing.T) {
 		t.Error("sentinel errors must be distinct")
 	}
 }
+
+// ── Circuit breaker ──────────────────────────────────────────────────────────
+
+// driveFailures exhausts the circuit breaker threshold by making failing
+// requests. MaxRetries=0 keeps the test fast (no backoff sleeps).
+func driveFailures(t *testing.T, f *Fetcher, up *fake, b blob.Store, m meta.Store, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		fetchOnce(t, f, up, b, m) //nolint:errcheck
+	}
+}
+
+func TestCircuitBreaker_Opens_AfterThreshold(t *testing.T) {
+	up := newFake(t, 503, "overload")
+	b, m := newStores(t)
+	f := New(http.DefaultClient, Config{MaxRetries: 0, DisableStaleOnError: true})
+
+	// cbFailureThreshold consecutive failures should open the circuit.
+	driveFailures(t, f, up, b, m, cbFailureThreshold)
+
+	before := up.calls
+	_, err := fetchOnce(t, f, up, b, m)
+	if err == nil {
+		t.Fatal("expected error when circuit is open")
+	}
+	// No additional upstream calls after the circuit opens.
+	if up.calls != before {
+		t.Errorf("circuit open: expected no upstream call, got %d extra", up.calls-before)
+	}
+}
+
+func TestCircuitBreaker_FastFail_ServesStale(t *testing.T) {
+	up := newFake(t, 503, "overload")
+	b, m := newStores(t)
+	f := New(http.DefaultClient, Config{MaxRetries: 0})
+
+	// Pre-seed stale cache.
+	b.Put("key/item", strings.NewReader("stale data"))
+	m.PutJSON("ns", "key/item", CacheEntry{
+		FetchedAt:   time.Now().Add(-48 * time.Hour),
+		ContentType: "text/plain",
+	})
+
+	driveFailures(t, f, up, b, m, cbFailureThreshold)
+
+	before := up.calls
+	body, err := fetchOnce(t, f, up, b, m)
+	if err != nil {
+		t.Fatalf("expected stale content from open circuit, got: %v", err)
+	}
+	if body != "stale data" {
+		t.Errorf("expected stale data, got %q", body)
+	}
+	if up.calls != before {
+		t.Errorf("circuit open: expected no upstream call, got %d extra", up.calls-before)
+	}
+}
+
+func TestCircuitBreaker_HalfOpen_AllowsProbeAfterTimeout(t *testing.T) {
+	up := newFake(t, 503, "overload")
+	b, m := newStores(t)
+	f := New(http.DefaultClient, Config{MaxRetries: 0, DisableStaleOnError: true})
+
+	// Open the circuit.
+	driveFailures(t, f, up, b, m, cbFailureThreshold)
+
+	// Advance time past cbOpenTimeout so the probe is allowed.
+	fakeNow := time.Now().Add(cbOpenTimeout + time.Second)
+	f.now = func() time.Time { return fakeNow }
+
+	// Switch upstream to healthy.
+	up.code = 200
+	up.body = "back online"
+
+	before := up.calls
+	body, err := fetchOnce(t, f, up, b, m)
+	if err != nil {
+		t.Fatalf("expected probe to succeed: %v", err)
+	}
+	if body != "back online" {
+		t.Errorf("got %q", body)
+	}
+	if up.calls != before+1 {
+		t.Errorf("expected exactly one probe request, got %d extra", up.calls-before)
+	}
+}
+
+func TestCircuitBreaker_Closes_AfterSuccessfulProbe(t *testing.T) {
+	up := newFake(t, 503, "overload")
+	b, m := newStores(t)
+	f := New(http.DefaultClient, Config{MaxRetries: 0, DisableStaleOnError: true})
+
+	driveFailures(t, f, up, b, m, cbFailureThreshold)
+
+	// Advance time past cbOpenTimeout so the probe is allowed.
+	probeTime := time.Now().Add(cbOpenTimeout + time.Second)
+	f.now = func() time.Time { return probeTime }
+	up.code = 200
+	up.body = "ok"
+
+	// Probe succeeds → circuit should close.
+	fetchOnce(t, f, up, b, m) //nolint:errcheck
+
+	// Advance past TTL so the probe's cache entry is stale; this forces the
+	// final fetch through the circuit-breaker path rather than a cache hit.
+	f.now = func() time.Time { return probeTime.Add(DefaultTTL + time.Second) }
+	before := up.calls
+	body, err := fetchOnce(t, f, up, b, m)
+	if err != nil {
+		t.Fatalf("expected circuit closed after successful probe: %v", err)
+	}
+	if body != "ok" {
+		t.Errorf("got %q", body)
+	}
+	// Should have hit upstream again (circuit closed = not fast-failing).
+	if up.calls == before {
+		t.Error("expected upstream call after circuit closed")
+	}
+}
+
+func TestCircuitBreaker_ReopensAfterFailedProbe(t *testing.T) {
+	up := newFake(t, 503, "still down")
+	b, m := newStores(t)
+	f := New(http.DefaultClient, Config{MaxRetries: 0, DisableStaleOnError: true})
+
+	driveFailures(t, f, up, b, m, cbFailureThreshold)
+
+	// Advance past timeout → half-open probe, but upstream still failing.
+	f.now = func() time.Time { return time.Now().Add(cbOpenTimeout + time.Second) }
+	fetchOnce(t, f, up, b, m) //nolint:errcheck — probe fails
+
+	// Circuit should be open again; next request fast-fails without extra call.
+	before := up.calls
+	_, err := fetchOnce(t, f, up, b, m)
+	if err == nil {
+		t.Fatal("expected error: circuit should re-open after failed probe")
+	}
+	if up.calls != before {
+		t.Errorf("expected no upstream call (re-opened), got %d extra", up.calls-before)
+	}
+}

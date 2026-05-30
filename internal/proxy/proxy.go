@@ -19,6 +19,10 @@
 //     MaxRetries times with exponential back-off.
 //   - Upstream auth: an Authorization header is forwarded on every upstream
 //     request when Config.Auth is set.
+//   - Circuit breaker: after cbFailureThreshold consecutive upstream failures
+//     the circuit opens and requests fast-fail (serving stale if available)
+//     for cbOpenTimeout. One probe is then allowed; success closes the circuit,
+//     failure keeps it open.
 //
 // Cache storage
 //
@@ -27,6 +31,12 @@
 //
 // Callers choose the namespace; the convention used by the format handlers is
 // "{repo-name}:proxy".
+//
+// Lifecycle
+//
+// Fetcher must be long-lived (one per proxy repository, stored on the Server)
+// so the circuit-breaker state persists across requests. Creating a fresh
+// Fetcher per request loses the circuit state and defeats the breaker.
 package proxy
 
 import (
@@ -35,6 +45,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"sync"
 	"time"
 
 	"forge/internal/blob"
@@ -110,16 +122,110 @@ func (c Config) maxRetries() int {
 	return DefaultMaxRetries
 }
 
-// Fetcher performs cache-on-read proxy fetches.
+// ── Circuit breaker ──────────────────────────────────────────────────────────
+
+const (
+	cbFailureThreshold = 5                // consecutive upstream failures to open
+	cbOpenTimeout      = 30 * time.Second // time before allowing a half-open probe
+)
+
+type cbState uint8
+
+const (
+	cbClosed   cbState = iota // normal — requests pass through
+	cbOpen                    // tripped — fast-fail, serve stale
+	cbHalfOpen                // probing — one request allowed through
+)
+
+// breaker is a per-upstream-host circuit breaker.
+type breaker struct {
+	mu          sync.Mutex
+	state       cbState
+	failures    int
+	lastFailure time.Time
+}
+
+// allow reports whether a request to this upstream should be attempted.
+// Transitions Open→HalfOpen after cbOpenTimeout has elapsed.
+func (b *breaker) allow(now time.Time) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	switch b.state {
+	case cbClosed:
+		return true
+	case cbOpen:
+		if now.Sub(b.lastFailure) >= cbOpenTimeout {
+			b.state = cbHalfOpen
+			return true // one probe
+		}
+		return false
+	case cbHalfOpen:
+		return true // the probe
+	}
+	return true
+}
+
+// success resets the breaker to Closed.
+func (b *breaker) success() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.failures = 0
+	b.state = cbClosed
+}
+
+// failure increments the failure count; opens the circuit when the threshold
+// is reached, or keeps it open after a failed half-open probe.
+func (b *breaker) failure(now time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.failures++
+	b.lastFailure = now
+	if b.state == cbHalfOpen || b.failures >= cbFailureThreshold {
+		b.state = cbOpen
+	}
+}
+
+// ── Fetcher ──────────────────────────────────────────────────────────────────
+
+// Fetcher performs cache-on-read proxy fetches with a per-upstream circuit breaker.
+// It must be long-lived — create one per proxy repository on server start-up.
 type Fetcher struct {
-	client *http.Client
-	cfg    Config
-	now    func() time.Time // injectable for deterministic testing
+	client   *http.Client
+	cfg      Config
+	now      func() time.Time // injectable for deterministic testing
+
+	mu       sync.Mutex
+	breakers map[string]*breaker // keyed by "scheme://host"
 }
 
 // New returns a Fetcher backed by client with the given config.
 func New(client *http.Client, cfg Config) *Fetcher {
-	return &Fetcher{client: client, cfg: cfg, now: time.Now}
+	return &Fetcher{
+		client:   client,
+		cfg:      cfg,
+		now:      time.Now,
+		breakers: make(map[string]*breaker),
+	}
+}
+
+func (f *Fetcher) getBreaker(host string) *breaker {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, ok := f.breakers[host]
+	if !ok {
+		b = &breaker{}
+		f.breakers[host] = b
+	}
+	return b
+}
+
+// upstreamHost extracts the scheme+host from a URL for use as a breaker key.
+func upstreamHost(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return rawURL
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 // Fetch returns the content for blobKey, fetching from upURL when needed.
@@ -153,7 +259,19 @@ func (f *Fetcher) Fetch(blobKey, cacheNS, upURL string, blobs blob.Store, metas 
 		}
 	}
 
-	// ── 3. Build conditional request headers ───────────────────────────────
+	// ── 3. Circuit breaker check ───────────────────────────────────────────
+	host := upstreamHost(upURL)
+	cb := f.getBreaker(host)
+	if !cb.allow(now) {
+		if !f.cfg.DisableStaleOnError && blobExists {
+			if rc, err := blobs.Get(blobKey); err == nil {
+				return rc, entry.ContentType, nil
+			}
+		}
+		return nil, "", fmt.Errorf("%w: circuit open for %s", ErrUpstreamFailed, host)
+	}
+
+	// ── 4. Build conditional request headers ───────────────────────────────
 	condHeaders := map[string]string{}
 	if blobExists && hasMeta && !entry.NotFound {
 		if entry.ETag != "" {
@@ -163,9 +281,10 @@ func (f *Fetcher) Fetch(blobKey, cacheNS, upURL string, blobs blob.Store, metas 
 		}
 	}
 
-	// ── 4. Upstream fetch (with retries and optional auth) ─────────────────
+	// ── 5. Upstream fetch (with retries and optional auth) ─────────────────
 	upResp, fetchErr := f.fetchUpstream(upURL, condHeaders)
 	if fetchErr != nil {
+		cb.failure(now)
 		if !f.cfg.DisableStaleOnError && blobExists {
 			if rc, err := blobs.Get(blobKey); err == nil {
 				return rc, entry.ContentType, nil
@@ -173,11 +292,11 @@ func (f *Fetcher) Fetch(blobKey, cacheNS, upURL string, blobs blob.Store, metas 
 		}
 		return nil, "", fmt.Errorf("%w: %v", ErrUpstreamFailed, fetchErr)
 	}
+	cb.success()
 
-	// ── 5. Handle upstream response ────────────────────────────────────────
+	// ── 6. Handle upstream response ────────────────────────────────────────
 	switch upResp.statusCode {
 	case http.StatusNotModified:
-		// ETag matched — refresh TTL, serve from cache.
 		entry.FetchedAt = now
 		metas.PutJSON(cacheNS, blobKey, entry)
 		if rc, err := blobs.Get(blobKey); err == nil {
