@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS meta;
+DROP TABLE IF EXISTS schema_migrations;

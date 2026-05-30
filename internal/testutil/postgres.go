@@ -7,7 +7,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 // StartPostgres starts a Postgres 16 container and returns its DSN.
@@ -19,6 +21,11 @@ func StartPostgres(t *testing.T) string {
 		postgres.WithDatabase("forge"),
 		postgres.WithUsername("forge"),
 		postgres.WithPassword("forge"),
+		// Wait for the log line that confirms postgres is accepting connections,
+		// not just that the port is open (the default strategy).
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").WithOccurrence(2),
+		),
 	)
 	if err != nil {
 		t.Fatalf("testutil: start postgres: %v", err)

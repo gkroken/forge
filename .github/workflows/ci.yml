@@ -59,7 +59,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Run integration tests
-        run: go test -tags integration -race -timeout 120s -v ./internal/testutil/
+        run: go test -tags integration -race -timeout 300s -v ./internal/blob/... ./internal/meta/... ./internal/testutil/...
 
   docker:
     name: Docker image build
