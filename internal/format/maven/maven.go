@@ -46,26 +46,46 @@ func (h *Handler) Format() string { return "maven" }
 
 // --- SNAPSHOT tracking types -----------------------------------------------
 
-// snapshotMeta is stored in the meta store (ns "{repo}:maven:snap") keyed by
-// the SNAPSHOT version directory path (e.g. "com/acme/lib/1.0-SNAPSHOT").
+// snapshotMeta is assembled on-demand from snapArtifact records and passed to
+// buildSnapshotMetadataXML. It is no longer written to the meta store.
 type snapshotMeta struct {
 	GroupID     string            `json:"groupId"`
 	ArtifactID  string            `json:"artifactId"`
-	Version     string            `json:"version"`    // e.g. "1.0-SNAPSHOT"
-	Timestamp   string            `json:"timestamp"`  // latest "20240115.123456"
+	Version     string            `json:"version"`
+	Timestamp   string            `json:"timestamp"`
 	BuildNumber int               `json:"buildNumber"`
-	Updated     string            `json:"updated"`    // "20240115123456"
+	Updated     string            `json:"updated"`
 	Versions    []snapshotVersion `json:"versions"`
 }
 
 type snapshotVersion struct {
 	Classifier string `json:"classifier,omitempty"`
 	Extension  string `json:"extension"`
-	Value      string `json:"value"`   // e.g. "1.0-20240115.123456-1"
-	Updated    string `json:"updated"` // "20240115123456"
+	Value      string `json:"value"`
+	Updated    string `json:"updated"`
 }
 
-func (h *Handler) snapNS(c *format.Context) string { return c.Repo.Name + ":maven:snap" }
+// snapArtifact is stored per published SNAPSHOT artifact in the
+// "{repo}:maven:snap:v" namespace.
+// Key: snapshotPath + ":" + ext + ":" + classifier
+// (e.g. "com/acme/lib/1.0-SNAPSHOT:jar:")
+//
+// Using per-artifact keys means concurrent PUTs to different artifacts
+// (jar vs pom vs sources) write to distinct keys and never conflict.
+// Two PUTs to the same artifact (same ext+classifier) are last-writer-wins,
+// which is correct: the latest build's record replaces the previous one.
+type snapArtifact struct {
+	GroupID    string `json:"groupId"`
+	ArtifactID string `json:"artifactId"`
+	Version    string `json:"version"`
+	Classifier string `json:"classifier,omitempty"`
+	Extension  string `json:"extension"`
+	Value      string `json:"value"`
+	Updated    string `json:"updated"`
+}
+
+func (h *Handler) snapNS(c *format.Context) string    { return c.Repo.Name + ":maven:snap" }
+func (h *Handler) snapVersNS(c *format.Context) string { return c.Repo.Name + ":maven:snap:v" }
 
 // --- HTTP handlers ---------------------------------------------------------
 
@@ -372,8 +392,14 @@ func isSnapshotMetaPath(sub string) bool {
 	return strings.HasSuffix(path.Dir(sub), "-SNAPSHOT")
 }
 
-// maybeUpdateSnapshotMeta updates SNAPSHOT version tracking in the meta store
-// whenever an artifact is PUT into a SNAPSHOT version directory.
+// maybeUpdateSnapshotMeta stores one snapArtifact record per published
+// SNAPSHOT artifact under a unique key, eliminating the read-modify-write
+// race that existed when a single assembled snapshotMeta was shared across
+// concurrent artifact PUTs.
+//
+// Key: snapshotPath + ":" + ext + ":" + classifier
+// Two PUTs for the same ext+classifier (same artifact, newer build) overwrite
+// the previous record — correct, since only the latest build matters.
 func (h *Handler) maybeUpdateSnapshotMeta(c *format.Context) {
 	parts := strings.Split(c.Sub, "/")
 	if len(parts) < 3 {
@@ -384,7 +410,6 @@ func (h *Handler) maybeUpdateSnapshotMeta(c *format.Context) {
 		return
 	}
 	filename := parts[len(parts)-1]
-	// Skip metadata, checksums, and signatures — only track artifacts.
 	if filename == "maven-metadata.xml" || checksumExt(filename) != "" || strings.HasSuffix(filename, ".asc") {
 		return
 	}
@@ -399,53 +424,61 @@ func (h *Handler) maybeUpdateSnapshotMeta(c *format.Context) {
 		return
 	}
 
-	var sm snapshotMeta
-	c.Meta.GetJSON(h.snapNS(c), snapshotPath, &sm)
-	if sm.ArtifactID == "" {
-		sm = snapshotMeta{GroupID: groupID, ArtifactID: artifactID, Version: versionDir}
+	ts, _, hasTimestamp := extractTimestamp(value)
+	var updated string
+	if hasTimestamp {
+		updated = strings.ReplaceAll(ts, ".", "")
 	}
 
-	ts, bn, hasTimestamp := extractTimestamp(value)
-	if !hasTimestamp {
-		// Non-unique SNAPSHOT: record the extension but no timestamp info.
-		h.upsertVersion(&sm, snapshotVersion{Extension: ext, Value: value})
-		c.Meta.PutJSON(h.snapNS(c), snapshotPath, sm)
-		return
+	rec := snapArtifact{
+		GroupID: groupID, ArtifactID: artifactID, Version: versionDir,
+		Extension: ext, Value: value, Updated: updated,
 	}
-
-	updated := strings.ReplaceAll(ts, ".", "")
-	if bn > sm.BuildNumber {
-		sm.BuildNumber = bn
-		sm.Timestamp = ts
-		sm.Updated = updated
-	}
-	h.upsertVersion(&sm, snapshotVersion{Extension: ext, Value: value, Updated: updated})
-	c.Meta.PutJSON(h.snapNS(c), snapshotPath, sm)
-}
-
-// upsertVersion adds or replaces the snapshotVersion entry for the given
-// extension+classifier, keeping the entry with the higher build number.
-func (h *Handler) upsertVersion(sm *snapshotMeta, sv snapshotVersion) {
-	_, svBN, _ := extractTimestamp(sv.Value)
-	for i, existing := range sm.Versions {
-		if existing.Extension == sv.Extension && existing.Classifier == sv.Classifier {
-			_, existBN, _ := extractTimestamp(existing.Value)
-			if svBN >= existBN {
-				sm.Versions[i] = sv
-			}
-			return
-		}
-	}
-	sm.Versions = append(sm.Versions, sv)
+	// Key is unique per artifact type; concurrent PUTs to different types
+	// (jar, pom, sources) never conflict.
+	key := snapshotPath + ":" + ext + ":"
+	c.Meta.PutJSON(h.snapVersNS(c), key, rec) //nolint:errcheck
 }
 
 func (h *Handler) generateSnapshotMetadata(c *format.Context) ([]byte, bool) {
 	snapshotPath := strings.TrimSuffix(c.Sub, "/maven-metadata.xml")
+
+	// Assemble snapshotMeta from per-artifact records (new format).
+	versNS := h.snapVersNS(c)
+	allKeys, _ := c.Meta.List(versNS)
+	prefix := snapshotPath + ":"
 	var sm snapshotMeta
-	if ok, _ := c.Meta.GetJSON(h.snapNS(c), snapshotPath, &sm); !ok {
-		return nil, false
+	for _, k := range allKeys {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		var rec snapArtifact
+		if ok, _ := c.Meta.GetJSON(versNS, k, &rec); !ok {
+			continue
+		}
+		if sm.GroupID == "" {
+			sm = snapshotMeta{GroupID: rec.GroupID, ArtifactID: rec.ArtifactID, Version: rec.Version}
+		}
+		ts, bn, hasTS := extractTimestamp(rec.Value)
+		if hasTS && bn > sm.BuildNumber {
+			sm.BuildNumber = bn
+			sm.Timestamp = ts
+			sm.Updated = rec.Updated
+		}
+		sm.Versions = append(sm.Versions, snapshotVersion{
+			Classifier: rec.Classifier, Extension: rec.Extension,
+			Value: rec.Value, Updated: rec.Updated,
+		})
 	}
-	return buildSnapshotMetadataXML(sm), true
+	if sm.GroupID != "" {
+		return buildSnapshotMetadataXML(sm), true
+	}
+
+	// Fall back to old assembled record for backward compatibility.
+	if ok, _ := c.Meta.GetJSON(h.snapNS(c), snapshotPath, &sm); ok {
+		return buildSnapshotMetadataXML(sm), true
+	}
+	return nil, false
 }
 
 func buildSnapshotMetadataXML(sm snapshotMeta) []byte {

@@ -1,8 +1,10 @@
 package maven
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"forge/internal/blob"
@@ -235,6 +237,57 @@ func TestParseArtifactFilename(t *testing.T) {
 		if ok != tc.ok || ext != tc.ext || val != tc.value {
 			t.Errorf("parseArtifactFilename(%q, %q): got (%q,%q,%v) want (%q,%q,%v)",
 				tc.filename, tc.artifactID, ext, val, ok, tc.ext, tc.value, tc.ok)
+		}
+	}
+}
+
+// TestSnapshotMetadata_ConcurrentPuts verifies that concurrent artifact PUTs
+// to the same SNAPSHOT version directory produce complete metadata with no
+// lost entries.  Before the fix, a shared snapshotMeta record was updated
+// via read-modify-write; last writer won and earlier entries were lost.
+func TestSnapshotMetadata_ConcurrentPuts(t *testing.T) {
+	dir := t.TempDir()
+	b, _ := blob.NewFS(dir + "/b")
+	m, _ := meta.NewFS(dir + "/m")
+
+	const N = 10 // different extensions / artifact types
+	exts := make([]string, N)
+	for i := range exts {
+		exts[i] = fmt.Sprintf("ext%d", i)
+	}
+
+	var wg sync.WaitGroup
+	for _, ext := range exts {
+		wg.Add(1)
+		go func(ext string) {
+			defer wg.Done()
+			// Each goroutine publishes an artifact with a distinct extension
+			// to the same SNAPSHOT directory. These must all be preserved.
+			filename := fmt.Sprintf("lib-1.0-20240115.123456-1.%s", ext)
+			sub := "com/acme/lib/1.0-SNAPSHOT/" + filename
+			c := &format.Context{
+				Repo: repo.Repository{Name: "maven-hosted", Format: "maven", Kind: repo.Hosted},
+				Blob: b, Meta: m, Sub: sub,
+			}
+			b.Put(c.Key(sub), strings.NewReader("bytes")) //nolint:errcheck
+			New().maybeUpdateSnapshotMeta(c)
+		}(ext)
+	}
+	wg.Wait()
+
+	c := &format.Context{
+		Repo: repo.Repository{Name: "maven-hosted", Format: "maven", Kind: repo.Hosted},
+		Blob: b, Meta: m,
+		Sub: "com/acme/lib/1.0-SNAPSHOT/maven-metadata.xml",
+	}
+	xml, ok := New().generateSnapshotMetadata(c)
+	if !ok {
+		t.Fatal("expected snapshot metadata to generate")
+	}
+	body := string(xml)
+	for _, ext := range exts {
+		if !strings.Contains(body, "<extension>"+ext+"</extension>") {
+			t.Errorf("extension %q missing from metadata — concurrent write was lost", ext)
 		}
 	}
 }
