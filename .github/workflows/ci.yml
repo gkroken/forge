@@ -24,6 +24,11 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code go.mod go.sum
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - name: helm lint
+        run: helm lint deploy/helm/forge/
 
   test:
     name: Unit tests

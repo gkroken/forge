@@ -1,0 +1,14 @@
+apiVersion: v2
+name: forge
+description: Multi-format artifact repository (Maven, npm, Helm, CRAN)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - artifact-repository
+  - maven
+  - npm
+  - helm
+  - cran
+maintainers:
+  - name: forge maintainers

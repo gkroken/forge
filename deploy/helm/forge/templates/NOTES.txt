@@ -1,0 +1,29 @@
+forge has been deployed.
+
+  Release:   {{ .Release.Name }}
+  Namespace: {{ .Release.Namespace }}
+  Image:     {{ include "forge.image" . }}
+  Storage:   {{ .Values.storage.type }}
+
+Get the forge URL:
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- else if eq .Values.service.type "LoadBalancer" }}
+  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+  kubectl get svc {{ include "forge.fullname" . }} --namespace {{ .Release.Namespace }} -w
+{{- else }}
+  kubectl port-forward svc/{{ include "forge.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }} --namespace {{ .Release.Namespace }}
+  Then open: http://localhost:{{ .Values.service.port }}/
+{{- end }}
+
+Health checks:
+  kubectl get pods -l "app.kubernetes.io/name={{ include "forge.name" . }}" --namespace {{ .Release.Namespace }}
+
+{{- if eq .Values.storage.type "fs" }}
+
+Storage: filesystem (eval mode, single replica).
+For production HA, set storage.type=external and configure extraEnv with
+POSTGRES_DSN and S3_* credentials.
+{{- end }}

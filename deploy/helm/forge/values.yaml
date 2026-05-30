@@ -1,0 +1,120 @@
+# Default values for forge.
+# This is a YAML-formatted file. Declare variables to be passed into templates.
+
+replicaCount: 1
+
+image:
+  repository: forge
+  pullPolicy: IfNotPresent
+  # Defaults to .Chart.AppVersion when empty.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  fsGroup: 65532
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: forge.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Storage backend. Two modes:
+#   fs      — filesystem via a PVC (eval / single-node, replicaCount must be 1)
+#   external — S3 blobs + Postgres meta; configure via extraEnv (production HA)
+storage:
+  type: fs
+  fs:
+    size: 10Gi
+    storageClassName: ""  # leave empty for the cluster default
+
+# Extra environment variables injected into the forge container.
+# Used to configure S3 and Postgres when storage.type=external.
+# Example:
+#   POSTGRES_DSN: "postgres://forge:secret@pg:5432/forge?sslmode=require"
+#   S3_ENDPOINT:  "https://s3.amazonaws.com"
+#   S3_BUCKET:    "forge-artifacts"
+#   S3_ACCESS_KEY: "..."
+#   S3_SECRET_KEY: "..."  # prefer a Secret ref (see extraEnvFrom)
+extraEnv: {}
+
+# Env vars sourced from existing Secrets or ConfigMaps.
+extraEnvFrom: []
+# - secretRef:
+#     name: forge-s3-credentials
+
+# drain-timeout passed to forge -drain-timeout (must match terminationGracePeriodSeconds - 5s)
+drainTimeout: "30s"
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  failureThreshold: 3
+
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  failureThreshold: 30
+  periodSeconds: 2
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  # Note: autoscaling requires storage.type=external (PVC is RWO; FS cannot scale horizontally)
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

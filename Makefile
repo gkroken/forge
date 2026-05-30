@@ -19,6 +19,7 @@ test/all: test test/integration test/conformance
 lint:
 	go vet ./...
 	go mod verify
+	helm lint deploy/helm/forge/
 
 # Print coverage summary. Scoped to packages with test files to avoid a
 # covdata tool lookup that fails when using the auto-downloaded Go toolchain.

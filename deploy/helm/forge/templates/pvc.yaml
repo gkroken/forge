@@ -1,0 +1,17 @@
+{{- if eq .Values.storage.type "fs" -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "forge.fullname" . }}-data
+  labels:
+    {{- include "forge.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.storage.fs.size }}
+  {{- if .Values.storage.fs.storageClassName }}
+  storageClassName: {{ .Values.storage.fs.storageClassName | quote }}
+  {{- end }}
+{{- end }}
