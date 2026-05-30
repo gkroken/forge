@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -82,6 +83,32 @@ func (e *Enforcer) decide(r *http.Request, repoName string, action Action) decis
 	return decisionForbidden
 }
 
+// MiddlewareOCI is like Middleware but extracts the repo name from a
+// /v2/{repo}/... path instead of /repository/{repo}/...  It also sets the
+// WWW-Authenticate header that OCI clients need for auth discovery.
+func (e *Enforcer) MiddlewareOCI(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		repoName := ociRepoFromPath(r.URL.Path)
+		switch e.decide(r, repoName, actionFor(r.Method)) {
+		case decisionNeedAuth:
+			w.Header().Set("WWW-Authenticate", `Bearer realm="forge"`)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]any{
+				"errors": []map[string]any{{"code": "UNAUTHORIZED", "message": "authentication required"}},
+			})
+		case decisionForbidden:
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]any{
+				"errors": []map[string]any{{"code": "DENIED", "message": "insufficient permissions"}},
+			})
+		default:
+			next.ServeHTTP(w, r)
+		}
+	})
+}
+
 // RequireAdmin checks for an admin token on token-management routes.
 // Returns false and writes an HTTP error if the check fails.
 func (e *Enforcer) RequireAdmin(w http.ResponseWriter, r *http.Request) bool {
@@ -110,6 +137,13 @@ func (e *Enforcer) RequireAdmin(w http.ResponseWriter, r *http.Request) bool {
 func repoFromPath(path string) string {
 	// /repository/{name}/...
 	rest := strings.TrimPrefix(path, "/repository/")
+	name, _, _ := strings.Cut(rest, "/")
+	return name
+}
+
+func ociRepoFromPath(path string) string {
+	// /v2/{name}/...
+	rest := strings.TrimPrefix(path, "/v2/")
 	name, _, _ := strings.Cut(rest, "/")
 	return name
 }

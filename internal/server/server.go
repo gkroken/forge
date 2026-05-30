@@ -23,6 +23,15 @@ import (
 	"forge/internal/repo"
 )
 
+// ociError writes an OCI Distribution Spec error response.
+func ociError(w http.ResponseWriter, code, message string, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]any{
+		"errors": []map[string]any{{"code": code, "message": message}},
+	})
+}
+
 type Server struct {
 	Repos    *repo.Manager
 	Handlers *format.Registry
@@ -49,6 +58,18 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/v1/tokens/", s.handleTokens)
 	// Auth middleware wraps every /repository/ route.
 	mux.Handle("/repository/", s.Enforcer.Middleware(http.HandlerFunc(s.handleRepo)))
+	// OCI Distribution Spec: /v2/ is the API root.
+	// The base check (/v2/ or /v2) is unauthenticated (needed for auth discovery).
+	// All other /v2/ routes are protected via MiddlewareOCI.
+	mux.HandleFunc("/v2/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/" || r.URL.Path == "/v2" {
+			w.Header().Set("OCI-Distribution-Spec-Version", "1.0.0")
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, "{}\n")
+			return
+		}
+		s.Enforcer.MiddlewareOCI(http.HandlerFunc(s.handleOCI)).ServeHTTP(w, r)
+	})
 	mux.HandleFunc("/", s.handleIndex)
 	return logging(mux)
 }
@@ -97,6 +118,39 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	h.Serve(w, r, &format.Context{
 		Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: s.client, Sub: sub,
 		Repos: s.Repos,
+	})
+}
+
+func (s *Server) handleOCI(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/v2/")
+
+	// /v2/_catalog — list OCI repositories
+	if rest == "_catalog" {
+		var names []string
+		for _, rp := range s.Repos.All() {
+			if rp.Format == "oci" {
+				names = append(names, rp.Name)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"repositories": names})
+		return
+	}
+
+	repoName, sub, _ := strings.Cut(rest, "/")
+	rp, ok := s.Repos.Get(repoName)
+	if !ok || rp.Format != "oci" {
+		ociError(w, "NAME_UNKNOWN", "repository not found", http.StatusNotFound)
+		return
+	}
+	h, ok := s.Handlers.For("oci")
+	if !ok {
+		ociError(w, "UNSUPPORTED", "OCI handler not registered", http.StatusNotImplemented)
+		return
+	}
+	h.Serve(w, r, &format.Context{
+		Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: s.client,
+		Sub: sub, Repos: s.Repos,
 	})
 }
 

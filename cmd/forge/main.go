@@ -22,6 +22,7 @@ import (
 	"forge/internal/format/helm"
 	"forge/internal/format/maven"
 	"forge/internal/format/npm"
+	"forge/internal/format/oci"
 	"forge/internal/meta"
 	"forge/internal/repo"
 	"forge/internal/server"
@@ -71,6 +72,7 @@ func main() {
 	reg.Register(npm.New())
 	reg.Register(helm.New())
 	reg.Register(cran.New())
+	reg.Register(oci.New())
 
 	// Configure repositories. In production these come from a DB + admin API.
 	mgr := repo.NewManager()
@@ -89,6 +91,8 @@ func main() {
 			Upstream: "https://registry.npmjs.org", AnonymousRead: true},
 		{Name: "cran-proxy", Format: "cran", Kind: repo.Proxy,
 			Upstream: "https://cran.r-project.org", AnonymousRead: true},
+		// OCI / Docker
+		{Name: "docker-hosted", Format: "oci", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
 		// Group: merged read-only views (hosted first so internal artifacts shadow upstream).
 		{Name: "maven-public", Format: "maven", Kind: repo.Group,
 			Members: []string{"maven-hosted", "maven-central"}, AnonymousRead: true},
