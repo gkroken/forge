@@ -12,6 +12,16 @@ import (
 	"forge/internal/repo"
 )
 
+// putArtifact simulates a PUT of a SNAPSHOT artifact, updating snapshot meta.
+func putArtifact(t *testing.T, c *format.Context, sub string) {
+	t.Helper()
+	c.Blob.Put(c.Key(sub), strings.NewReader("fake"))
+	old := c.Sub
+	c.Sub = sub
+	New().maybeUpdateSnapshotMeta(c)
+	c.Sub = old
+}
+
 // ctxWith builds a Context backed by temp FS stores, pre-seeded with blob keys.
 func ctxWith(t *testing.T, sub string, blobKeys ...string) *format.Context {
 	t.Helper()
@@ -121,5 +131,118 @@ func TestGroup_MetadataMerge(t *testing.T) {
 	// 1.1.0 should appear exactly once (deduplicated).
 	if count := strings.Count(body, "<version>1.1.0</version>"); count != 1 {
 		t.Errorf("1.1.0 appears %d times, want 1", count)
+	}
+}
+
+// --- SNAPSHOT tests --------------------------------------------------------
+
+func TestExtractTimestamp(t *testing.T) {
+	cases := []struct {
+		value string
+		ts    string
+		bn    int
+		ok    bool
+	}{
+		{"1.0-20240115.123456-1", "20240115.123456", 1, true},
+		{"1.0.0-20240115.123456-42", "20240115.123456", 42, true},
+		{"1.0-SNAPSHOT", "", 0, false},
+		{"1.0", "", 0, false},
+		{"", "", 0, false},
+	}
+	for _, tc := range cases {
+		ts, bn, ok := extractTimestamp(tc.value)
+		if ok != tc.ok || ts != tc.ts || bn != tc.bn {
+			t.Errorf("extractTimestamp(%q): got (%q,%d,%v) want (%q,%d,%v)",
+				tc.value, ts, bn, ok, tc.ts, tc.bn, tc.ok)
+		}
+	}
+}
+
+func TestIsSnapshotMetaPath(t *testing.T) {
+	cases := []struct {
+		sub  string
+		want bool
+	}{
+		{"com/acme/lib/1.0-SNAPSHOT/maven-metadata.xml", true},
+		{"com/acme/lib/maven-metadata.xml", false},
+		{"com/acme/lib/1.0/maven-metadata.xml", false},
+	}
+	for _, tc := range cases {
+		if got := isSnapshotMetaPath(tc.sub); got != tc.want {
+			t.Errorf("isSnapshotMetaPath(%q) = %v, want %v", tc.sub, got, tc.want)
+		}
+	}
+}
+
+func TestSnapshotMetadata_Golden(t *testing.T) {
+	c := ctxWith(t, "")
+	putArtifact(t, c, "com/acme/lib/1.0-SNAPSHOT/lib-1.0-20240115.123456-1.jar")
+	putArtifact(t, c, "com/acme/lib/1.0-SNAPSHOT/lib-1.0-20240115.123456-1.pom")
+
+	c.Sub = "com/acme/lib/1.0-SNAPSHOT/maven-metadata.xml"
+	xml, ok := New().generateSnapshotMetadata(c)
+	if !ok {
+		t.Fatal("expected snapshot metadata to generate")
+	}
+	golden.Assert(t, xml, "snapshot_metadata.xml")
+}
+
+func TestSnapshotMetadata_BuildNumberAdvances(t *testing.T) {
+	c := ctxWith(t, "")
+	putArtifact(t, c, "com/acme/lib/1.0-SNAPSHOT/lib-1.0-20240115.123456-1.jar")
+	putArtifact(t, c, "com/acme/lib/1.0-SNAPSHOT/lib-1.0-20240116.234567-2.jar")
+
+	c.Sub = "com/acme/lib/1.0-SNAPSHOT/maven-metadata.xml"
+	xml, ok := New().generateSnapshotMetadata(c)
+	if !ok {
+		t.Fatal("expected metadata")
+	}
+	body := string(xml)
+	if !strings.Contains(body, "<buildNumber>2</buildNumber>") {
+		t.Error("expected build number 2 (latest) in metadata")
+	}
+	if !strings.Contains(body, "20240116.234567") {
+		t.Error("expected latest timestamp in metadata")
+	}
+	// Only one jar entry — latest build wins.
+	if count := strings.Count(body, "<extension>jar</extension>"); count != 1 {
+		t.Errorf("expected 1 jar snapshotVersion entry, got %d", count)
+	}
+}
+
+func TestSnapshotMetadata_NotFound(t *testing.T) {
+	c := ctxWith(t, "com/acme/lib/1.0-SNAPSHOT/maven-metadata.xml")
+	if _, ok := New().generateSnapshotMetadata(c); ok {
+		t.Fatal("expected no snapshot metadata for unseen path")
+	}
+}
+
+func TestParseArtifactFilename(t *testing.T) {
+	cases := []struct {
+		filename   string
+		artifactID string
+		ext        string
+		value      string
+		ok         bool
+	}{
+		{"lib-1.0-20240115.123456-1.jar", "lib", "jar", "1.0-20240115.123456-1", true},
+		{"lib-1.0-SNAPSHOT.jar", "lib", "jar", "1.0-SNAPSHOT", true},
+		{"other-1.0.jar", "lib", "", "", false}, // wrong prefix
+		{"lib.jar", "lib", "", "", false},        // no dash-version
+	}
+	for _, tc := range cases {
+		ext, val, ok := parseArtifactFilename(tc.filename, tc.artifactID)
+		if ok != tc.ok || ext != tc.ext || val != tc.value {
+			t.Errorf("parseArtifactFilename(%q, %q): got (%q,%q,%v) want (%q,%q,%v)",
+				tc.filename, tc.artifactID, ext, val, ok, tc.ext, tc.value, tc.ok)
+		}
+	}
+}
+
+func TestGradleModuleContentType(t *testing.T) {
+	got := contentType("lib-1.0.module")
+	want := "application/vnd.gradle.module+json"
+	if got != want {
+		t.Errorf("contentType(.module) = %q, want %q", got, want)
 	}
 }

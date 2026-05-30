@@ -9,19 +9,27 @@
 // generate maven-metadata.xml from the versions actually present.
 //
 // Proxy: read-through cache of an upstream (e.g. Maven Central). On a miss we
-// fetch upstream, persist, and serve.
+// fetch upstream, persist, and serve. Parent POMs are prefetched eagerly to
+// avoid extra round trips during dependency resolution.
 //
 // Group: read-only fan-out over ordered member repos. maven-metadata.xml merges
 // version lists from all members; artifact GETs try each member in order.
+//
+// SNAPSHOT support: when a timestamped SNAPSHOT artifact is PUT, the version
+// directory's maven-metadata.xml is maintained in the meta store and generated
+// on demand with proper <snapshotVersions> entries. Non-unique SNAPSHOTs
+// (plain -SNAPSHOT suffix) are stored and served verbatim.
 package maven
 
 import (
 	"bytes"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 
 	"forge/internal/blob"
@@ -33,6 +41,31 @@ type Handler struct{}
 
 func New() *Handler            { return &Handler{} }
 func (h *Handler) Format() string { return "maven" }
+
+// --- SNAPSHOT tracking types -----------------------------------------------
+
+// snapshotMeta is stored in the meta store (ns "{repo}:maven:snap") keyed by
+// the SNAPSHOT version directory path (e.g. "com/acme/lib/1.0-SNAPSHOT").
+type snapshotMeta struct {
+	GroupID     string            `json:"groupId"`
+	ArtifactID  string            `json:"artifactId"`
+	Version     string            `json:"version"`    // e.g. "1.0-SNAPSHOT"
+	Timestamp   string            `json:"timestamp"`  // latest "20240115.123456"
+	BuildNumber int               `json:"buildNumber"`
+	Updated     string            `json:"updated"`    // "20240115123456"
+	Versions    []snapshotVersion `json:"versions"`
+}
+
+type snapshotVersion struct {
+	Classifier string `json:"classifier,omitempty"`
+	Extension  string `json:"extension"`
+	Value      string `json:"value"`   // e.g. "1.0-20240115.123456-1"
+	Updated    string `json:"updated"` // "20240115123456"
+}
+
+func (h *Handler) snapNS(c *format.Context) string { return c.Repo.Name + ":maven:snap" }
+
+// --- HTTP handlers ---------------------------------------------------------
 
 func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Context) {
 	switch r.Method {
@@ -55,6 +88,8 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request, c *format.Context)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Maintain SNAPSHOT version tracking for artifact files.
+	h.maybeUpdateSnapshotMeta(c)
 	w.WriteHeader(http.StatusCreated)
 	fmt.Fprintf(w, "stored %s (%d bytes, sha1=%s)\n", c.Sub, info.Size, info.SHA1)
 }
@@ -67,7 +102,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, c *format.Context)
 
 	key := c.Key(c.Sub)
 
-	// 1. Serve from storage if present.
+	// 1. Serve from storage if present (handles client-PUT maven-metadata.xml too).
 	if rc, err := c.Blob.Get(key); err == nil {
 		defer rc.Close()
 		w.Header().Set("Content-Type", contentType(c.Sub))
@@ -87,8 +122,15 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, c *format.Context)
 		}
 	}
 
-	// 3. Generate maven-metadata.xml from the versions we actually hold.
+	// 3. Generate maven-metadata.xml: SNAPSHOT-level or artifact-level.
 	if path.Base(c.Sub) == "maven-metadata.xml" {
+		if isSnapshotMetaPath(c.Sub) {
+			if xml, ok := h.generateSnapshotMetadata(c); ok {
+				w.Header().Set("Content-Type", "application/xml")
+				w.Write(xml)
+				return
+			}
+		}
 		if xml, ok := h.generateMetadata(c); ok {
 			w.Header().Set("Content-Type", "application/xml")
 			w.Write(xml)
@@ -96,13 +138,20 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, c *format.Context)
 		}
 	}
 
-	// 4. Checksum of maven-metadata.xml: pass a context with the metadata path
-	// so generateMetadata can find the artifact directory correctly.
+	// 4. Checksum of a generated maven-metadata.xml.
 	if cs := checksumExt(c.Sub); cs != "" {
 		if base := strings.TrimSuffix(c.Sub, "."+cs); path.Base(base) == "maven-metadata.xml" {
 			metaCtx := *c
 			metaCtx.Sub = base
-			if xml, ok := h.generateMetadata(&metaCtx); ok {
+			var xml []byte
+			var ok bool
+			if isSnapshotMetaPath(base) {
+				xml, ok = h.generateSnapshotMetadata(&metaCtx)
+			}
+			if !ok {
+				xml, ok = h.generateMetadata(&metaCtx)
+			}
+			if ok {
 				io.WriteString(w, checksumOf(cs, xml))
 				return
 			}
@@ -118,9 +167,8 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, c *format.Context)
 	http.NotFound(w, r)
 }
 
-// groupGet fans out GET requests across the group's ordered member repos.
-// maven-metadata.xml is merged (union of versions); all other artifacts use
-// first-member-wins semantics.
+// --- group -----------------------------------------------------------------
+
 func (h *Handler) groupGet(w http.ResponseWriter, r *http.Request, c *format.Context) {
 	if path.Base(c.Sub) == "maven-metadata.xml" {
 		h.groupMetadata(w, c)
@@ -128,10 +176,8 @@ func (h *Handler) groupGet(w http.ResponseWriter, r *http.Request, c *format.Con
 	}
 	if cs := checksumExt(c.Sub); cs != "" {
 		if base := strings.TrimSuffix(c.Sub, "."+cs); path.Base(base) == "maven-metadata.xml" {
-			metaSub := base
-			// Build a temporary context with the metadata path for merging.
 			mc := *c
-			mc.Sub = metaSub
+			mc.Sub = base
 			if xml, ok := h.groupMetadataBytes(&mc); ok {
 				io.WriteString(w, checksumOf(cs, xml))
 			} else {
@@ -140,7 +186,6 @@ func (h *Handler) groupGet(w http.ResponseWriter, r *http.Request, c *format.Con
 			return
 		}
 	}
-	// Artifact: first member hit wins (proxy members will fetch+cache on miss).
 	for _, name := range c.Repo.Members {
 		mc, ok := c.MemberCtx(name)
 		if !ok {
@@ -188,9 +233,11 @@ func (h *Handler) groupMetadataBytes(c *format.Context) ([]byte, bool) {
 	return h.metadataFor(artifactSub, all)
 }
 
+// --- proxy -----------------------------------------------------------------
+
 func (h *Handler) proxyFetch(w http.ResponseWriter, r *http.Request, c *format.Context, key string) {
-	url := strings.TrimRight(c.Repo.Upstream, "/") + "/" + c.Sub
-	resp, err := c.HTTP.Get(url)
+	upURL := strings.TrimRight(c.Repo.Upstream, "/") + "/" + c.Sub
+	resp, err := c.HTTP.Get(upURL)
 	if err != nil {
 		http.Error(w, "upstream error: "+err.Error(), http.StatusBadGateway)
 		return
@@ -200,16 +247,58 @@ func (h *Handler) proxyFetch(w http.ResponseWriter, r *http.Request, c *format.C
 		http.Error(w, "upstream returned "+resp.Status, resp.StatusCode)
 		return
 	}
-	// Tee into storage while streaming to the client (cache-on-read).
 	var buf bytes.Buffer
 	tee := io.TeeReader(resp.Body, &buf)
 	w.Header().Set("Content-Type", contentType(c.Sub))
 	io.Copy(w, tee)
 	_, _ = c.Blob.Put(key, &buf)
+
+	// Eagerly prefetch parent POM to avoid extra round trips during resolution.
+	if strings.HasSuffix(c.Sub, ".pom") {
+		h.prefetchParentPOM(c, buf.Bytes())
+	}
 }
 
-// generateMetadata lists versions under the artifact directory and emits a
-// minimal but valid maven-metadata.xml.
+// prefetchParentPOM parses a POM for a <parent> element and fetches it from
+// upstream if not already cached.
+func (h *Handler) prefetchParentPOM(c *format.Context, pomData []byte) {
+	var pom struct {
+		XMLName xml.Name `xml:"project"`
+		Parent  *struct {
+			GroupID    string `xml:"groupId"`
+			ArtifactID string `xml:"artifactId"`
+			Version    string `xml:"version"`
+		} `xml:"parent"`
+	}
+	if err := xml.Unmarshal(pomData, &pom); err != nil || pom.Parent == nil {
+		return
+	}
+	p := pom.Parent
+	if p.GroupID == "" || p.ArtifactID == "" || p.Version == "" {
+		return
+	}
+	parentPath := strings.ReplaceAll(p.GroupID, ".", "/") + "/" +
+		p.ArtifactID + "/" + p.Version + "/" +
+		p.ArtifactID + "-" + p.Version + ".pom"
+	parentKey := c.Key(parentPath)
+	if _, err := c.Blob.Get(parentKey); err == nil {
+		return // already cached
+	}
+	parentURL := strings.TrimRight(c.Repo.Upstream, "/") + "/" + parentPath
+	resp, err := c.HTTP.Get(parentURL)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return
+	}
+	c.Blob.Put(parentKey, bytes.NewReader(data))
+}
+
+// --- artifact-level metadata -----------------------------------------------
+
 func (h *Handler) generateMetadata(c *format.Context) ([]byte, bool) {
 	artifactSub := strings.TrimSuffix(c.Sub, "/maven-metadata.xml")
 	if artifactSub == c.Sub {
@@ -218,7 +307,6 @@ func (h *Handler) generateMetadata(c *format.Context) ([]byte, bool) {
 	return h.metadataFor(artifactSub, h.listVersions(c, artifactSub))
 }
 
-// listVersions returns the distinct artifact versions present under artifactSub.
 func (h *Handler) listVersions(c *format.Context, artifactSub string) []string {
 	keys, _ := c.Blob.List(c.Key(artifactSub) + "/")
 	seen := map[string]bool{}
@@ -236,7 +324,6 @@ func (h *Handler) listVersions(c *format.Context, artifactSub string) []string {
 	return versions
 }
 
-// metadataFor sorts versions and builds a maven-metadata.xml from them.
 func (h *Handler) metadataFor(artifactSub string, versions []string) ([]byte, bool) {
 	if len(versions) == 0 {
 		return nil, false
@@ -250,7 +337,6 @@ func (h *Handler) metadataFor(artifactSub string, versions []string) ([]byte, bo
 	return buildMetadataXML(groupArtifact[:lastDot], groupArtifact[lastDot+1:], versions), true
 }
 
-// buildMetadataXML is the pure generator (versions must be pre-sorted).
 func buildMetadataXML(groupID, artifactID string, versions []string) []byte {
 	latest := versions[len(versions)-1]
 	var b strings.Builder
@@ -266,6 +352,188 @@ func buildMetadataXML(groupID, artifactID string, versions []string) []byte {
 	b.WriteString("    </versions>\n  </versioning>\n</metadata>\n")
 	return []byte(b.String())
 }
+
+// --- SNAPSHOT metadata -----------------------------------------------------
+
+// isSnapshotMetaPath reports whether sub is a maven-metadata.xml inside a
+// SNAPSHOT version directory (e.g. "com/acme/lib/1.0-SNAPSHOT/maven-metadata.xml").
+func isSnapshotMetaPath(sub string) bool {
+	return strings.HasSuffix(path.Dir(sub), "-SNAPSHOT")
+}
+
+// maybeUpdateSnapshotMeta updates SNAPSHOT version tracking in the meta store
+// whenever an artifact is PUT into a SNAPSHOT version directory.
+func (h *Handler) maybeUpdateSnapshotMeta(c *format.Context) {
+	parts := strings.Split(c.Sub, "/")
+	if len(parts) < 3 {
+		return
+	}
+	versionDir := parts[len(parts)-2]
+	if !strings.HasSuffix(versionDir, "-SNAPSHOT") {
+		return
+	}
+	filename := parts[len(parts)-1]
+	// Skip metadata, checksums, and signatures — only track artifacts.
+	if filename == "maven-metadata.xml" || checksumExt(filename) != "" || strings.HasSuffix(filename, ".asc") {
+		return
+	}
+
+	artifactID := parts[len(parts)-3]
+	snapshotPath := strings.Join(parts[:len(parts)-1], "/")
+	groupPath := strings.Join(parts[:len(parts)-3], "/")
+	groupID := strings.ReplaceAll(groupPath, "/", ".")
+
+	ext, value, ok := parseArtifactFilename(filename, artifactID)
+	if !ok {
+		return
+	}
+
+	var sm snapshotMeta
+	c.Meta.GetJSON(h.snapNS(c), snapshotPath, &sm)
+	if sm.ArtifactID == "" {
+		sm = snapshotMeta{GroupID: groupID, ArtifactID: artifactID, Version: versionDir}
+	}
+
+	ts, bn, hasTimestamp := extractTimestamp(value)
+	if !hasTimestamp {
+		// Non-unique SNAPSHOT: record the extension but no timestamp info.
+		h.upsertVersion(&sm, snapshotVersion{Extension: ext, Value: value})
+		c.Meta.PutJSON(h.snapNS(c), snapshotPath, sm)
+		return
+	}
+
+	updated := strings.ReplaceAll(ts, ".", "")
+	if bn > sm.BuildNumber {
+		sm.BuildNumber = bn
+		sm.Timestamp = ts
+		sm.Updated = updated
+	}
+	h.upsertVersion(&sm, snapshotVersion{Extension: ext, Value: value, Updated: updated})
+	c.Meta.PutJSON(h.snapNS(c), snapshotPath, sm)
+}
+
+// upsertVersion adds or replaces the snapshotVersion entry for the given
+// extension+classifier, keeping the entry with the higher build number.
+func (h *Handler) upsertVersion(sm *snapshotMeta, sv snapshotVersion) {
+	_, svBN, _ := extractTimestamp(sv.Value)
+	for i, existing := range sm.Versions {
+		if existing.Extension == sv.Extension && existing.Classifier == sv.Classifier {
+			_, existBN, _ := extractTimestamp(existing.Value)
+			if svBN >= existBN {
+				sm.Versions[i] = sv
+			}
+			return
+		}
+	}
+	sm.Versions = append(sm.Versions, sv)
+}
+
+func (h *Handler) generateSnapshotMetadata(c *format.Context) ([]byte, bool) {
+	snapshotPath := strings.TrimSuffix(c.Sub, "/maven-metadata.xml")
+	var sm snapshotMeta
+	if ok, _ := c.Meta.GetJSON(h.snapNS(c), snapshotPath, &sm); !ok {
+		return nil, false
+	}
+	return buildSnapshotMetadataXML(sm), true
+}
+
+func buildSnapshotMetadataXML(sm snapshotMeta) []byte {
+	// Sort versions for deterministic output.
+	sort.Slice(sm.Versions, func(i, j int) bool {
+		if sm.Versions[i].Extension != sm.Versions[j].Extension {
+			return sm.Versions[i].Extension < sm.Versions[j].Extension
+		}
+		return sm.Versions[i].Classifier < sm.Versions[j].Classifier
+	})
+
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>` + "\n")
+	fmt.Fprintf(&b, "<metadata>\n  <groupId>%s</groupId>\n  <artifactId>%s</artifactId>\n  <version>%s</version>\n",
+		sm.GroupID, sm.ArtifactID, sm.Version)
+	b.WriteString("  <versioning>\n")
+	if sm.Timestamp != "" {
+		fmt.Fprintf(&b, "    <snapshot>\n      <timestamp>%s</timestamp>\n      <buildNumber>%d</buildNumber>\n    </snapshot>\n",
+			sm.Timestamp, sm.BuildNumber)
+	}
+	if sm.Updated != "" {
+		fmt.Fprintf(&b, "    <lastUpdated>%s</lastUpdated>\n", sm.Updated)
+	}
+	if len(sm.Versions) > 0 {
+		b.WriteString("    <snapshotVersions>\n")
+		for _, sv := range sm.Versions {
+			b.WriteString("      <snapshotVersion>\n")
+			if sv.Classifier != "" {
+				fmt.Fprintf(&b, "        <classifier>%s</classifier>\n", sv.Classifier)
+			}
+			fmt.Fprintf(&b, "        <extension>%s</extension>\n        <value>%s</value>\n        <updated>%s</updated>\n",
+				sv.Extension, sv.Value, sv.Updated)
+			b.WriteString("      </snapshotVersion>\n")
+		}
+		b.WriteString("    </snapshotVersions>\n")
+	}
+	b.WriteString("  </versioning>\n</metadata>\n")
+	return []byte(b.String())
+}
+
+// --- filename parsing ------------------------------------------------------
+
+// parseArtifactFilename extracts extension and version value from a Maven
+// artifact filename. "lib-1.0-20240115.123456-1.jar" with artifactID "lib"
+// yields ext="jar", value="1.0-20240115.123456-1".
+func parseArtifactFilename(filename, artifactID string) (ext, value string, ok bool) {
+	prefix := artifactID + "-"
+	if !strings.HasPrefix(filename, prefix) {
+		return "", "", false
+	}
+	rest := strings.TrimPrefix(filename, prefix)
+	dotIdx := strings.LastIndex(rest, ".")
+	if dotIdx < 0 {
+		return "", "", false
+	}
+	return rest[dotIdx+1:], rest[:dotIdx], true
+}
+
+// extractTimestamp finds a Maven snapshot timestamp and build number in a
+// versioned value string such as "1.0-20240115.123456-1".
+// Returns ("20240115.123456", 1, true) for that input.
+func extractTimestamp(value string) (timestamp string, buildNumber int, ok bool) {
+	// Scan for the pattern: 8 digits, '.', 6 digits, '-', digits
+	for i := 0; i+16 <= len(value); i++ {
+		if value[i+8] != '.' {
+			continue
+		}
+		if !isDigits(value[i:i+8]) || !isDigits(value[i+9:i+15]) {
+			continue
+		}
+		if value[i+15] != '-' {
+			continue
+		}
+		bnStr := value[i+16:]
+		if !isDigits(bnStr) {
+			continue
+		}
+		bn, err := strconv.Atoi(bnStr)
+		if err != nil {
+			continue
+		}
+		return value[i : i+15], bn, true
+	}
+	return "", 0, false
+}
+
+func isDigits(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// --- shared helpers --------------------------------------------------------
 
 func checksumExt(p string) string {
 	for _, e := range []string{"md5", "sha1", "sha256"} {
@@ -294,6 +562,8 @@ func contentType(p string) string {
 		return "application/java-archive"
 	case strings.HasSuffix(p, ".pom"), strings.HasSuffix(p, ".xml"):
 		return "application/xml"
+	case strings.HasSuffix(p, ".module"):
+		return "application/vnd.gradle.module+json"
 	default:
 		return "application/octet-stream"
 	}
