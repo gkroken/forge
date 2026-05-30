@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"forge/internal/auth"
 	"forge/internal/blob"
 	"forge/internal/format"
 	"forge/internal/format/cran"
@@ -31,6 +32,7 @@ func main() {
 	data := flag.String("data", "./data", "data directory")
 	healthcheck := flag.Bool("healthcheck", false, "probe /healthz and exit 0/1")
 	drainTimeout := flag.Duration("drain-timeout", 30*time.Second, "graceful shutdown drain timeout")
+	enableAuth := flag.Bool("auth", false, "enable token authentication (creates token store in data dir)")
 	flag.Parse()
 
 	if *healthcheck {
@@ -46,6 +48,23 @@ func main() {
 	metaStore, err := meta.NewFS(*data + "/meta")
 	must(err)
 
+	// Auth store: nil = AllowAll (eval mode); non-nil = token enforcement.
+	var authStore auth.Store
+	if *enableAuth {
+		authStore = auth.NewMetaStore(metaStore)
+		n, err := authStore.Count()
+		must(err)
+		if n == 0 {
+			tok, secret, err := authStore.Create("bootstrap admin", []auth.Grant{
+				{Repo: "*", Role: auth.RoleAdmin},
+			}, nil)
+			must(err)
+			log.Printf("forge: auth enabled — bootstrap admin token created")
+			log.Printf("forge: token id=%s secret=%s", tok.ID, secret)
+			log.Printf("forge: store this secret; it will not be shown again")
+		}
+	}
+
 	// Register one handler per format. This is the entire extension surface.
 	reg := format.NewRegistry()
 	reg.Register(maven.New())
@@ -56,23 +75,25 @@ func main() {
 	// Configure repositories. In production these come from a DB + admin API.
 	mgr := repo.NewManager()
 	for _, r := range []repo.Repository{
-		{Name: "maven-hosted", Format: "maven", Kind: repo.Hosted},
+		// Hosted repos: writes always require a token; reads require one too
+		// unless auth is disabled (eval mode) or AnonymousRead is set.
+		{Name: "maven-hosted", Format: "maven", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
 		{Name: "maven-central", Format: "maven", Kind: repo.Proxy,
-			Upstream: "https://repo1.maven.org/maven2"},
-		{Name: "npm-hosted", Format: "npm", Kind: repo.Hosted},
+			Upstream: "https://repo1.maven.org/maven2", AnonymousRead: true},
+		{Name: "npm-hosted", Format: "npm", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
 		{Name: "npm-proxy", Format: "npm", Kind: repo.Proxy,
-			Upstream: "https://registry.npmjs.org"},
-		{Name: "helm-hosted", Format: "helm", Kind: repo.Hosted},
-		{Name: "cran-hosted", Format: "cran", Kind: repo.Hosted},
+			Upstream: "https://registry.npmjs.org", AnonymousRead: true},
+		{Name: "helm-hosted", Format: "helm", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
+		{Name: "cran-hosted", Format: "cran", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
 		{Name: "cran-proxy", Format: "cran", Kind: repo.Proxy,
-			Upstream: "https://cran.r-project.org"},
+			Upstream: "https://cran.r-project.org", AnonymousRead: true},
 	} {
 		must(mgr.Add(r))
 	}
 
 	srv := &http.Server{
 		Addr:    *addr,
-		Handler: server.New(mgr, reg, blobStore, metaStore).Routes(),
+		Handler: server.New(mgr, reg, blobStore, metaStore, authStore).Routes(),
 	}
 
 	quit := make(chan os.Signal, 1)

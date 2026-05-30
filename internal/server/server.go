@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"forge/internal/auth"
 	"forge/internal/blob"
 	"forge/internal/format"
 	"forge/internal/meta"
@@ -27,13 +28,16 @@ type Server struct {
 	Handlers *format.Registry
 	Blob     blob.Store
 	Meta     meta.Store
+	Auth     auth.Store     // nil = auth not enabled (eval mode)
+	Enforcer *auth.Enforcer // always non-nil; uses AllowAll when Auth is nil
 	client   *http.Client
 }
 
-func New(m *repo.Manager, reg *format.Registry, b blob.Store, mt meta.Store) *Server {
+func New(m *repo.Manager, reg *format.Registry, b blob.Store, mt meta.Store, a auth.Store) *Server {
 	return &Server{
-		Repos: m, Handlers: reg, Blob: b, Meta: mt,
-		client: &http.Client{Timeout: 30 * time.Second},
+		Repos: m, Handlers: reg, Blob: b, Meta: mt, Auth: a,
+		Enforcer: auth.NewEnforcer(a, m),
+		client:   &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -41,7 +45,10 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handleProbe)
 	mux.HandleFunc("/readyz", handleProbe)
-	mux.HandleFunc("/repository/", s.handleRepo)
+	mux.HandleFunc("/api/v1/tokens", s.handleTokens)
+	mux.HandleFunc("/api/v1/tokens/", s.handleTokens)
+	// Auth middleware wraps every /repository/ route.
+	mux.Handle("/repository/", s.Enforcer.Middleware(http.HandlerFunc(s.handleRepo)))
 	mux.HandleFunc("/", s.handleIndex)
 	return logging(mux)
 }

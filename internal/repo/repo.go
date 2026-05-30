@@ -19,11 +19,12 @@ const (
 )
 
 type Repository struct {
-	Name     string
-	Format   string // "maven", "npm", "helm", "cran"
-	Kind     Kind
-	Upstream string   // for Proxy: base URL of the remote registry
-	Members  []string // for Group: ordered member repo names
+	Name          string
+	Format        string // "maven", "npm", "helm", "cran"
+	Kind          Kind
+	Upstream      string   // for Proxy: base URL of the remote registry
+	Members       []string // for Group: ordered member repo names
+	AnonymousRead bool     // allow GET without a token (default: false)
 }
 
 // Manager is the in-memory registry of configured repositories.
