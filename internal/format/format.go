@@ -14,15 +14,30 @@ import (
 
 // Context is everything a handler needs to serve one request.
 type Context struct {
-	Repo repo.Repository // the resolved repository
-	Blob blob.Store      // raw bytes
-	Meta meta.Store      // structured metadata
-	HTTP *http.Client    // for proxy upstream fetches
-	Sub  string          // request path *within* the repo (no leading slash)
+	Repo  repo.Repository // the resolved repository
+	Blob  blob.Store      // raw bytes
+	Meta  meta.Store      // structured metadata
+	HTTP  *http.Client    // for proxy upstream fetches
+	Sub   string          // request path *within* the repo (no leading slash)
+	Repos *repo.Manager   // non-nil; used by group handlers to look up members
 }
 
 // Key namespaces a blob key under the repo so repos never collide in storage.
 func (c *Context) Key(sub string) string { return c.Repo.Name + "/" + sub }
+
+// MemberCtx returns a sub-context for the named member repository.
+// Returns (nil, false) if the member doesn't exist or is itself a group
+// (groups cannot nest).
+func (c *Context) MemberCtx(name string) (*Context, bool) {
+	if c.Repos == nil {
+		return nil, false
+	}
+	r, ok := c.Repos.Get(name)
+	if !ok || r.Kind == repo.Group {
+		return nil, false
+	}
+	return &Context{Repo: r, Blob: c.Blob, Meta: c.Meta, HTTP: c.HTTP, Sub: c.Sub, Repos: c.Repos}, true
+}
 
 // Handler implements one package format.
 type Handler interface {

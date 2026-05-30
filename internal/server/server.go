@@ -96,6 +96,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	}
 	h.Serve(w, r, &format.Context{
 		Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: s.client, Sub: sub,
+		Repos: s.Repos,
 	})
 }
 

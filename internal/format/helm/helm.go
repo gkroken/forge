@@ -9,9 +9,11 @@
 //	GET  /api/charts/{name}      -> JSON: versions of one chart
 //	DELETE /api/charts/{name}/{version}
 //
-// On every upload/delete we regenerate index.yaml lazily (it's generated on GET
-// from stored chart records, so it's always consistent). OCI-based `helm push`
-// is a separate protocol layered on a Docker registry - noted as a TODO.
+// Group: read-only fan-out. index.yaml merges all members (dedup by name+version,
+// first member wins); chart downloads try each member in order.
+//
+// OCI-based `helm push` is a separate protocol layered on a Docker registry -
+// noted as a TODO.
 package helm
 
 import (
@@ -33,7 +35,7 @@ import (
 
 type Handler struct{}
 
-func New() *Handler          { return &Handler{} }
+func New() *Handler            { return &Handler{} }
 func (h *Handler) Format() string { return "helm" }
 
 // chartRecord is what we persist per chart version (meta namespace).
@@ -64,6 +66,10 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 		}
 		h.upload(w, r, c)
 	case r.Method == http.MethodDelete && strings.HasPrefix(c.Sub, "api/charts/"):
+		if c.Repo.Kind != repo.Hosted {
+			http.Error(w, "cannot delete from non-hosted repo", http.StatusMethodNotAllowed)
+			return
+		}
 		h.delete(w, c, strings.TrimPrefix(c.Sub, "api/charts/"))
 	case r.Method == http.MethodGet && strings.HasSuffix(c.Sub, ".tgz"):
 		h.download(w, c)
@@ -104,6 +110,10 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, c *format.Conte
 }
 
 func (h *Handler) download(w http.ResponseWriter, c *format.Context) {
+	if c.Repo.Kind == repo.Group {
+		h.groupDownload(w, c)
+		return
+	}
 	rc, err := c.Blob.Get(c.Key(path.Base(c.Sub)))
 	if err != nil {
 		http.NotFound(w, nil)
@@ -112,6 +122,25 @@ func (h *Handler) download(w http.ResponseWriter, c *format.Context) {
 	defer rc.Close()
 	w.Header().Set("Content-Type", "application/gzip")
 	io.Copy(w, rc)
+}
+
+func (h *Handler) groupDownload(w http.ResponseWriter, c *format.Context) {
+	filename := path.Base(c.Sub)
+	for _, name := range c.Repo.Members {
+		mc, ok := c.MemberCtx(name)
+		if !ok {
+			continue
+		}
+		rc, err := mc.Blob.Get(mc.Key(filename))
+		if err != nil {
+			continue
+		}
+		defer rc.Close()
+		w.Header().Set("Content-Type", "application/gzip")
+		io.Copy(w, rc)
+		return
+	}
+	http.NotFound(w, nil)
 }
 
 func (h *Handler) records(c *format.Context) []chartRecord {
@@ -126,10 +155,37 @@ func (h *Handler) records(c *format.Context) []chartRecord {
 	return recs
 }
 
+// groupRecords merges chart records from all members, deduplicating by
+// name+version (first member with a given name+version wins).
+func (h *Handler) groupRecords(c *format.Context) []chartRecord {
+	seen := map[string]bool{}
+	var all []chartRecord
+	for _, name := range c.Repo.Members {
+		mc, ok := c.MemberCtx(name)
+		if !ok {
+			continue
+		}
+		for _, rec := range h.records(mc) {
+			key := rec.Name + "-" + rec.Version
+			if !seen[key] {
+				seen[key] = true
+				all = append(all, rec)
+			}
+		}
+	}
+	return all
+}
+
 // index emits a valid Helm index.yaml grouped by chart name.
 func (h *Handler) index(w http.ResponseWriter, c *format.Context) {
+	var recs []chartRecord
+	if c.Repo.Kind == repo.Group {
+		recs = h.groupRecords(c)
+	} else {
+		recs = h.records(c)
+	}
 	w.Header().Set("Content-Type", "application/yaml")
-	io.WriteString(w, buildIndex(h.records(c), time.Now().UTC()))
+	io.WriteString(w, buildIndex(recs, time.Now().UTC()))
 }
 
 // buildIndex is the pure generator for index.yaml, accepting an explicit now
@@ -169,8 +225,14 @@ func buildIndex(recs []chartRecord, now time.Time) string {
 }
 
 func (h *Handler) listAll(w http.ResponseWriter, c *format.Context) {
+	var recs []chartRecord
+	if c.Repo.Kind == repo.Group {
+		recs = h.groupRecords(c)
+	} else {
+		recs = h.records(c)
+	}
 	byName := map[string][]chartRecord{}
-	for _, rec := range h.records(c) {
+	for _, rec := range recs {
 		byName[rec.Name] = append(byName[rec.Name], rec)
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -178,8 +240,14 @@ func (h *Handler) listAll(w http.ResponseWriter, c *format.Context) {
 }
 
 func (h *Handler) listOne(w http.ResponseWriter, c *format.Context, name string) {
+	var source []chartRecord
+	if c.Repo.Kind == repo.Group {
+		source = h.groupRecords(c)
+	} else {
+		source = h.records(c)
+	}
 	var out []chartRecord
-	for _, rec := range h.records(c) {
+	for _, rec := range source {
 		if rec.Name == name {
 			out = append(out, rec)
 		}

@@ -8,6 +8,9 @@
 //	GET /src/contrib/PACKAGES.gz         -> gzipped index
 //	GET /src/contrib/{pkg}_{ver}.tar.gz  -> download
 //
+// Group: read-only fan-out. PACKAGES merges all members (dedup by Package+Version,
+// first member wins); downloads try each member in order.
+//
 // TODO: PACKAGES.rds (R-serialized index; needs an rds writer or an R process)
 // and per-OS binary package trees under /bin/. Modern R reads PACKAGES fine for
 // source installs, but renv/pak prefer .rds.
@@ -30,7 +33,7 @@ import (
 
 type Handler struct{}
 
-func New() *Handler          { return &Handler{} }
+func New() *Handler            { return &Handler{} }
 func (h *Handler) Format() string { return "cran" }
 
 func (h *Handler) ns(c *format.Context) string { return c.Repo.Name + ":cran" }
@@ -91,6 +94,10 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, c *format.Cont
 }
 
 func (h *Handler) download(w http.ResponseWriter, c *format.Context) {
+	if c.Repo.Kind == repo.Group {
+		h.groupDownload(w, c)
+		return
+	}
 	rc, err := c.Blob.Get(c.Key(c.Sub))
 	if err != nil {
 		http.NotFound(w, nil)
@@ -99,6 +106,36 @@ func (h *Handler) download(w http.ResponseWriter, c *format.Context) {
 	defer rc.Close()
 	w.Header().Set("Content-Type", "application/gzip")
 	io.Copy(w, rc)
+}
+
+func (h *Handler) groupDownload(w http.ResponseWriter, c *format.Context) {
+	for _, name := range c.Repo.Members {
+		mc, ok := c.MemberCtx(name)
+		if !ok {
+			continue
+		}
+		if rc, err := mc.Blob.Get(mc.Key(c.Sub)); err == nil {
+			defer rc.Close()
+			w.Header().Set("Content-Type", "application/gzip")
+			io.Copy(w, rc)
+			return
+		}
+		// For proxy members, attempt upstream fetch and cache.
+		if mc.Repo.Kind == repo.Proxy {
+			url := strings.TrimRight(mc.Repo.Upstream, "/") + "/" + c.Sub
+			resp, err := mc.HTTP.Get(url)
+			if err == nil && resp.StatusCode == http.StatusOK {
+				defer resp.Body.Close()
+				var buf bytes.Buffer
+				tee := io.TeeReader(resp.Body, &buf)
+				w.Header().Set("Content-Type", "application/gzip")
+				io.Copy(w, tee)
+				mc.Blob.Put(mc.Key(c.Sub), &buf)
+				return
+			}
+		}
+	}
+	http.NotFound(w, nil)
 }
 
 func (h *Handler) proxy(w http.ResponseWriter, c *format.Context) {
@@ -114,8 +151,20 @@ func (h *Handler) proxy(w http.ResponseWriter, c *format.Context) {
 	c.Blob.Put(c.Key(c.Sub), &buf)
 }
 
-// packages emits the PACKAGES index in Debian-control format.
+// packages returns the PACKAGES index for this repo (or merged across members
+// for a group).
 func (h *Handler) packages(c *format.Context) []byte {
+	var recs []pkgRecord
+	if c.Repo.Kind == repo.Group {
+		recs = h.groupPkgRecords(c)
+	} else {
+		recs = h.pkgRecords(c)
+	}
+	return buildPackages(recs)
+}
+
+// pkgRecords loads all package records from this repo's meta namespace.
+func (h *Handler) pkgRecords(c *format.Context) []pkgRecord {
 	keys, _ := c.Meta.List(h.ns(c))
 	sort.Strings(keys)
 	var recs []pkgRecord
@@ -125,7 +174,29 @@ func (h *Handler) packages(c *format.Context) []byte {
 			recs = append(recs, rec)
 		}
 	}
-	return buildPackages(recs)
+	return recs
+}
+
+// groupPkgRecords merges package records from all members, deduplicating by
+// Package_Version key (first member with a given package+version wins).
+func (h *Handler) groupPkgRecords(c *format.Context) []pkgRecord {
+	seen := map[string]bool{}
+	var all []pkgRecord
+	for _, name := range c.Repo.Members {
+		mc, ok := c.MemberCtx(name)
+		if !ok {
+			continue
+		}
+		for _, rec := range h.pkgRecords(mc) {
+			key := rec.Package + "_" + rec.Version
+			if !seen[key] {
+				seen[key] = true
+				all = append(all, rec)
+			}
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].Package < all[j].Package })
+	return all
 }
 
 // buildPackages is the pure generator for the PACKAGES index so tests can

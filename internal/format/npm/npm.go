@@ -12,6 +12,9 @@
 //	                               URLs to our host, cache, serve
 //	GET  /{pkg}/-/{tarball}      -> fetch upstream tarball, cache, serve
 //
+// Group: read-only fan-out. Packuments are merged (first-member wins per
+// version and dist-tag); tarball downloads try each member in order.
+//
 // Scoped packages (@scope/name) arrive URL-encoded (@scope%2fname); we decode.
 // The legacy CouchDB-style login flow is a documented TODO.
 package npm
@@ -32,7 +35,7 @@ import (
 
 type Handler struct{}
 
-func New() *Handler          { return &Handler{} }
+func New() *Handler            { return &Handler{} }
 func (h *Handler) Format() string { return "npm" }
 
 func (h *Handler) ns(c *format.Context) string { return c.Repo.Name + ":npm" }
@@ -143,6 +146,10 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, c *format.Cont
 }
 
 func (h *Handler) packument(w http.ResponseWriter, r *http.Request, c *format.Context, pkg string) {
+	if c.Repo.Kind == repo.Group {
+		h.groupPackument(w, r, c, pkg)
+		return
+	}
 	// Hosted (or proxy cache hit): serve stored packument.
 	var stored map[string]any
 	if ok, _ := c.Meta.GetJSON(h.ns(c), pkg, &stored); ok {
@@ -157,24 +164,25 @@ func (h *Handler) packument(w http.ResponseWriter, r *http.Request, c *format.Co
 	http.NotFound(w, r)
 }
 
-// proxyPackument fetches upstream metadata, rewrites every tarball URL to point
-// at this proxy, caches the result, and serves it.
-func (h *Handler) proxyPackument(w http.ResponseWriter, r *http.Request, c *format.Context, pkg string) {
+// fetchPackument returns the packument for pkg from this repo. For proxy repos
+// it fetches from upstream, caches, and returns the cached document.
+func (h *Handler) fetchPackument(r *http.Request, c *format.Context, pkg string) (map[string]any, bool) {
+	var stored map[string]any
+	if ok, _ := c.Meta.GetJSON(h.ns(c), pkg, &stored); ok {
+		return stored, true
+	}
+	if c.Repo.Kind != repo.Proxy {
+		return nil, false
+	}
 	upURL := strings.TrimRight(c.Repo.Upstream, "/") + "/" + url.PathEscape(pkg)
 	resp, err := c.HTTP.Get(upURL)
-	if err != nil {
-		http.Error(w, "upstream error: "+err.Error(), http.StatusBadGateway)
-		return
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return nil, false
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		http.Error(w, "upstream returned "+resp.Status, resp.StatusCode)
-		return
-	}
 	var doc map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
-		http.Error(w, "bad upstream json", http.StatusBadGateway)
-		return
+		return nil, false
 	}
 	base := publicBase(r)
 	if versions, ok := doc["versions"].(map[string]any); ok {
@@ -189,12 +197,98 @@ func (h *Handler) proxyPackument(w http.ResponseWriter, r *http.Request, c *form
 			}
 		}
 	}
-	c.Meta.PutJSON(h.ns(c), pkg, doc) // cache
+	c.Meta.PutJSON(h.ns(c), pkg, doc)
+	return doc, true
+}
+
+// proxyPackument fetches upstream metadata, rewrites every tarball URL to point
+// at this proxy, caches the result, and serves it.
+func (h *Handler) proxyPackument(w http.ResponseWriter, r *http.Request, c *format.Context, pkg string) {
+	doc, ok := h.fetchPackument(r, c, pkg)
+	if !ok {
+		http.Error(w, "upstream unavailable", http.StatusBadGateway)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(doc)
 }
 
+// groupPackument merges packuments from all member repos. First member wins for
+// version and dist-tag conflicts. Tarball URLs are rewritten to point at the
+// group repo so clients download via the group.
+func (h *Handler) groupPackument(w http.ResponseWriter, r *http.Request, c *format.Context, pkg string) {
+	merged := map[string]any{
+		"name":      pkg,
+		"versions":  map[string]any{},
+		"dist-tags": map[string]any{},
+	}
+	versions := merged["versions"].(map[string]any)
+	distTags := merged["dist-tags"].(map[string]any)
+	topSet := false
+	found := false
+
+	base := publicBase(r)
+	for _, name := range c.Repo.Members {
+		mc, ok := c.MemberCtx(name)
+		if !ok {
+			continue
+		}
+		doc, ok := h.fetchPackument(r, mc, pkg)
+		if !ok {
+			continue
+		}
+		found = true
+		// First member supplies package-level fields (description, homepage, etc.).
+		if !topSet {
+			for k, v := range doc {
+				if k != "versions" && k != "dist-tags" {
+					merged[k] = v
+				}
+			}
+			topSet = true
+		}
+		// Merge versions: first member with a given version wins.
+		if mv, ok := doc["versions"].(map[string]any); ok {
+			for ver, vdata := range mv {
+				if _, exists := versions[ver]; exists {
+					continue
+				}
+				// Rewrite tarball URL to point to this group, not the member.
+				if vobj, ok := vdata.(map[string]any); ok {
+					if dist, ok := vobj["dist"].(map[string]any); ok {
+						if orig, ok := dist["tarball"].(string); ok {
+							dist["tarball"] = rewriteTarball(orig, base, c.Repo.Name, pkg)
+						}
+					}
+				}
+				versions[ver] = vdata
+			}
+		}
+		// Merge dist-tags: first member wins.
+		if dt, ok := doc["dist-tags"].(map[string]any); ok {
+			for tag, ver := range dt {
+				if _, exists := distTags[tag]; !exists {
+					distTags[tag] = ver
+				}
+			}
+		}
+	}
+
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	merged["versions"] = versions
+	merged["dist-tags"] = distTags
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(merged)
+}
+
 func (h *Handler) tarball(w http.ResponseWriter, c *format.Context, sub string) {
+	if c.Repo.Kind == repo.Group {
+		h.groupTarball(w, c, sub)
+		return
+	}
 	key := c.Key(sub)
 	if rc, err := c.Blob.Get(key); err == nil {
 		defer rc.Close()
@@ -216,6 +310,38 @@ func (h *Handler) tarball(w http.ResponseWriter, c *format.Context, sub string) 
 		io.Copy(w, tee)
 		c.Blob.Put(key, &buf)
 		return
+	}
+	http.NotFound(w, nil)
+}
+
+// groupTarball tries each member in order; for proxy members it will fetch and
+// cache from upstream on a blob cache miss.
+func (h *Handler) groupTarball(w http.ResponseWriter, c *format.Context, sub string) {
+	for _, name := range c.Repo.Members {
+		mc, ok := c.MemberCtx(name)
+		if !ok {
+			continue
+		}
+		key := mc.Key(sub)
+		if rc, err := mc.Blob.Get(key); err == nil {
+			defer rc.Close()
+			w.Header().Set("Content-Type", "application/octet-stream")
+			io.Copy(w, rc)
+			return
+		}
+		if mc.Repo.Kind == repo.Proxy {
+			upURL := strings.TrimRight(mc.Repo.Upstream, "/") + "/" + sub
+			resp, err := mc.HTTP.Get(upURL)
+			if err == nil && resp.StatusCode == http.StatusOK {
+				defer resp.Body.Close()
+				var buf bytes.Buffer
+				tee := io.TeeReader(resp.Body, &buf)
+				w.Header().Set("Content-Type", "application/octet-stream")
+				io.Copy(w, tee)
+				mc.Blob.Put(key, &buf)
+				return
+			}
+		}
 	}
 	http.NotFound(w, nil)
 }

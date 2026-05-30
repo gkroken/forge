@@ -5,14 +5,14 @@
 //	/{group/as/path}/{artifactId}/{version}/{artifactId}-{version}.{ext}
 //
 // Hosted: clients PUT artifacts (+ their .pom and checksum sidecars). We store
-// them verbatim, can synthesize missing .md5/.sha1/.sha256 sidecars on read,
-// and generate maven-metadata.xml from the versions actually present.
+// them verbatim, synthesize missing .md5/.sha1/.sha256 sidecars on read, and
+// generate maven-metadata.xml from the versions actually present.
 //
 // Proxy: read-through cache of an upstream (e.g. Maven Central). On a miss we
 // fetch upstream, persist, and serve.
 //
-// Not yet handled (documented TODOs): timestamped SNAPSHOT metadata, parent-POM
-// prefetch, group repositories merging metadata across members.
+// Group: read-only fan-out over ordered member repos. maven-metadata.xml merges
+// version lists from all members; artifact GETs try each member in order.
 package maven
 
 import (
@@ -31,7 +31,7 @@ import (
 
 type Handler struct{}
 
-func New() *Handler          { return &Handler{} }
+func New() *Handler            { return &Handler{} }
 func (h *Handler) Format() string { return "maven" }
 
 func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Context) {
@@ -60,6 +60,11 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request, c *format.Context)
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request, c *format.Context) {
+	if c.Repo.Kind == repo.Group {
+		h.groupGet(w, r, c)
+		return
+	}
+
 	key := c.Key(c.Sub)
 
 	// 1. Serve from storage if present.
@@ -90,21 +95,97 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, c *format.Context)
 			return
 		}
 	}
-	if base := strings.TrimSuffix(c.Sub, "."+checksumExt(c.Sub)); checksumExt(c.Sub) != "" &&
-		path.Base(base) == "maven-metadata.xml" {
-		if xml, ok := h.generateMetadata(c); ok {
-			io.WriteString(w, checksumOf(checksumExt(c.Sub), xml))
-			return
+
+	// 4. Checksum of maven-metadata.xml: pass a context with the metadata path
+	// so generateMetadata can find the artifact directory correctly.
+	if cs := checksumExt(c.Sub); cs != "" {
+		if base := strings.TrimSuffix(c.Sub, "."+cs); path.Base(base) == "maven-metadata.xml" {
+			metaCtx := *c
+			metaCtx.Sub = base
+			if xml, ok := h.generateMetadata(&metaCtx); ok {
+				io.WriteString(w, checksumOf(cs, xml))
+				return
+			}
 		}
 	}
 
-	// 4. Proxy: read-through to upstream.
+	// 5. Proxy: read-through to upstream.
 	if c.Repo.Kind == repo.Proxy {
 		h.proxyFetch(w, r, c, key)
 		return
 	}
 
 	http.NotFound(w, r)
+}
+
+// groupGet fans out GET requests across the group's ordered member repos.
+// maven-metadata.xml is merged (union of versions); all other artifacts use
+// first-member-wins semantics.
+func (h *Handler) groupGet(w http.ResponseWriter, r *http.Request, c *format.Context) {
+	if path.Base(c.Sub) == "maven-metadata.xml" {
+		h.groupMetadata(w, c)
+		return
+	}
+	if cs := checksumExt(c.Sub); cs != "" {
+		if base := strings.TrimSuffix(c.Sub, "."+cs); path.Base(base) == "maven-metadata.xml" {
+			metaSub := base
+			// Build a temporary context with the metadata path for merging.
+			mc := *c
+			mc.Sub = metaSub
+			if xml, ok := h.groupMetadataBytes(&mc); ok {
+				io.WriteString(w, checksumOf(cs, xml))
+			} else {
+				http.NotFound(w, nil)
+			}
+			return
+		}
+	}
+	// Artifact: first member hit wins (proxy members will fetch+cache on miss).
+	for _, name := range c.Repo.Members {
+		mc, ok := c.MemberCtx(name)
+		if !ok {
+			continue
+		}
+		cap := format.NewCapture()
+		h.get(cap, r, mc)
+		if cap.OK() {
+			cap.Replay(w)
+			return
+		}
+	}
+	http.NotFound(w, r)
+}
+
+func (h *Handler) groupMetadata(w http.ResponseWriter, c *format.Context) {
+	xml, ok := h.groupMetadataBytes(c)
+	if !ok {
+		http.NotFound(w, nil)
+		return
+	}
+	w.Header().Set("Content-Type", "application/xml")
+	w.Write(xml)
+}
+
+func (h *Handler) groupMetadataBytes(c *format.Context) ([]byte, bool) {
+	artifactSub := strings.TrimSuffix(c.Sub, "/maven-metadata.xml")
+	if artifactSub == c.Sub {
+		return nil, false
+	}
+	seen := map[string]bool{}
+	var all []string
+	for _, name := range c.Repo.Members {
+		mc, ok := c.MemberCtx(name)
+		if !ok {
+			continue
+		}
+		for _, v := range h.listVersions(mc, artifactSub) {
+			if !seen[v] {
+				seen[v] = true
+				all = append(all, v)
+			}
+		}
+	}
+	return h.metadataFor(artifactSub, all)
 }
 
 func (h *Handler) proxyFetch(w http.ResponseWriter, r *http.Request, c *format.Context, key string) {
@@ -131,14 +212,14 @@ func (h *Handler) proxyFetch(w http.ResponseWriter, r *http.Request, c *format.C
 // minimal but valid maven-metadata.xml.
 func (h *Handler) generateMetadata(c *format.Context) ([]byte, bool) {
 	artifactSub := strings.TrimSuffix(c.Sub, "/maven-metadata.xml")
-	groupArtifact := strings.ReplaceAll(artifactSub, "/", ".")
-	lastDot := strings.LastIndex(groupArtifact, ".")
-	if lastDot < 0 {
+	if artifactSub == c.Sub {
 		return nil, false
 	}
-	groupID := groupArtifact[:lastDot]
-	artifactID := groupArtifact[lastDot+1:]
+	return h.metadataFor(artifactSub, h.listVersions(c, artifactSub))
+}
 
+// listVersions returns the distinct artifact versions present under artifactSub.
+func (h *Handler) listVersions(c *format.Context, artifactSub string) []string {
 	keys, _ := c.Blob.List(c.Key(artifactSub) + "/")
 	seen := map[string]bool{}
 	var versions []string
@@ -152,12 +233,26 @@ func (h *Handler) generateMetadata(c *format.Context) ([]byte, bool) {
 		seen[ver] = true
 		versions = append(versions, ver)
 	}
+	return versions
+}
+
+// metadataFor sorts versions and builds a maven-metadata.xml from them.
+func (h *Handler) metadataFor(artifactSub string, versions []string) ([]byte, bool) {
 	if len(versions) == 0 {
 		return nil, false
 	}
 	sort.Strings(versions)
-	latest := versions[len(versions)-1]
+	groupArtifact := strings.ReplaceAll(artifactSub, "/", ".")
+	lastDot := strings.LastIndex(groupArtifact, ".")
+	if lastDot < 0 {
+		return nil, false
+	}
+	return buildMetadataXML(groupArtifact[:lastDot], groupArtifact[lastDot+1:], versions), true
+}
 
+// buildMetadataXML is the pure generator (versions must be pre-sorted).
+func buildMetadataXML(groupID, artifactID string, versions []string) []byte {
+	latest := versions[len(versions)-1]
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>` + "\n")
 	fmt.Fprintf(&b, "<metadata>\n  <groupId>%s</groupId>\n  <artifactId>%s</artifactId>\n",
@@ -169,7 +264,7 @@ func (h *Handler) generateMetadata(c *format.Context) ([]byte, bool) {
 		fmt.Fprintf(&b, "      <version>%s</version>\n", v)
 	}
 	b.WriteString("    </versions>\n  </versioning>\n</metadata>\n")
-	return []byte(b.String()), true
+	return []byte(b.String())
 }
 
 func checksumExt(p string) string {

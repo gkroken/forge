@@ -77,16 +77,27 @@ func main() {
 	for _, r := range []repo.Repository{
 		// Hosted repos: writes always require a token; reads require one too
 		// unless auth is disabled (eval mode) or AnonymousRead is set.
+		// Hosted: source of truth for internal artifacts.
 		{Name: "maven-hosted", Format: "maven", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
-		{Name: "maven-central", Format: "maven", Kind: repo.Proxy,
-			Upstream: "https://repo1.maven.org/maven2", AnonymousRead: true},
 		{Name: "npm-hosted", Format: "npm", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
-		{Name: "npm-proxy", Format: "npm", Kind: repo.Proxy,
-			Upstream: "https://registry.npmjs.org", AnonymousRead: true},
 		{Name: "helm-hosted", Format: "helm", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
 		{Name: "cran-hosted", Format: "cran", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
+		// Proxy: read-through caches of public registries.
+		{Name: "maven-central", Format: "maven", Kind: repo.Proxy,
+			Upstream: "https://repo1.maven.org/maven2", AnonymousRead: true},
+		{Name: "npm-proxy", Format: "npm", Kind: repo.Proxy,
+			Upstream: "https://registry.npmjs.org", AnonymousRead: true},
 		{Name: "cran-proxy", Format: "cran", Kind: repo.Proxy,
 			Upstream: "https://cran.r-project.org", AnonymousRead: true},
+		// Group: merged read-only views (hosted first so internal artifacts shadow upstream).
+		{Name: "maven-public", Format: "maven", Kind: repo.Group,
+			Members: []string{"maven-hosted", "maven-central"}, AnonymousRead: true},
+		{Name: "npm-public", Format: "npm", Kind: repo.Group,
+			Members: []string{"npm-hosted", "npm-proxy"}, AnonymousRead: true},
+		{Name: "helm-public", Format: "helm", Kind: repo.Group,
+			Members: []string{"helm-hosted"}, AnonymousRead: true},
+		{Name: "cran-public", Format: "cran", Kind: repo.Group,
+			Members: []string{"cran-hosted", "cran-proxy"}, AnonymousRead: true},
 	} {
 		must(mgr.Add(r))
 	}
