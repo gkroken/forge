@@ -24,6 +24,7 @@ import (
 	"forge/internal/format/npm"
 	"forge/internal/format/oci"
 	"forge/internal/meta"
+	"forge/internal/queue"
 	"forge/internal/repo"
 	"forge/internal/server"
 )
@@ -106,9 +107,17 @@ func main() {
 		must(mgr.Add(r))
 	}
 
+	// In eval mode (FS stores) use an in-memory queue; in production the caller
+	// would pass a queue.NewPG(metaPG.DB()) here instead.
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+	q := queue.NewMem(256)
+
 	srv := &http.Server{
 		Addr:    *addr,
-		Handler: server.New(mgr, reg, blobStore, metaStore, authStore).Routes(),
+		Handler: server.New(mgr, reg, blobStore, metaStore, authStore).
+			WithQueue(workerCtx, q).
+			Routes(),
 	}
 
 	quit := make(chan os.Signal, 1)
@@ -121,6 +130,7 @@ func main() {
 		if err := srv.Shutdown(ctx); err != nil {
 			log.Printf("forge: shutdown error: %v", err)
 		}
+		workerCancel() // stop the indexer worker after HTTP drain
 	}()
 
 	log.Printf("forge listening on %s", *addr)

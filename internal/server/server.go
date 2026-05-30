@@ -9,6 +9,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,7 +20,9 @@ import (
 	"forge/internal/auth"
 	"forge/internal/blob"
 	"forge/internal/format"
+	"forge/internal/indexer"
 	"forge/internal/meta"
+	"forge/internal/queue"
 	"forge/internal/repo"
 )
 
@@ -39,6 +42,7 @@ type Server struct {
 	Meta     meta.Store
 	Auth     auth.Store     // nil = auth not enabled (eval mode)
 	Enforcer *auth.Enforcer // always non-nil; uses AllowAll when Auth is nil
+	Queue    queue.Queue    // nil = no async index regen (eval / tests)
 	client   *http.Client
 }
 
@@ -48,6 +52,14 @@ func New(m *repo.Manager, reg *format.Registry, b blob.Store, mt meta.Store, a a
 		Enforcer: auth.NewEnforcer(a, m),
 		client:   &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+// WithQueue attaches a queue to the server and starts the indexer worker in
+// a background goroutine that runs until ctx is cancelled.
+func (s *Server) WithQueue(ctx context.Context, q queue.Queue) *Server {
+	s.Queue = q
+	go indexer.New(s.Meta).Work(ctx, q) //nolint:errcheck
+	return s
 }
 
 func (s *Server) Routes() http.Handler {
@@ -117,7 +129,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	}
 	h.Serve(w, r, &format.Context{
 		Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: s.client, Sub: sub,
-		Repos: s.Repos,
+		Repos: s.Repos, Queue: s.Queue,
 	})
 }
 
@@ -150,7 +162,7 @@ func (s *Server) handleOCI(w http.ResponseWriter, r *http.Request) {
 	}
 	h.Serve(w, r, &format.Context{
 		Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: s.client,
-		Sub: sub, Repos: s.Repos,
+		Sub: sub, Repos: s.Repos, Queue: s.Queue,
 	})
 }
 
