@@ -21,6 +21,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,6 +30,7 @@ import (
 	"strings"
 
 	"forge/internal/format"
+	"forge/internal/proxy"
 	"forge/internal/repo"
 )
 
@@ -143,16 +145,23 @@ func (h *Handler) groupDownload(w http.ResponseWriter, c *format.Context) {
 }
 
 func (h *Handler) proxy(w http.ResponseWriter, c *format.Context) {
-	url := strings.TrimRight(c.Repo.Upstream, "/") + "/" + c.Sub
-	resp, err := c.HTTP.Get(url)
-	if err != nil || resp.StatusCode != http.StatusOK {
+	upURL := strings.TrimRight(c.Repo.Upstream, "/") + "/" + c.Sub
+	key := c.Key(c.Sub)
+	f := proxy.New(c.HTTP, proxy.Config{TTL: c.Repo.ProxyTTL, Auth: c.Repo.ProxyAuth})
+	rc, ct, err := f.Fetch(key, c.Repo.Name+":proxy", upURL, c.Blob, c.Meta)
+	if errors.Is(err, proxy.ErrNotFound) {
+		http.NotFound(w, nil)
+		return
+	}
+	if err != nil {
 		http.Error(w, "upstream fetch failed", http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
-	var buf bytes.Buffer
-	io.Copy(io.MultiWriter(w, &buf), resp.Body)
-	c.Blob.Put(c.Key(c.Sub), &buf)
+	defer rc.Close()
+	if ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+	io.Copy(w, rc)
 }
 
 // allPkgRecords returns merged records for group repos, or direct records for

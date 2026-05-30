@@ -36,13 +36,16 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"forge/internal/format"
+	"forge/internal/proxy"
 	"forge/internal/repo"
 )
 
@@ -368,26 +371,89 @@ func (h *Handler) packument(w http.ResponseWriter, r *http.Request, c *format.Co
 	http.NotFound(w, r)
 }
 
-// fetchPackument returns the packument for pkg from this repo. For proxy repos
-// it fetches from upstream, caches, and returns the cached document.
+// fetchPackument returns the packument for pkg from this repo.
+//
+// For proxy repos the packument is stored (URL-rewritten) in meta and its
+// freshness is tracked via a proxy.CacheEntry in the "{repo}:proxy" namespace.
+// Stale packuments trigger a conditional GET (If-None-Match); a 304 refreshes
+// the TTL without re-parsing. On upstream failure the stale packument is served.
 func (h *Handler) fetchPackument(r *http.Request, c *format.Context, pkg string) (map[string]any, bool) {
 	var stored map[string]any
-	if ok, _ := c.Meta.GetJSON(h.ns(c), pkg, &stored); ok {
-		return stored, true
+	hasStored, _ := c.Meta.GetJSON(h.ns(c), pkg, &stored)
+
+	if hasStored {
+		// Hosted or cached proxy: check TTL.
+		if c.Repo.Kind != repo.Proxy {
+			return stored, true
+		}
+		var ce proxy.CacheEntry
+		hasCE, _ := c.Meta.GetJSON(h.proxyNS(c), pkg, &ce)
+		ttl := c.Repo.ProxyTTL
+		if ttl == 0 {
+			ttl = proxy.DefaultTTL
+		}
+		if hasCE && time.Since(ce.FetchedAt) < ttl {
+			return stored, true // fresh cache hit
+		}
+		// Stale: attempt revalidation below; fall back to stored on any error.
 	}
+
 	if c.Repo.Kind != repo.Proxy {
 		return nil, false
 	}
+
 	upURL := strings.TrimRight(c.Repo.Upstream, "/") + "/" + url.PathEscape(pkg)
-	resp, err := c.HTTP.Get(upURL)
-	if err != nil || resp.StatusCode != http.StatusOK {
+	req, err := http.NewRequest(http.MethodGet, upURL, nil)
+	if err != nil {
+		if hasStored {
+			return stored, true
+		}
+		return nil, false
+	}
+	if c.Repo.ProxyAuth != "" {
+		req.Header.Set("Authorization", c.Repo.ProxyAuth)
+	}
+	// Conditional request using cached ETag.
+	var ce proxy.CacheEntry
+	c.Meta.GetJSON(h.proxyNS(c), pkg, &ce)
+	if hasStored && ce.ETag != "" {
+		req.Header.Set("If-None-Match", ce.ETag)
+	} else if hasStored && ce.LastModified != "" {
+		req.Header.Set("If-Modified-Since", ce.LastModified)
+	}
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		if hasStored {
+			return stored, true // stale-on-error
+		}
 		return nil, false
 	}
 	defer resp.Body.Close()
-	var doc map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+
+	if resp.StatusCode == http.StatusNotModified {
+		// Cache is still valid; refresh TTL.
+		ce.FetchedAt = time.Now()
+		c.Meta.PutJSON(h.proxyNS(c), pkg, ce)
+		return stored, true
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		if hasStored {
+			return stored, true // stale-on-error
+		}
 		return nil, false
 	}
+
+	var doc map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		if hasStored {
+			return stored, true
+		}
+		return nil, false
+	}
+
+	// Rewrite tarball URLs to point at this proxy.
 	base := publicBase(r)
 	if versions, ok := doc["versions"].(map[string]any); ok {
 		for _, v := range versions {
@@ -402,8 +468,15 @@ func (h *Handler) fetchPackument(r *http.Request, c *format.Context, pkg string)
 		}
 	}
 	c.Meta.PutJSON(h.ns(c), pkg, doc)
+	c.Meta.PutJSON(h.proxyNS(c), pkg, proxy.CacheEntry{
+		FetchedAt:    time.Now(),
+		ETag:         resp.Header.Get("ETag"),
+		LastModified: resp.Header.Get("Last-Modified"),
+	})
 	return doc, true
 }
+
+func (h *Handler) proxyNS(c *format.Context) string { return c.Repo.Name + ":proxy" }
 
 func (h *Handler) proxyPackument(w http.ResponseWriter, r *http.Request, c *format.Context, pkg string) {
 	doc, ok := h.fetchPackument(r, c, pkg)
@@ -488,28 +561,33 @@ func (h *Handler) tarball(w http.ResponseWriter, c *format.Context, sub string) 
 		return
 	}
 	key := c.Key(sub)
-	if rc, err := c.Blob.Get(key); err == nil {
+	// Hosted: serve directly from blob store.
+	if c.Repo.Kind != repo.Proxy {
+		rc, err := c.Blob.Get(key)
+		if err != nil {
+			http.NotFound(w, nil)
+			return
+		}
 		defer rc.Close()
 		w.Header().Set("Content-Type", "application/octet-stream")
 		io.Copy(w, rc)
 		return
 	}
-	if c.Repo.Kind == repo.Proxy {
-		upURL := strings.TrimRight(c.Repo.Upstream, "/") + "/" + sub
-		resp, err := c.HTTP.Get(upURL)
-		if err != nil || resp.StatusCode != http.StatusOK {
-			http.Error(w, "upstream tarball fetch failed", http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
-		var buf bytes.Buffer
-		tee := io.TeeReader(resp.Body, &buf)
-		w.Header().Set("Content-Type", "application/octet-stream")
-		io.Copy(w, tee)
-		c.Blob.Put(key, &buf)
+	// Proxy: use the shared Fetcher (TTL, ETag, stale-on-error, retries, auth).
+	upURL := strings.TrimRight(c.Repo.Upstream, "/") + "/" + sub
+	f := proxy.New(c.HTTP, proxy.Config{TTL: c.Repo.ProxyTTL, Auth: c.Repo.ProxyAuth})
+	rc, _, err := f.Fetch(key, c.Repo.Name+":proxy", upURL, c.Blob, c.Meta)
+	if errors.Is(err, proxy.ErrNotFound) {
+		http.NotFound(w, nil)
 		return
 	}
-	http.NotFound(w, nil)
+	if err != nil {
+		http.Error(w, "upstream tarball fetch failed", http.StatusBadGateway)
+		return
+	}
+	defer rc.Close()
+	w.Header().Set("Content-Type", "application/octet-stream")
+	io.Copy(w, rc)
 }
 
 func (h *Handler) groupTarball(w http.ResponseWriter, c *format.Context, sub string) {
@@ -519,24 +597,23 @@ func (h *Handler) groupTarball(w http.ResponseWriter, c *format.Context, sub str
 			continue
 		}
 		key := mc.Key(sub)
+		if mc.Repo.Kind == repo.Proxy {
+			upURL := strings.TrimRight(mc.Repo.Upstream, "/") + "/" + sub
+			f := proxy.New(mc.HTTP, proxy.Config{TTL: mc.Repo.ProxyTTL, Auth: mc.Repo.ProxyAuth})
+			rc, _, err := f.Fetch(key, mc.Repo.Name+":proxy", upURL, mc.Blob, mc.Meta)
+			if err == nil {
+				defer rc.Close()
+				w.Header().Set("Content-Type", "application/octet-stream")
+				io.Copy(w, rc)
+				return
+			}
+			continue
+		}
 		if rc, err := mc.Blob.Get(key); err == nil {
 			defer rc.Close()
 			w.Header().Set("Content-Type", "application/octet-stream")
 			io.Copy(w, rc)
 			return
-		}
-		if mc.Repo.Kind == repo.Proxy {
-			upURL := strings.TrimRight(mc.Repo.Upstream, "/") + "/" + sub
-			resp, err := mc.HTTP.Get(upURL)
-			if err == nil && resp.StatusCode == http.StatusOK {
-				defer resp.Body.Close()
-				var buf bytes.Buffer
-				tee := io.TeeReader(resp.Body, &buf)
-				w.Header().Set("Content-Type", "application/octet-stream")
-				io.Copy(w, tee)
-				mc.Blob.Put(key, &buf)
-				return
-			}
 		}
 	}
 	http.NotFound(w, nil)

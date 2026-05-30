@@ -1,14 +1,17 @@
 // Package repo defines the repository model shared by every format.
 //
 // A Repository is the unit Nexus calls a "repo": it has a name, a Format
-// (maven/npm/helm/cran), and a Kind:
+// (maven/npm/helm/cran/oci), and a Kind:
 //
 //	hosted - you publish into it; it is the source of truth
 //	proxy  - read-through cache of an upstream registry
-//	group  - a merged read-only view over several members (not yet implemented)
+//	group  - a merged read-only view over several members
 package repo
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 type Kind string
 
@@ -20,11 +23,14 @@ const (
 
 type Repository struct {
 	Name          string
-	Format        string // "maven", "npm", "helm", "cran"
+	Format        string   // "maven", "npm", "helm", "cran", "oci"
 	Kind          Kind
-	Upstream      string   // for Proxy: base URL of the remote registry
-	Members       []string // for Group: ordered member repo names
+	Upstream      string   // Proxy: base URL of the remote registry
+	Members       []string // Group: ordered member repo names
 	AnonymousRead bool     // allow GET without a token (default: false)
+	// Proxy cache settings (only relevant when Kind == Proxy)
+	ProxyTTL  time.Duration // how long a cached item is fresh; 0 = 24 h default
+	ProxyAuth string        // Authorization header value for upstream, e.g. "Bearer tok"
 }
 
 // Manager is the in-memory registry of configured repositories.

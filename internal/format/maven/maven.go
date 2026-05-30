@@ -24,6 +24,7 @@ package maven
 import (
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,6 +35,7 @@ import (
 
 	"forge/internal/blob"
 	"forge/internal/format"
+	"forge/internal/proxy"
 	"forge/internal/repo"
 )
 
@@ -237,26 +239,35 @@ func (h *Handler) groupMetadataBytes(c *format.Context) ([]byte, bool) {
 
 func (h *Handler) proxyFetch(w http.ResponseWriter, r *http.Request, c *format.Context, key string) {
 	upURL := strings.TrimRight(c.Repo.Upstream, "/") + "/" + c.Sub
-	resp, err := c.HTTP.Get(upURL)
+	f := proxy.New(c.HTTP, proxy.Config{TTL: c.Repo.ProxyTTL, Auth: c.Repo.ProxyAuth})
+	rc, ct, err := f.Fetch(key, c.Repo.Name+":proxy", upURL, c.Blob, c.Meta)
+	if errors.Is(err, proxy.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
 	if err != nil {
 		http.Error(w, "upstream error: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		http.Error(w, "upstream returned "+resp.Status, resp.StatusCode)
+	defer rc.Close()
+
+	// Eagerly prefetch parent POM after a cache miss (data is freshly fetched).
+	if strings.HasSuffix(c.Sub, ".pom") {
+		body, _ := io.ReadAll(rc)
+		if ct == "" {
+			ct = contentType(c.Sub)
+		}
+		w.Header().Set("Content-Type", ct)
+		w.Write(body)
+		h.prefetchParentPOM(c, body)
 		return
 	}
-	var buf bytes.Buffer
-	tee := io.TeeReader(resp.Body, &buf)
-	w.Header().Set("Content-Type", contentType(c.Sub))
-	io.Copy(w, tee)
-	_, _ = c.Blob.Put(key, &buf)
 
-	// Eagerly prefetch parent POM to avoid extra round trips during resolution.
-	if strings.HasSuffix(c.Sub, ".pom") {
-		h.prefetchParentPOM(c, buf.Bytes())
+	if ct == "" {
+		ct = contentType(c.Sub)
 	}
+	w.Header().Set("Content-Type", ct)
+	io.Copy(w, rc)
 }
 
 // prefetchParentPOM parses a POM for a <parent> element and fetches it from
