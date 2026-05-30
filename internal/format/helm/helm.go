@@ -1,0 +1,255 @@
+// Package helm implements a Helm chart repository (classic HTTP, ChartMuseum-style).
+//
+// Endpoints:
+//
+//	GET  /index.yaml              -> generated index of every chart version held
+//	GET  /{name}-{version}.tgz    -> chart download
+//	POST /api/charts             -> upload a chart (.tgz body)
+//	GET  /api/charts             -> JSON: all charts
+//	GET  /api/charts/{name}      -> JSON: versions of one chart
+//	DELETE /api/charts/{name}/{version}
+//
+// On every upload/delete we regenerate index.yaml lazily (it's generated on GET
+// from stored chart records, so it's always consistent). OCI-based `helm push`
+// is a separate protocol layered on a Docker registry - noted as a TODO.
+package helm
+
+import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"path"
+	"sort"
+	"strings"
+	"time"
+
+	"forge/internal/format"
+	"forge/internal/repo"
+)
+
+type Handler struct{}
+
+func New() *Handler          { return &Handler{} }
+func (h *Handler) Format() string { return "helm" }
+
+// chartRecord is what we persist per chart version (meta namespace).
+type chartRecord struct {
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	AppVersion  string `json:"appVersion,omitempty"`
+	Description string `json:"description,omitempty"`
+	Digest      string `json:"digest"`
+	Created     string `json:"created"`
+	Filename    string `json:"filename"`
+}
+
+func (h *Handler) ns(c *format.Context) string { return c.Repo.Name + ":helm" }
+
+func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Context) {
+	switch {
+	case r.Method == http.MethodGet && c.Sub == "index.yaml":
+		h.index(w, c)
+	case r.Method == http.MethodGet && c.Sub == "api/charts":
+		h.listAll(w, c)
+	case r.Method == http.MethodGet && strings.HasPrefix(c.Sub, "api/charts/"):
+		h.listOne(w, c, strings.TrimPrefix(c.Sub, "api/charts/"))
+	case r.Method == http.MethodPost && c.Sub == "api/charts":
+		if c.Repo.Kind != repo.Hosted {
+			http.Error(w, "cannot publish to non-hosted repo", http.StatusMethodNotAllowed)
+			return
+		}
+		h.upload(w, r, c)
+	case r.Method == http.MethodDelete && strings.HasPrefix(c.Sub, "api/charts/"):
+		h.delete(w, c, strings.TrimPrefix(c.Sub, "api/charts/"))
+	case r.Method == http.MethodGet && strings.HasSuffix(c.Sub, ".tgz"):
+		h.download(w, c)
+	default:
+		http.Error(w, "unsupported helm request", http.StatusNotFound)
+	}
+}
+
+func (h *Handler) upload(w http.ResponseWriter, r *http.Request, c *format.Context) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	meta, err := parseChartYAML(body)
+	if err != nil {
+		http.Error(w, "invalid chart: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	filename := fmt.Sprintf("%s-%s.tgz", meta.Name, meta.Version)
+	info, err := c.Blob.Put(c.Key(filename), bytes.NewReader(body))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rec := chartRecord{
+		Name: meta.Name, Version: meta.Version, AppVersion: meta.AppVersion,
+		Description: meta.Description, Digest: info.SHA256,
+		Created: time.Now().UTC().Format(time.RFC3339), Filename: filename,
+	}
+	if err := c.Meta.PutJSON(h.ns(c), meta.Name+"-"+meta.Version, rec); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]bool{"saved": true})
+}
+
+func (h *Handler) download(w http.ResponseWriter, c *format.Context) {
+	rc, err := c.Blob.Get(c.Key(path.Base(c.Sub)))
+	if err != nil {
+		http.NotFound(w, nil)
+		return
+	}
+	defer rc.Close()
+	w.Header().Set("Content-Type", "application/gzip")
+	io.Copy(w, rc)
+}
+
+func (h *Handler) records(c *format.Context) []chartRecord {
+	keys, _ := c.Meta.List(h.ns(c))
+	var recs []chartRecord
+	for _, k := range keys {
+		var rec chartRecord
+		if ok, _ := c.Meta.GetJSON(h.ns(c), k, &rec); ok {
+			recs = append(recs, rec)
+		}
+	}
+	return recs
+}
+
+// index emits a valid Helm index.yaml grouped by chart name.
+func (h *Handler) index(w http.ResponseWriter, c *format.Context) {
+	byName := map[string][]chartRecord{}
+	for _, rec := range h.records(c) {
+		byName[rec.Name] = append(byName[rec.Name], rec)
+	}
+	names := make([]string, 0, len(byName))
+	for n := range byName {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	var b strings.Builder
+	b.WriteString("apiVersion: v1\nentries:\n")
+	for _, n := range names {
+		fmt.Fprintf(&b, "  %s:\n", n)
+		recs := byName[n]
+		sort.Slice(recs, func(i, j int) bool { return recs[i].Version > recs[j].Version })
+		for _, rec := range recs {
+			fmt.Fprintf(&b, "    - apiVersion: v2\n      name: %s\n      version: %s\n",
+				rec.Name, rec.Version)
+			if rec.AppVersion != "" {
+				fmt.Fprintf(&b, "      appVersion: %q\n", rec.AppVersion)
+			}
+			if rec.Description != "" {
+				fmt.Fprintf(&b, "      description: %s\n", rec.Description)
+			}
+			fmt.Fprintf(&b, "      created: %s\n      digest: %s\n      urls:\n        - %s\n",
+				rec.Created, rec.Digest, rec.Filename)
+		}
+	}
+	fmt.Fprintf(&b, "generated: %s\n", time.Now().UTC().Format(time.RFC3339))
+
+	w.Header().Set("Content-Type", "application/yaml")
+	io.WriteString(w, b.String())
+}
+
+func (h *Handler) listAll(w http.ResponseWriter, c *format.Context) {
+	byName := map[string][]chartRecord{}
+	for _, rec := range h.records(c) {
+		byName[rec.Name] = append(byName[rec.Name], rec)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(byName)
+}
+
+func (h *Handler) listOne(w http.ResponseWriter, c *format.Context, name string) {
+	var out []chartRecord
+	for _, rec := range h.records(c) {
+		if rec.Name == name {
+			out = append(out, rec)
+		}
+	}
+	if out == nil {
+		http.NotFound(w, nil)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+func (h *Handler) delete(w http.ResponseWriter, c *format.Context, nameVer string) {
+	name, ver, ok := strings.Cut(nameVer, "/")
+	if !ok {
+		http.Error(w, "expected name/version", http.StatusBadRequest)
+		return
+	}
+	c.Meta.Delete(h.ns(c), name+"-"+ver)
+	c.Blob.Delete(c.Key(fmt.Sprintf("%s-%s.tgz", name, ver)))
+	w.WriteHeader(http.StatusOK)
+}
+
+// --- minimal Chart.yaml extraction --------------------------------------
+
+type chartMeta struct{ Name, Version, AppVersion, Description string }
+
+// parseChartYAML pulls the top-level scalar fields we need out of the
+// Chart.yaml inside a chart .tgz. A real implementation would use a YAML
+// library; chart metadata top-level fields are simple scalars so a line scan
+// is sufficient for the prototype.
+func parseChartYAML(tgz []byte) (chartMeta, error) {
+	gz, err := gzip.NewReader(bytes.NewReader(tgz))
+	if err != nil {
+		return chartMeta{}, err
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return chartMeta{}, err
+		}
+		if path.Base(hdr.Name) == "Chart.yaml" {
+			data, _ := io.ReadAll(tr)
+			return scanChartYAML(data), nil
+		}
+	}
+	return chartMeta{}, fmt.Errorf("Chart.yaml not found in archive")
+}
+
+func scanChartYAML(data []byte) chartMeta {
+	var m chartMeta
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+			continue // only top-level keys
+		}
+		key, val, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		val = strings.TrimSpace(strings.Trim(strings.TrimSpace(val), `"'`))
+		switch strings.TrimSpace(key) {
+		case "name":
+			m.Name = val
+		case "version":
+			m.Version = val
+		case "appVersion":
+			m.AppVersion = val
+		case "description":
+			m.Description = val
+		}
+	}
+	return m
+}
