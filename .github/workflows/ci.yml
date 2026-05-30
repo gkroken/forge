@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: go vet
+        run: go vet ./...
+      - name: go mod verify
+        run: go mod verify
+      - name: go mod tidy check
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run tests (race detector + coverage)
+        run: go test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
+      - name: Coverage gate
+        run: |
+          TOTAL=$(go tool cover -func=coverage.out | awk '/^total:/{print $NF}' | tr -d '%')
+          echo "Total coverage: ${TOTAL}%"
+          # Gate starts lenient; ratchet up as format handlers gain HTTP tests.
+          # Target per workplan: overall ≥75%, core packages ≥85%.
+          awk -v t="$TOTAL" 'BEGIN { if (t+0 < 35) { print "FAIL: " t "% is below the 35% gate"; exit 1 } }'
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run integration tests
+        run: go test -tags integration -race -timeout 120s -v ./internal/testutil/
