@@ -1,0 +1,9 @@
+Package: mathutils
+Version: 0.2.0
+Imports: stats
+License: MIT
+
+Package: strtools
+Version: 1.0.0
+License: GPL-2
+

@@ -1,19 +1,16 @@
 package maven
 
 import (
-	"flag"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"forge/internal/blob"
 	"forge/internal/format"
+	"forge/internal/golden"
 	"forge/internal/meta"
 	"forge/internal/repo"
 )
-
-var update = flag.Bool("update", false, "update golden files")
 
 // ctxWith builds a Context backed by temp FS stores, pre-seeded with blob keys.
 func ctxWith(t *testing.T, sub string, blobKeys ...string) *format.Context {
@@ -41,20 +38,7 @@ func TestGenerateMetadata_Golden(t *testing.T) {
 	if !ok {
 		t.Fatal("expected metadata to generate")
 	}
-	goldenPath := filepath.Join("testdata", "metadata_two_versions.xml")
-	if *update {
-		os.MkdirAll("testdata", 0o755)
-		os.WriteFile(goldenPath, got, 0o644)
-		t.Log("updated golden")
-		return
-	}
-	want, err := os.ReadFile(goldenPath)
-	if err != nil {
-		t.Fatalf("read golden (run with -update first): %v", err)
-	}
-	if string(got) != string(want) {
-		t.Fatalf("metadata mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
-	}
+	golden.Assert(t, got, "metadata_two_versions.xml")
 }
 
 func TestGenerateMetadata_EmptyArtifact(t *testing.T) {

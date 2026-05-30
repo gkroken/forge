@@ -118,12 +118,21 @@ func (h *Handler) proxy(w http.ResponseWriter, c *format.Context) {
 func (h *Handler) packages(c *format.Context) []byte {
 	keys, _ := c.Meta.List(h.ns(c))
 	sort.Strings(keys)
-	var b strings.Builder
+	var recs []pkgRecord
 	for _, k := range keys {
 		var rec pkgRecord
-		if ok, _ := c.Meta.GetJSON(h.ns(c), k, &rec); !ok {
-			continue
+		if ok, _ := c.Meta.GetJSON(h.ns(c), k, &rec); ok {
+			recs = append(recs, rec)
 		}
+	}
+	return buildPackages(recs)
+}
+
+// buildPackages is the pure generator for the PACKAGES index so tests can
+// call it without a live meta store.
+func buildPackages(recs []pkgRecord) []byte {
+	var b strings.Builder
+	for _, rec := range recs {
 		fmt.Fprintf(&b, "Package: %s\nVersion: %s\n", rec.Package, rec.Version)
 		if rec.Depends != "" {
 			fmt.Fprintf(&b, "Depends: %s\n", rec.Depends)

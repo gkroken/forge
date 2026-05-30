@@ -128,8 +128,15 @@ func (h *Handler) records(c *format.Context) []chartRecord {
 
 // index emits a valid Helm index.yaml grouped by chart name.
 func (h *Handler) index(w http.ResponseWriter, c *format.Context) {
+	w.Header().Set("Content-Type", "application/yaml")
+	io.WriteString(w, buildIndex(h.records(c), time.Now().UTC()))
+}
+
+// buildIndex is the pure generator for index.yaml, accepting an explicit now
+// so tests can produce deterministic output.
+func buildIndex(recs []chartRecord, now time.Time) string {
 	byName := map[string][]chartRecord{}
-	for _, rec := range h.records(c) {
+	for _, rec := range recs {
 		byName[rec.Name] = append(byName[rec.Name], rec)
 	}
 	names := make([]string, 0, len(byName))
@@ -142,9 +149,9 @@ func (h *Handler) index(w http.ResponseWriter, c *format.Context) {
 	b.WriteString("apiVersion: v1\nentries:\n")
 	for _, n := range names {
 		fmt.Fprintf(&b, "  %s:\n", n)
-		recs := byName[n]
-		sort.Slice(recs, func(i, j int) bool { return recs[i].Version > recs[j].Version })
-		for _, rec := range recs {
+		vers := byName[n]
+		sort.Slice(vers, func(i, j int) bool { return vers[i].Version > vers[j].Version })
+		for _, rec := range vers {
 			fmt.Fprintf(&b, "    - apiVersion: v2\n      name: %s\n      version: %s\n",
 				rec.Name, rec.Version)
 			if rec.AppVersion != "" {
@@ -157,10 +164,8 @@ func (h *Handler) index(w http.ResponseWriter, c *format.Context) {
 				rec.Created, rec.Digest, rec.Filename)
 		}
 	}
-	fmt.Fprintf(&b, "generated: %s\n", time.Now().UTC().Format(time.RFC3339))
-
-	w.Header().Set("Content-Type", "application/yaml")
-	io.WriteString(w, b.String())
+	fmt.Fprintf(&b, "generated: %s\n", now.Format(time.RFC3339))
+	return b.String()
 }
 
 func (h *Handler) listAll(w http.ResponseWriter, c *format.Context) {
