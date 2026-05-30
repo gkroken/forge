@@ -9,6 +9,7 @@ import (
 
 	"forge/internal/blob"
 	"forge/internal/meta"
+	"forge/internal/queue"
 	"forge/internal/repo"
 )
 
@@ -20,6 +21,7 @@ type Context struct {
 	HTTP  *http.Client    // for proxy upstream fetches
 	Sub   string          // request path *within* the repo (no leading slash)
 	Repos *repo.Manager   // non-nil; used by group handlers to look up members
+	Queue queue.Queue     // may be nil; if set, handlers enqueue async regen jobs
 }
 
 // Key namespaces a blob key under the repo so repos never collide in storage.
@@ -36,7 +38,7 @@ func (c *Context) MemberCtx(name string) (*Context, bool) {
 	if !ok || r.Kind == repo.Group {
 		return nil, false
 	}
-	return &Context{Repo: r, Blob: c.Blob, Meta: c.Meta, HTTP: c.HTTP, Sub: c.Sub, Repos: c.Repos}, true
+	return &Context{Repo: r, Blob: c.Blob, Meta: c.Meta, HTTP: c.HTTP, Sub: c.Sub, Repos: c.Repos, Queue: c.Queue}, true
 }
 
 // Handler implements one package format.

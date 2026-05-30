@@ -34,6 +34,7 @@ package npm
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -45,6 +46,7 @@ import (
 	"time"
 
 	"forge/internal/format"
+	"forge/internal/indexer"
 	"forge/internal/proxy"
 	"forge/internal/repo"
 )
@@ -54,7 +56,9 @@ type Handler struct{}
 func New() *Handler            { return &Handler{} }
 func (h *Handler) Format() string { return "npm" }
 
-func (h *Handler) ns(c *format.Context) string { return c.Repo.Name + ":npm" }
+func (h *Handler) ns(c *format.Context) string    { return c.Repo.Name + ":npm" }
+func (h *Handler) versNS(c *format.Context) string { return c.Repo.Name + ":npm:v" }
+func (h *Handler) tagsNS(c *format.Context) string { return c.Repo.Name + ":npm:dt" }
 
 func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Context) {
 	sub, _ := url.PathUnescape(c.Sub)
@@ -131,9 +135,15 @@ func (h *Handler) serveAPI(w http.ResponseWriter, r *http.Request, c *format.Con
 
 // --- publish & deprecate ---------------------------------------------------
 
-// publish parses the npm publish payload, stores attachments, and updates the
-// packument. When _attachments is absent (e.g. npm deprecate) it only updates
-// the packument, which propagates the deprecated field on version objects.
+// publish parses the npm publish payload, stores attachments, and enqueues an
+// idempotent packument rebuild.  When _attachments is absent (e.g. npm
+// deprecate) it only updates the per-version records so the deprecated field
+// is propagated on the next rebuild.
+//
+// Concurrency safety: each version is stored under a unique key in the
+// "{repo}:npm:v" namespace (key = "{pkg}:{ver}"), so two concurrent publishes
+// for different versions never conflict.  The packument rebuild is idempotent:
+// the worker always reads all version records from scratch.
 func (h *Handler) publish(w http.ResponseWriter, r *http.Request, c *format.Context, pkg string) {
 	var payload map[string]json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -160,20 +170,9 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, c *format.Cont
 		}
 	}
 
-	// Load-or-init the stored packument.
-	packument := map[string]any{
-		"name":      pkg,
-		"versions":  map[string]any{},
-		"dist-tags": map[string]any{},
-	}
-	c.Meta.GetJSON(h.ns(c), pkg, &packument)
-
-	versions, _ := packument["versions"].(map[string]any)
-	if versions == nil {
-		versions = map[string]any{}
-	}
-
-	// Merge incoming versions, rewriting dist.tarball to our URL.
+	// Store each version object under its own unique key.
+	// Two concurrent publishes for different versions write to different keys
+	// and never conflict.
 	var incoming map[string]map[string]any
 	if raw, ok := payload["versions"]; ok {
 		json.Unmarshal(raw, &incoming)
@@ -188,70 +187,137 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, c *format.Cont
 		dist["tarball"] = fmt.Sprintf("%s/repository/%s/%s/-/%s",
 			base, c.Repo.Name, pkg, tarName)
 		vobj["dist"] = dist
-		versions[ver] = vobj
+		if err := c.Meta.PutJSON(h.versNS(c), pkg+":"+ver, vobj); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
-	packument["versions"] = versions
 
-	// Merge dist-tags.
+	// Merge incoming dist-tags into the stored set.
 	if raw, ok := payload["dist-tags"]; ok {
-		var dt map[string]any
-		json.Unmarshal(raw, &dt)
-		existing, _ := packument["dist-tags"].(map[string]any)
-		if existing == nil {
-			existing = map[string]any{}
+		var incoming map[string]any
+		if json.Unmarshal(raw, &incoming) == nil && len(incoming) > 0 {
+			var existing map[string]any
+			c.Meta.GetJSON(h.tagsNS(c), pkg, &existing) //nolint:errcheck
+			if existing == nil {
+				existing = map[string]any{}
+			}
+			for k, v := range incoming {
+				existing[k] = v
+			}
+			if err := c.Meta.PutJSON(h.tagsNS(c), pkg, existing); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
-		for k, v := range dt {
-			existing[k] = v
-		}
-		packument["dist-tags"] = existing
 	}
 
-	if err := c.Meta.PutJSON(h.ns(c), pkg, packument); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	// Rebuild the packument: async via the queue when available, inline otherwise.
+	h.triggerRegen(r.Context(), c, pkg)
+
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
+// triggerRegen enqueues a packument-rebuild job when the queue is wired in,
+// or falls back to an inline synchronous rebuild (for eval / tests).
+func (h *Handler) triggerRegen(ctx context.Context, c *format.Context, pkg string) {
+	if c.Queue != nil {
+		c.Queue.Enqueue(ctx, "npm.regen", indexer.RegenPayload{ //nolint:errcheck
+			RepoName: c.Repo.Name,
+			Pkg:      pkg,
+		})
+		return
+	}
+	h.regenPackument(c, pkg)
+}
+
+// regenPackument rebuilds the materialized packument synchronously from the
+// per-version and dist-tags records.  Used when no async queue is wired in.
+// If no per-version records exist for pkg (old-format data), it is a no-op.
+func (h *Handler) regenPackument(c *format.Context, pkg string) {
+	versNS := h.versNS(c)
+	allKeys, _ := c.Meta.List(versNS)
+	prefix := pkg + ":"
+
+	versions := map[string]json.RawMessage{}
+	for _, k := range allKeys {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		ver := k[len(prefix):]
+		var vobj json.RawMessage
+		if ok, _ := c.Meta.GetJSON(versNS, k, &vobj); ok {
+			versions[ver] = vobj
+		}
+	}
+	if len(versions) == 0 {
+		return // no per-version records; packument is managed by the old inline path
+	}
+
+	var distTags map[string]json.RawMessage
+	c.Meta.GetJSON(h.tagsNS(c), pkg, &distTags) //nolint:errcheck
+	if distTags == nil {
+		distTags = map[string]json.RawMessage{}
+	}
+
+	packument := map[string]any{
+		"name":      pkg,
+		"versions":  versions,
+		"dist-tags": distTags,
+	}
+	c.Meta.PutJSON(h.ns(c), pkg, packument) //nolint:errcheck
+}
+
 // --- unpublish -------------------------------------------------------------
 
-// unpublish removes the entire package: its packument and all stored tarballs.
+// unpublish removes the entire package: packument, per-version records,
+// dist-tags, and all stored tarballs.
 func (h *Handler) unpublish(w http.ResponseWriter, c *format.Context, pkg string) {
-	c.Meta.Delete(h.ns(c), pkg)
-	// Blobs for all versions live under {repo}/{pkg}/-/
+	// Remove per-version records (new-format storage).
+	if keys, _ := c.Meta.List(h.versNS(c)); len(keys) > 0 {
+		prefix := pkg + ":"
+		for _, k := range keys {
+			if strings.HasPrefix(k, prefix) {
+				c.Meta.Delete(h.versNS(c), k) //nolint:errcheck
+			}
+		}
+	}
+	c.Meta.Delete(h.tagsNS(c), pkg) //nolint:errcheck
+	c.Meta.Delete(h.ns(c), pkg)     //nolint:errcheck
+	// Remove tarballs.
 	if keys, err := c.Blob.List(c.Key(pkg + "/-/")); err == nil {
 		for _, k := range keys {
-			c.Blob.Delete(k)
+			c.Blob.Delete(k) //nolint:errcheck
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
-// deleteTarball removes one tarball blob and prunes its version from the
-// packument. sub is "{pkg}/-/{filename}".
+// deleteTarball removes one tarball blob and prunes its version from both the
+// per-version namespace and the materialized packument.
+// sub is "{pkg}/-/{filename}".
 func (h *Handler) deleteTarball(w http.ResponseWriter, c *format.Context, sub string) {
-	c.Blob.Delete(c.Key(sub))
+	c.Blob.Delete(c.Key(sub)) //nolint:errcheck
 
 	i := strings.Index(sub, "/-/")
 	pkg := sub[:i]
 	filename := sub[i+3:]
+	fileBase := strings.TrimSuffix(filename, ".tgz")
+	ver := strings.TrimPrefix(fileBase, lastPathSeg(pkg)+"-")
 
+	// Remove from per-version namespace (new-format storage).
+	c.Meta.Delete(h.versNS(c), pkg+":"+ver) //nolint:errcheck
+
+	// Prune from the materialized packument (covers both old and new format).
 	var packument map[string]any
-	if ok, _ := c.Meta.GetJSON(h.ns(c), pkg, &packument); !ok {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
-		return
-	}
-	if versions, ok := packument["versions"].(map[string]any); ok {
-		// Derive version from filename: "{pkgbase}-{ver}.tgz"
-		base := strings.TrimSuffix(filename, ".tgz")
-		pkgBase := lastPathSeg(pkg)
-		ver := strings.TrimPrefix(base, pkgBase+"-")
-		delete(versions, ver)
-		packument["versions"] = versions
-		c.Meta.PutJSON(h.ns(c), pkg, packument)
+	if ok, _ := c.Meta.GetJSON(h.ns(c), pkg, &packument); ok {
+		if versions, ok := packument["versions"].(map[string]any); ok {
+			delete(versions, ver)
+			packument["versions"] = versions
+			c.Meta.PutJSON(h.ns(c), pkg, packument) //nolint:errcheck
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
@@ -303,7 +369,8 @@ func (h *Handler) distTags(w http.ResponseWriter, r *http.Request, c *format.Con
 		}
 		distTags[tag] = ver
 		packument["dist-tags"] = distTags
-		c.Meta.PutJSON(h.ns(c), pkg, packument)
+		c.Meta.PutJSON(h.ns(c), pkg, packument)           //nolint:errcheck
+		c.Meta.PutJSON(h.tagsNS(c), pkg, distTags)        //nolint:errcheck
 		json.NewEncoder(w).Encode(distTags)
 
 	case http.MethodDelete:
@@ -313,7 +380,8 @@ func (h *Handler) distTags(w http.ResponseWriter, r *http.Request, c *format.Con
 		}
 		delete(distTags, tag)
 		packument["dist-tags"] = distTags
-		c.Meta.PutJSON(h.ns(c), pkg, packument)
+		c.Meta.PutJSON(h.ns(c), pkg, packument)           //nolint:errcheck
+		c.Meta.PutJSON(h.tagsNS(c), pkg, distTags)        //nolint:errcheck
 		json.NewEncoder(w).Encode(distTags)
 
 	default:
