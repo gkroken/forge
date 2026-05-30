@@ -2,9 +2,15 @@
 //
 // Hosted:
 //
-//	PUT  /{pkg}                  -> publish (metadata + base64 _attachments)
-//	GET  /{pkg}                  -> packument (tarball URLs point back at us)
-//	GET  /{pkg}/-/{tarball}      -> tarball download
+//	PUT  /{pkg}                          -> publish (metadata + base64 _attachments)
+//	PUT  /{pkg}  (no _attachments)       -> deprecate (sets deprecated field on versions)
+//	GET  /{pkg}                          -> packument (tarball URLs point back at us)
+//	GET  /{pkg}/-/{tarball}              -> tarball download
+//	DELETE /{pkg}                        -> unpublish whole package
+//	DELETE /{pkg}/-/{tarball}            -> unpublish one tarball + prune packument
+//	GET  /-/package/{pkg}/dist-tags      -> list dist-tags
+//	PUT  /-/package/{pkg}/dist-tags/{t}  -> set a dist-tag
+//	DELETE /-/package/{pkg}/dist-tags/{t} -> remove a dist-tag
 //
 // Proxy:
 //
@@ -15,8 +21,15 @@
 // Group: read-only fan-out. Packuments are merged (first-member wins per
 // version and dist-tag); tarball downloads try each member in order.
 //
-// Scoped packages (@scope/name) arrive URL-encoded (@scope%2fname); we decode.
-// The legacy CouchDB-style login flow is a documented TODO.
+// Misc endpoints (registry API, not repo-specific):
+//
+//	GET  /-/ping                         -> {}
+//	GET  /-/whoami                       -> {"username":"anonymous"}
+//	PUT  /-/user/org.couchdb.user:{u}    -> CouchDB login (returns empty token)
+//	POST /-/npm/v1/security/audits[/quick] -> empty clean audit report
+//
+// Scoped packages (@scope/name) arrive with the slash percent-encoded
+// (%2F); Go's net/http decodes it in r.URL.Path so routing is transparent.
 package npm
 
 import (
@@ -43,12 +56,30 @@ func (h *Handler) ns(c *format.Context) string { return c.Repo.Name + ":npm" }
 func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Context) {
 	sub, _ := url.PathUnescape(c.Sub)
 
-	// Tarball request: .../-/...
-	if i := strings.Index(sub, "/-/"); i >= 0 && r.Method == http.MethodGet {
-		h.tarball(w, c, sub)
+	// Registry API endpoints live under the "-/" namespace and are not package ops.
+	if strings.HasPrefix(sub, "-/") {
+		h.serveAPI(w, r, c, sub)
 		return
 	}
 
+	// Tarball path: {pkg}/-/{filename}
+	if strings.Contains(sub, "/-/") {
+		switch r.Method {
+		case http.MethodGet:
+			h.tarball(w, c, sub)
+		case http.MethodDelete:
+			if c.Repo.Kind != repo.Hosted {
+				http.Error(w, "cannot delete from non-hosted repo", http.StatusMethodNotAllowed)
+				return
+			}
+			h.deleteTarball(w, c, sub)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+		return
+	}
+
+	// Package-level operations.
 	switch r.Method {
 	case http.MethodGet:
 		h.packument(w, r, c, sub)
@@ -58,13 +89,48 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 			return
 		}
 		h.publish(w, r, c, sub)
+	case http.MethodDelete:
+		if c.Repo.Kind != repo.Hosted {
+			http.Error(w, "cannot delete from non-hosted repo", http.StatusMethodNotAllowed)
+			return
+		}
+		h.unpublish(w, c, sub)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
+// serveAPI handles the /-/ registry endpoints that are not tied to a specific
+// package (login, audit, ping, whoami, dist-tags).
+func (h *Handler) serveAPI(w http.ResponseWriter, r *http.Request, c *format.Context, sub string) {
+	switch {
+	case strings.HasPrefix(sub, "-/package/") && strings.Contains(sub, "/dist-tags"):
+		h.distTags(w, r, c, sub)
+
+	case strings.HasPrefix(sub, "-/user/") && r.Method == http.MethodPut:
+		h.login(w)
+
+	case strings.HasPrefix(sub, "-/npm/v1/security/audits") && r.Method == http.MethodPost:
+		h.audit(w)
+
+	case sub == "-/ping" && r.Method == http.MethodGet:
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, "{}\n")
+
+	case sub == "-/whoami" && r.Method == http.MethodGet:
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"username": "anonymous"})
+
+	default:
+		http.Error(w, "unsupported npm api endpoint: "+sub, http.StatusNotFound)
+	}
+}
+
+// --- publish & deprecate ---------------------------------------------------
+
 // publish parses the npm publish payload, stores attachments, and updates the
-// packument with tarball URLs that point back at this server.
+// packument. When _attachments is absent (e.g. npm deprecate) it only updates
+// the packument, which propagates the deprecated field on version objects.
 func (h *Handler) publish(w http.ResponseWriter, r *http.Request, c *format.Context, pkg string) {
 	var payload map[string]json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -145,12 +211,150 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, c *format.Cont
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
+// --- unpublish -------------------------------------------------------------
+
+// unpublish removes the entire package: its packument and all stored tarballs.
+func (h *Handler) unpublish(w http.ResponseWriter, c *format.Context, pkg string) {
+	c.Meta.Delete(h.ns(c), pkg)
+	// Blobs for all versions live under {repo}/{pkg}/-/
+	if keys, err := c.Blob.List(c.Key(pkg + "/-/")); err == nil {
+		for _, k := range keys {
+			c.Blob.Delete(k)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+// deleteTarball removes one tarball blob and prunes its version from the
+// packument. sub is "{pkg}/-/{filename}".
+func (h *Handler) deleteTarball(w http.ResponseWriter, c *format.Context, sub string) {
+	c.Blob.Delete(c.Key(sub))
+
+	i := strings.Index(sub, "/-/")
+	pkg := sub[:i]
+	filename := sub[i+3:]
+
+	var packument map[string]any
+	if ok, _ := c.Meta.GetJSON(h.ns(c), pkg, &packument); !ok {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+		return
+	}
+	if versions, ok := packument["versions"].(map[string]any); ok {
+		// Derive version from filename: "{pkgbase}-{ver}.tgz"
+		base := strings.TrimSuffix(filename, ".tgz")
+		pkgBase := lastPathSeg(pkg)
+		ver := strings.TrimPrefix(base, pkgBase+"-")
+		delete(versions, ver)
+		packument["versions"] = versions
+		c.Meta.PutJSON(h.ns(c), pkg, packument)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+// --- dist-tags -------------------------------------------------------------
+
+// distTags handles GET/PUT/DELETE on /-/package/{pkg}/dist-tags[/{tag}].
+func (h *Handler) distTags(w http.ResponseWriter, r *http.Request, c *format.Context, sub string) {
+	// sub = "-/package/{pkg}/dist-tags" or "-/package/{pkg}/dist-tags/{tag}"
+	rest := strings.TrimPrefix(sub, "-/package/")
+	pkgPart, tagSuffix, _ := strings.Cut(rest, "/dist-tags")
+	pkg := pkgPart
+	tag := strings.TrimPrefix(tagSuffix, "/")
+
+	var packument map[string]any
+	if ok, _ := c.Meta.GetJSON(h.ns(c), pkg, &packument); !ok {
+		http.NotFound(w, r)
+		return
+	}
+	distTags, _ := packument["dist-tags"].(map[string]any)
+	if distTags == nil {
+		distTags = map[string]any{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	switch r.Method {
+	case http.MethodGet:
+		if tag == "" {
+			json.NewEncoder(w).Encode(distTags)
+		} else {
+			ver, ok := distTags[tag]
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			json.NewEncoder(w).Encode(ver)
+		}
+
+	case http.MethodPut:
+		if tag == "" {
+			http.Error(w, "tag name required", http.StatusBadRequest)
+			return
+		}
+		var ver string
+		if err := json.NewDecoder(r.Body).Decode(&ver); err != nil {
+			http.Error(w, "body must be a JSON string (version)", http.StatusBadRequest)
+			return
+		}
+		distTags[tag] = ver
+		packument["dist-tags"] = distTags
+		c.Meta.PutJSON(h.ns(c), pkg, packument)
+		json.NewEncoder(w).Encode(distTags)
+
+	case http.MethodDelete:
+		if tag == "" {
+			http.Error(w, "tag name required", http.StatusBadRequest)
+			return
+		}
+		delete(distTags, tag)
+		packument["dist-tags"] = distTags
+		c.Meta.PutJSON(h.ns(c), pkg, packument)
+		json.NewEncoder(w).Encode(distTags)
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// --- login & audit ---------------------------------------------------------
+
+// login implements the CouchDB-style PUT /-/user/... endpoint npm uses for
+// `npm login`. We return an empty token; in eval mode (AllowAll) this is
+// sufficient. In auth mode the empty token will be rejected by the middleware
+// on the next request — users should configure _authToken directly instead.
+func (h *Handler) login(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "token": ""})
+}
+
+// audit responds to npm audit requests with a clean (zero-vulnerability) report.
+func (h *Handler) audit(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"actions":   []any{},
+		"advisories": map[string]any{},
+		"muted":     []any{},
+		"metadata": map[string]any{
+			"vulnerabilities": map[string]int{
+				"info": 0, "low": 0, "moderate": 0, "high": 0, "critical": 0,
+			},
+			"dependencies":      0,
+			"devDependencies":   0,
+			"totalDependencies": 0,
+		},
+	})
+}
+
+// --- packument & tarball ---------------------------------------------------
+
 func (h *Handler) packument(w http.ResponseWriter, r *http.Request, c *format.Context, pkg string) {
 	if c.Repo.Kind == repo.Group {
 		h.groupPackument(w, r, c, pkg)
 		return
 	}
-	// Hosted (or proxy cache hit): serve stored packument.
 	var stored map[string]any
 	if ok, _ := c.Meta.GetJSON(h.ns(c), pkg, &stored); ok {
 		w.Header().Set("Content-Type", "application/json")
@@ -201,8 +405,6 @@ func (h *Handler) fetchPackument(r *http.Request, c *format.Context, pkg string)
 	return doc, true
 }
 
-// proxyPackument fetches upstream metadata, rewrites every tarball URL to point
-// at this proxy, caches the result, and serves it.
 func (h *Handler) proxyPackument(w http.ResponseWriter, r *http.Request, c *format.Context, pkg string) {
 	doc, ok := h.fetchPackument(r, c, pkg)
 	if !ok {
@@ -238,7 +440,6 @@ func (h *Handler) groupPackument(w http.ResponseWriter, r *http.Request, c *form
 			continue
 		}
 		found = true
-		// First member supplies package-level fields (description, homepage, etc.).
 		if !topSet {
 			for k, v := range doc {
 				if k != "versions" && k != "dist-tags" {
@@ -247,13 +448,11 @@ func (h *Handler) groupPackument(w http.ResponseWriter, r *http.Request, c *form
 			}
 			topSet = true
 		}
-		// Merge versions: first member with a given version wins.
 		if mv, ok := doc["versions"].(map[string]any); ok {
 			for ver, vdata := range mv {
 				if _, exists := versions[ver]; exists {
 					continue
 				}
-				// Rewrite tarball URL to point to this group, not the member.
 				if vobj, ok := vdata.(map[string]any); ok {
 					if dist, ok := vobj["dist"].(map[string]any); ok {
 						if orig, ok := dist["tarball"].(string); ok {
@@ -264,7 +463,6 @@ func (h *Handler) groupPackument(w http.ResponseWriter, r *http.Request, c *form
 				versions[ver] = vdata
 			}
 		}
-		// Merge dist-tags: first member wins.
 		if dt, ok := doc["dist-tags"].(map[string]any); ok {
 			for tag, ver := range dt {
 				if _, exists := distTags[tag]; !exists {
@@ -314,8 +512,6 @@ func (h *Handler) tarball(w http.ResponseWriter, c *format.Context, sub string) 
 	http.NotFound(w, nil)
 }
 
-// groupTarball tries each member in order; for proxy members it will fetch and
-// cache from upstream on a blob cache miss.
 func (h *Handler) groupTarball(w http.ResponseWriter, c *format.Context, sub string) {
 	for _, name := range c.Repo.Members {
 		mc, ok := c.MemberCtx(name)
@@ -346,8 +542,10 @@ func (h *Handler) groupTarball(w http.ResponseWriter, c *format.Context, sub str
 	http.NotFound(w, nil)
 }
 
-// rewriteTarball maps an upstream tarball URL to this proxy. It keeps only the
-// path after the package name so the proxy's own /-/ route resolves it.
+// --- helpers ---------------------------------------------------------------
+
+// rewriteTarball maps a tarball URL to a different repo on this server,
+// keeping the /-/{filename} tail intact.
 func rewriteTarball(orig, base, repoName, pkg string) string {
 	idx := strings.Index(orig, "/-/")
 	if idx < 0 {
