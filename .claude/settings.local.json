@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sudo apt-get install -y jq)",
+      "Bash(go version *)",
+      "Bash(jq --version)",
+      "Bash(/usr/local/go/bin/go version *)",
+      "Bash(git init *)",
+      "Bash(git branch *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
+    ]
+  }
+}
