@@ -33,6 +33,10 @@ func NewPG(dsn string) (*PG, error) {
 // Close releases the database connection pool.
 func (p *PG) Close() error { return p.db.Close() }
 
+// DB returns the underlying *sql.DB so callers (e.g. queue.NewPG) can share
+// the connection pool and benefit from the migrations already applied.
+func (p *PG) DB() *sql.DB { return p.db }
+
 func (p *PG) PutJSON(ns, key string, v any) error {
 	b, err := json.Marshal(v)
 	if err != nil {
