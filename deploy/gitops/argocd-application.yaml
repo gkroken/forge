@@ -1,0 +1,74 @@
+# Argo CD Application — deploys forge from the OCI Helm chart published to GHCR.
+#
+# Customise the three fields marked <EDIT> before applying:
+#   - spec.destination.namespace   — target namespace in your cluster
+#   - spec.source.chart (image)    — GHCR org that publishes the chart
+#   - spec.source.targetRevision   — chart version to pin
+#
+# Apply with:
+#   kubectl apply -f argocd-application.yaml
+#
+# Or place this file in your Argo CD app-of-apps repo and let it self-manage.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: forge
+  namespace: argocd
+  # Cascade-delete the app's resources when this Application is deleted.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    # OCI chart published by CI to ghcr.io/<org>/charts/forge
+    repoURL: ghcr.io/<EDIT-ORG>/charts   # e.g. ghcr.io/myorg/charts
+    chart: forge
+    targetRevision: "0.1.0"              # <EDIT> pin to a released chart version
+
+    helm:
+      releaseName: forge
+      valuesObject:
+        replicaCount: 2
+
+        image:
+          repository: ghcr.io/<EDIT-ORG>/forge
+          tag: ""   # defaults to chart appVersion
+
+        storage:
+          type: external   # S3 blobs + Postgres meta
+
+        autoscaling:
+          enabled: true
+          minReplicas: 2
+          maxReplicas: 6
+
+        podDisruptionBudget:
+          enabled: true
+          minAvailable: 1
+
+        ingress:
+          enabled: true
+          className: nginx
+          hosts:
+            - host: forge.example.com   # <EDIT>
+              paths:
+                - path: /
+                  pathType: Prefix
+
+        # Postgres DSN and S3 credentials come from a pre-existing Secret.
+        extraEnvFrom:
+          - secretRef:
+              name: forge-backend-credentials
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: forge   # <EDIT>
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

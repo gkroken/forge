@@ -1,0 +1,79 @@
+# Flux HelmRelease — deploys forge from the OCI Helm chart published to GHCR.
+#
+# Prerequisites (apply once per cluster):
+#   kubectl apply -f flux-helmrepo.yaml
+#
+# Then apply this file:
+#   kubectl apply -f flux-helmrelease.yaml
+#
+# Customise the fields marked <EDIT> before applying.
+---
+# HelmRepository tells Flux where to find the chart (OCI registry).
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: forge
+  namespace: flux-system
+spec:
+  type: oci
+  url: oci://ghcr.io/<EDIT-ORG>/charts   # e.g. oci://ghcr.io/myorg/charts
+  interval: 1h
+---
+# HelmRelease describes the desired release state.
+apiVersion: helm.toolkit.fluxcd.io/v2beta2
+kind: HelmRelease
+metadata:
+  name: forge
+  namespace: forge   # <EDIT> — namespace forge will be installed into
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: forge
+      version: ">=0.1.0 <1.0.0"   # <EDIT> semver range to track
+      sourceRef:
+        kind: HelmRepository
+        name: forge
+        namespace: flux-system
+
+  # Upgrade strategy: retry up to 3 times, then remediate.
+  upgrade:
+    remediation:
+      retries: 3
+  install:
+    remediation:
+      retries: 3
+    createNamespace: true
+
+  values:
+    replicaCount: 2
+
+    image:
+      repository: ghcr.io/<EDIT-ORG>/forge
+      tag: ""   # defaults to chart appVersion
+
+    storage:
+      type: external   # S3 blobs + Postgres meta
+
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 6
+
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 1
+
+    ingress:
+      enabled: true
+      className: nginx
+      hosts:
+        - host: forge.example.com   # <EDIT>
+          paths:
+            - path: /
+              pathType: Prefix
+
+    # Postgres DSN and S3 credentials come from a pre-existing Secret.
+    extraEnvFrom:
+      - secretRef:
+          name: forge-backend-credentials

@@ -84,10 +84,75 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - name: Build image
+      - name: Build image (PR — no push)
         uses: docker/build-push-action@v6
         with:
           context: .
           push: false
           platforms: linux/amd64,linux/arm64
           tags: forge:ci
+
+  publish:
+    name: Publish image + chart
+    # Only runs on pushes to main or version tags; never on PRs.
+    if: github.event_name == 'push'
+    needs: [lint, test, integration]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # needed to push to GHCR
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Docker image ────────────────────────────────────────────────────────
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/forge
+          tags: |
+            # tag :latest on every push to main
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            # tag :vX.Y.Z on version tags
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            # always include a short SHA for traceability
+            type=sha,prefix=sha-,format=short
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── Helm chart ──────────────────────────────────────────────────────────
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+
+      - name: Log Helm into GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | helm registry login ghcr.io \
+                --username "${{ github.actor }}" \
+                --password-stdin
+
+      - name: Package and push chart
+        run: |
+          helm package deploy/helm/forge/
+          helm push forge-*.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
