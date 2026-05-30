@@ -6,14 +6,15 @@
 //	PUT /src/contrib/{pkg}_{ver}.tar.gz  -> publish (DESCRIPTION parsed for index)
 //	GET /src/contrib/PACKAGES            -> generated control-format index
 //	GET /src/contrib/PACKAGES.gz         -> gzipped index
+//	GET /src/contrib/PACKAGES.rds        -> R-serialized index (preferred by renv/pak)
 //	GET /src/contrib/{pkg}_{ver}.tar.gz  -> download
 //
-// Group: read-only fan-out. PACKAGES merges all members (dedup by Package+Version,
-// first member wins); downloads try each member in order.
+// Group: read-only fan-out. All index formats merge across members.
 //
-// TODO: PACKAGES.rds (R-serialized index; needs an rds writer or an R process)
-// and per-OS binary package trees under /bin/. Modern R reads PACKAGES fine for
-// source installs, but renv/pak prefer .rds.
+// PACKAGES.rds is a gzip-compressed R serialization (XDR v2) of a character
+// matrix: rows are packages, columns are Package/Version/Depends/Imports/License.
+// Missing field values are stored as NA_character_. This matches CRAN's own
+// PACKAGES.rds format and is consumable by renv and pak without needing R.
 package cran
 
 import (
@@ -56,6 +57,9 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 		gz := gzip.NewWriter(w)
 		gz.Write(h.packages(c))
 		gz.Close()
+	case r.Method == http.MethodGet && c.Sub == "src/contrib/PACKAGES.rds":
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Write(buildPackagesRDS(h.allPkgRecords(c)))
 	case r.Method == http.MethodPut && strings.HasPrefix(c.Sub, "src/contrib/") && strings.HasSuffix(c.Sub, ".tar.gz"):
 		if c.Repo.Kind != repo.Hosted {
 			http.Error(w, "cannot publish to non-hosted repo", http.StatusMethodNotAllowed)
@@ -151,16 +155,18 @@ func (h *Handler) proxy(w http.ResponseWriter, c *format.Context) {
 	c.Blob.Put(c.Key(c.Sub), &buf)
 }
 
-// packages returns the PACKAGES index for this repo (or merged across members
-// for a group).
-func (h *Handler) packages(c *format.Context) []byte {
-	var recs []pkgRecord
+// allPkgRecords returns merged records for group repos, or direct records for
+// hosted/proxy repos.
+func (h *Handler) allPkgRecords(c *format.Context) []pkgRecord {
 	if c.Repo.Kind == repo.Group {
-		recs = h.groupPkgRecords(c)
-	} else {
-		recs = h.pkgRecords(c)
+		return h.groupPkgRecords(c)
 	}
-	return buildPackages(recs)
+	return h.pkgRecords(c)
+}
+
+// packages returns the PACKAGES index for this repo.
+func (h *Handler) packages(c *format.Context) []byte {
+	return buildPackages(h.allPkgRecords(c))
 }
 
 // pkgRecords loads all package records from this repo's meta namespace.
@@ -217,6 +223,141 @@ func buildPackages(recs []pkgRecord) []byte {
 		b.WriteString("\n")
 	}
 	return []byte(b.String())
+}
+
+// --- PACKAGES.rds: R XDR serialization ------------------------------------
+//
+// R's binary serialization format (version 2, XDR / big-endian) for a
+// character matrix. The structure mirrors what CRAN publishes so renv and pak
+// can consume it directly.
+//
+// Binary layout (after gzip decompression):
+//
+//	"X\n"              format marker (XDR)
+//	int32 version=2
+//	int32 R-written-version  (3.6.3 = 0x00030603)
+//	int32 R-min-version      (2.3.0 = 0x00020300)
+//	STRSXP|HAS_ATTR           matrix elements, column-major
+//	  int32 nrows*ncols
+//	  CHARSXPs...             NA_character_ for absent optional fields
+//	LISTSXP|HAS_TAG           attribute 1: dim
+//	  SYMSXP "dim"
+//	  INTSXP [nrows, ncols]
+//	  LISTSXP|HAS_TAG         attribute 2: dimnames
+//	    SYMSXP "dimnames"
+//	    VECSXP [NULL, col-name STRSXP]
+//	    NILVALUE_SXP           end of pairlist
+
+func buildPackagesRDS(recs []pkgRecord) []byte {
+	cols := []string{"Package", "Version", "Depends", "Imports", "License"}
+	nrows, ncols := len(recs), len(cols)
+
+	var w rdsWriter
+	w.raw([]byte("X\n"))
+	w.i32(2)           // serialization version 2
+	w.i32(0x00030603)  // written by R 3.6.3
+	w.i32(0x00020300)  // readable by R >= 2.3.0
+
+	// STRSXP with HAS_ATTR: column-major matrix data.
+	const (
+		rSTRSXP  = 16
+		rCHARSXP = 9
+		rINTSXP  = 13
+		rVECSXP  = 19
+		rSYMSXP  = 1
+		rHasAttr = 1 << 9  // bit 9: HAS_ATTR
+		rHasTag  = 1 << 10 // bit 10: HAS_TAG
+		rNIL     = 254     // NILVALUE_SXP
+	)
+
+	w.i32(rSTRSXP | rHasAttr)
+	w.i32(int32(nrows * ncols))
+	for c := 0; c < ncols; c++ {
+		for r := 0; r < nrows; r++ {
+			w.charsxp(pkgField(recs[r], cols[c]))
+		}
+	}
+
+	// Attribute 1: dim = c(nrows, ncols)
+	w.i32(rLISTPLY | rHasTag) // LISTSXP|HAS_TAG node
+	w.sym("dim")
+	w.i32(rINTSXP)
+	w.i32(2)
+	w.i32(int32(nrows))
+	w.i32(int32(ncols))
+	// CDR: attribute 2 (dimnames node)
+	w.i32(rLISTPLY | rHasTag) // LISTSXP|HAS_TAG node
+	w.sym("dimnames")
+	// CAR: list(NULL, col_names)
+	w.i32(rVECSXP)
+	w.i32(2) // 2 elements: row names (NULL) + col names
+	w.i32(rNIL)
+	w.i32(rSTRSXP)
+	w.i32(int32(ncols))
+	for _, col := range cols {
+		w.charsxpRaw(col) // column names are never empty
+	}
+	// CDR: end of pairlist
+	w.i32(rNIL)
+
+	// Gzip-compress the serialized bytes.
+	var out bytes.Buffer
+	gz := gzip.NewWriter(&out)
+	gz.Write(w.buf.Bytes())
+	gz.Close()
+	return out.Bytes()
+}
+
+const rLISTPLY = 2 // LISTSXP
+
+func pkgField(rec pkgRecord, col string) string {
+	switch col {
+	case "Package":
+		return rec.Package
+	case "Version":
+		return rec.Version
+	case "Depends":
+		return rec.Depends
+	case "Imports":
+		return rec.Imports
+	case "License":
+		return rec.License
+	}
+	return ""
+}
+
+// rdsWriter writes R's XDR serialization byte stream.
+type rdsWriter struct{ buf bytes.Buffer }
+
+func (w *rdsWriter) raw(b []byte) { w.buf.Write(b) }
+
+// i32 writes a big-endian int32.
+func (w *rdsWriter) i32(v int32) {
+	w.buf.Write([]byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)})
+}
+
+// charsxpRaw writes a CHARSXP with the given (non-empty) string.
+func (w *rdsWriter) charsxpRaw(s string) {
+	w.i32(9) // CHARSXP, CE_NATIVE encoding
+	w.i32(int32(len(s)))
+	w.buf.WriteString(s)
+}
+
+// charsxp writes a CHARSXP, using NA_character_ (length=-1) for empty strings.
+// This matches CRAN's convention: absent optional fields are NA, not "".
+func (w *rdsWriter) charsxp(s string) {
+	if s == "" {
+		w.i32(9)  // CHARSXP
+		w.i32(-1) // length -1 = NA_character_
+		return
+	}
+	w.charsxpRaw(s)
+}
+
+// sym writes a SYMSXP followed by a CHARSXP for the symbol name.
+func (w *rdsWriter) sym(name string) {
+	w.i32(1) // SYMSXP
+	w.charsxpRaw(name)
 }
 
 // parseDescription extracts control fields from {pkg}/DESCRIPTION inside the tarball.

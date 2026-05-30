@@ -1,6 +1,10 @@
 package cran
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/binary"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -85,4 +89,112 @@ func TestGroup_PackagesMerge(t *testing.T) {
 	if count := strings.Count(pkgs, "0.2.0"); count != 1 {
 		t.Errorf("version 0.2.0 appears %d times, want 1", count)
 	}
+}
+
+// --- PACKAGES.rds tests ----------------------------------------------------
+
+// decompressRDS decompresses the gzip wrapper and returns raw XDR bytes.
+func decompressRDS(t *testing.T, data []byte) []byte {
+	t.Helper()
+	gr, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("gzip.NewReader: %v", err)
+	}
+	defer gr.Close()
+	b, err := io.ReadAll(gr)
+	if err != nil {
+		t.Fatalf("io.ReadAll: %v", err)
+	}
+	return b
+}
+
+// readBEInt32 reads a big-endian int32 from data at offset.
+func readBEInt32(data []byte, offset int) int32 {
+	return int32(binary.BigEndian.Uint32(data[offset:]))
+}
+
+func TestBuildPackagesRDS_Header(t *testing.T) {
+	recs := []pkgRecord{
+		{Package: "mathutils", Version: "0.2.0", Imports: "stats", License: "MIT"},
+	}
+	rds := buildPackagesRDS(recs)
+	raw := decompressRDS(t, rds)
+
+	// Check XDR marker.
+	if len(raw) < 14 {
+		t.Fatalf("too short: %d bytes", len(raw))
+	}
+	if raw[0] != 'X' || raw[1] != '\n' {
+		t.Errorf("expected XDR marker 'X\\n', got %q", raw[:2])
+	}
+	// Serialization version = 2.
+	if v := readBEInt32(raw, 2); v != 2 {
+		t.Errorf("expected version 2, got %d", v)
+	}
+}
+
+func TestBuildPackagesRDS_StructuralBytes(t *testing.T) {
+	recs := []pkgRecord{
+		{Package: "foo", Version: "1.0", License: "MIT"},
+		{Package: "bar", Version: "2.0", Depends: "R (>= 4.0)"},
+	}
+	raw := decompressRDS(t, buildPackagesRDS(recs))
+
+	// Offset 14: STRSXP|HAS_ATTR type tag = 16|512 = 528 = 0x210
+	if got := readBEInt32(raw, 14); got != 528 {
+		t.Errorf("type tag at 14: got %d (0x%x), want 528 (STRSXP|HAS_ATTR)", got, got)
+	}
+	// Offset 18: element count = 2 rows * 5 cols = 10
+	if got := readBEInt32(raw, 18); got != 10 {
+		t.Errorf("element count at 18: got %d, want 10", got)
+	}
+}
+
+func TestBuildPackagesRDS_Empty(t *testing.T) {
+	rds := buildPackagesRDS(nil)
+	raw := decompressRDS(t, rds)
+	if len(raw) < 14 {
+		t.Fatalf("empty RDS too short")
+	}
+	// Element count = 0
+	if got := readBEInt32(raw, 18); got != 0 {
+		t.Errorf("expected 0 elements for empty recs, got %d", got)
+	}
+}
+
+func TestBuildPackagesRDS_NAForEmptyFields(t *testing.T) {
+	// Package with no Depends/Imports/License — those fields should be NA (-1).
+	recs := []pkgRecord{{Package: "minimal", Version: "0.1"}}
+	raw := decompressRDS(t, buildPackagesRDS(recs))
+
+	// After header (14) + STRSXP type (4) + count (4) = offset 22.
+	// Element order (column-major): Package, Version, Depends, Imports, License
+	// = "minimal", "0.1", NA, NA, NA
+	//
+	// "minimal": CHARSXP(9) len(7) "minimal" = 4+4+7 = 15 bytes
+	// "0.1":     CHARSXP(9) len(3) "0.1"     = 4+4+3 = 11 bytes
+	// NA:        CHARSXP(9) len(-1)           = 4+4   = 8 bytes each
+
+	off := 22
+	// Skip "minimal" CHARSXP: 4+4+7=15
+	off += 4 + 4 + 7
+	// Skip "0.1" CHARSXP: 4+4+3=11
+	off += 4 + 4 + 3
+	// Next should be NA (Depends): CHARSXP type=9, length=-1
+	if got := readBEInt32(raw, off); got != 9 {
+		t.Errorf("Depends: expected CHARSXP type 9 at %d, got %d", off, got)
+	}
+	if got := readBEInt32(raw, off+4); got != -1 {
+		t.Errorf("Depends: expected NA length -1 at %d, got %d", off+4, got)
+	}
+}
+
+func TestBuildPackagesRDS_Golden(t *testing.T) {
+	recs := []pkgRecord{
+		{Package: "mathutils", Version: "0.2.0", Imports: "stats", License: "MIT"},
+		{Package: "strtools", Version: "1.0.0", License: "GPL-2"},
+	}
+	// Golden-test the decompressed bytes (deterministic, no timestamps).
+	raw := decompressRDS(t, buildPackagesRDS(recs))
+	golden.Assert(t, raw, "packages_two_pkgs.rds")
 }
