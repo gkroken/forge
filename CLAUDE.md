@@ -38,6 +38,7 @@ go build -o forge ./cmd/forge && bash test.sh
 - For changes over ~30 lines or spanning multiple files, state the plan and wait for confirmation before writing code.
 - Never reprint a whole file. Show only changed functions or a diff.
 - Keep `go test ./...` green at all times.
+- **Commit frequently** — after each self-contained unit of work (a feature, a fix, a test suite). Don't batch an entire phase into one commit. Message format: `<scope>: <what and why>` (e.g. `proxy: add circuit breaker`, `cran: fix PACKAGES index off-by-one`).
 
 ## Architecture
 
