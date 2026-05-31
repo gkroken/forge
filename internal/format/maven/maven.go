@@ -618,3 +618,54 @@ func contentType(p string) string {
 		return "application/octet-stream"
 	}
 }
+
+// BrowseRepo implements format.Browsable.
+// Maven blobs live at {repo}/{group/as/path}/{artifactId}/{version}/{file}.
+// We detect the version segment (first part that starts with a digit) to
+// derive groupId and artifactId without a separate metadata store.
+func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
+	if c.Repo.Kind == repo.Group {
+		return format.GroupBrowse(h, c)
+	}
+	prefix := c.Repo.Name + "/"
+	keys, err := c.Blob.List(prefix)
+	if err != nil {
+		return nil, err
+	}
+	type versionSet = map[string]struct{}
+	byComp := map[string]versionSet{}
+	for _, k := range keys {
+		parts := strings.Split(strings.TrimPrefix(k, prefix), "/")
+		// Minimum: groupPart…/artifactId/version/file → at least 4 segments
+		if len(parts) < 4 {
+			continue
+		}
+		verIdx := -1
+		for i, p := range parts {
+			if len(p) > 0 && p[0] >= '0' && p[0] <= '9' {
+				verIdx = i
+				break
+			}
+		}
+		if verIdx < 1 {
+			continue
+		}
+		comp := strings.Join(parts[:verIdx-1], ".") + ":" + parts[verIdx-1]
+		version := parts[verIdx]
+		if byComp[comp] == nil {
+			byComp[comp] = versionSet{}
+		}
+		byComp[comp][version] = struct{}{}
+	}
+	entries := make([]format.BrowseEntry, 0, len(byComp))
+	for comp, vset := range byComp {
+		versions := make([]string, 0, len(vset))
+		for v := range vset {
+			versions = append(versions, v)
+		}
+		sort.Sort(sort.Reverse(sort.StringSlice(versions)))
+		entries = append(entries, format.BrowseEntry{Name: comp, Versions: versions})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+	return entries, nil
+}

@@ -6,6 +6,7 @@ package format
 
 import (
 	"net/http"
+	"sort"
 
 	"forge/internal/blob"
 	"forge/internal/meta"
@@ -47,6 +48,41 @@ func (c *Context) MemberCtx(name string) (*Context, bool) {
 type Handler interface {
 	Format() string
 	Serve(w http.ResponseWriter, r *http.Request, c *Context)
+}
+
+// BrowseEntry represents one component (package, chart, image, …) in a repo's
+// browse view: a name and all known versions, newest-first where deterministic.
+type BrowseEntry struct {
+	Name     string
+	Versions []string
+}
+
+// Browsable is an optional extension to Handler that powers the web UI browse
+// and search views. Handlers that do not implement it show a fallback message.
+type Browsable interface {
+	BrowseRepo(c *Context) ([]BrowseEntry, error)
+}
+
+// GroupBrowse merges BrowseRepo results from every member of a group context.
+// First member that contains a given Name wins; output is sorted by Name.
+func GroupBrowse(h Browsable, c *Context) ([]BrowseEntry, error) {
+	seen := map[string]struct{}{}
+	var all []BrowseEntry
+	for _, name := range c.Repo.Members {
+		mc, ok := c.MemberCtx(name)
+		if !ok {
+			continue
+		}
+		entries, _ := h.BrowseRepo(mc)
+		for _, e := range entries {
+			if _, exists := seen[e.Name]; !exists {
+				seen[e.Name] = struct{}{}
+				all = append(all, e)
+			}
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+	return all, nil
 }
 
 // Registry maps a format name to its Handler.

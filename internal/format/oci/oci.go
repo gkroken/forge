@@ -502,3 +502,32 @@ func newUUID() string {
 	rand.Read(b)
 	return hex.EncodeToString(b)
 }
+
+// BrowseRepo implements format.Browsable.
+// OCI tags are stored at meta key "tags/{image}/{tag}".
+func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
+	keys, err := c.Meta.List(h.ns(c))
+	if err != nil {
+		return nil, err
+	}
+	byImage := map[string][]string{}
+	for _, k := range keys {
+		if !strings.HasPrefix(k, "tags/") {
+			continue
+		}
+		// "tags/{image}/{tag}"
+		rest := strings.TrimPrefix(k, "tags/")
+		image, tag, ok := strings.Cut(rest, "/")
+		if !ok {
+			continue
+		}
+		byImage[image] = append(byImage[image], tag)
+	}
+	entries := make([]format.BrowseEntry, 0, len(byImage))
+	for image, tags := range byImage {
+		sort.Strings(tags)
+		entries = append(entries, format.BrowseEntry{Name: image, Versions: tags})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+	return entries, nil
+}

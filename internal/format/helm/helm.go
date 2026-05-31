@@ -326,3 +326,28 @@ func scanChartYAML(data []byte) chartMeta {
 	}
 	return m
 }
+
+// BrowseRepo implements format.Browsable.
+func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
+	if c.Repo.Kind == repo.Group {
+		return format.GroupBrowse(h, c)
+	}
+	keys, err := c.Meta.List(h.ns(c))
+	if err != nil {
+		return nil, err
+	}
+	byName := map[string][]string{}
+	for _, k := range keys {
+		var rec chartRecord
+		if ok, _ := c.Meta.GetJSON(h.ns(c), k, &rec); ok {
+			byName[rec.Name] = append(byName[rec.Name], rec.Version)
+		}
+	}
+	entries := make([]format.BrowseEntry, 0, len(byName))
+	for name, versions := range byName {
+		sort.Sort(sort.Reverse(sort.StringSlice(versions)))
+		entries = append(entries, format.BrowseEntry{Name: name, Versions: versions})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+	return entries, nil
+}

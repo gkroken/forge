@@ -42,6 +42,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -734,4 +735,32 @@ func lastPathSeg(p string) string {
 		return p[i+1:]
 	}
 	return p
+}
+
+// BrowseRepo implements format.Browsable.
+func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
+	if c.Repo.Kind == repo.Group {
+		return format.GroupBrowse(h, c)
+	}
+	keys, err := c.Meta.List(h.ns(c))
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]format.BrowseEntry, 0, len(keys))
+	for _, pkg := range keys {
+		var packument map[string]any
+		if ok, _ := c.Meta.GetJSON(h.ns(c), pkg, &packument); !ok {
+			continue
+		}
+		var versions []string
+		if vs, ok := packument["versions"].(map[string]any); ok {
+			for ver := range vs {
+				versions = append(versions, ver)
+			}
+		}
+		sort.Sort(sort.Reverse(sort.StringSlice(versions)))
+		entries = append(entries, format.BrowseEntry{Name: pkg, Versions: versions})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+	return entries, nil
 }

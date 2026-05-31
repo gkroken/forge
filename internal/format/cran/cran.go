@@ -424,3 +424,19 @@ func scanDescription(data []byte) pkgRecord {
 		License: fields["License"],
 	}
 }
+
+// BrowseRepo implements format.Browsable. allPkgRecords already handles groups.
+func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
+	recs := h.allPkgRecords(c)
+	byName := map[string][]string{}
+	for _, r := range recs {
+		byName[r.Package] = append(byName[r.Package], r.Version)
+	}
+	entries := make([]format.BrowseEntry, 0, len(byName))
+	for name, versions := range byName {
+		sort.Sort(sort.Reverse(sort.StringSlice(versions)))
+		entries = append(entries, format.BrowseEntry{Name: name, Versions: versions})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+	return entries, nil
+}
