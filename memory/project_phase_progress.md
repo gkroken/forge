@@ -21,7 +21,7 @@ Progress as of 2026-05-31. All findings verified by direct codebase inspection.
 
 **Partially complete (gaps below):**
 - P2: Token auth + per-repo RBAC + authz matrix test ✓ — OIDC/LDAP/SAML descoped to post-GA (see note below)
-- P3: Most deliverables done — **CRAN binary trees (/bin/) not implemented; Helm oci:// untested in conformance; scoped npm and group-mode conformance absent**
+- P3: All deliverables done ✓ — CRAN binary trees implemented (Windows .zip + macOS .tgz, hosted-only), Helm oci:// conformance tested, scoped npm group conformance complete
 - P5: Job queue + idempotent indexer ✓ — **queue.NewPG never wired in main.go; production always uses MemQueue** (critical HA bug)
 - P7: SAST, DAST, dep scan, container scan, SBOM, signing ✓ — **chaos suite not implemented; pen test pending (external)**
 - Phase K: Container image, Helm chart, forge-stack bundled chart, GitOps assets, cluster-install test, quickstart gate ✓ — **dogfooding not implemented** *(Terraform cloud modules descoped to post-GA — see §1a.B)*
@@ -60,7 +60,7 @@ All client matrix gaps closed (2026-05-31):
 13. ~~**Chaos suite**~~ — **descoped to post-GA.** HA correctness is covered by architecture (stateless app, PG queue, S3 blobs) and the 24h soak run.
 14. ~~**Terraform apply→destroy nightly**~~ — **descoped to post-GA** with Terraform modules
 15. ~~**Dogfooding in CI**~~ — **COMPLETE ✓** Publish job starts forge in eval mode and pushes its own Helm chart to it, then pulls back to verify. Closes Phase K exit criterion.
-16. **CRAN per-OS binary trees** under /bin/ (P3) — only src/contrib/ is served
+16. ~~**CRAN per-OS binary trees**~~ — **COMPLETE ✓** Windows .zip and macOS .tgz binary packages served from /bin/{platform}/contrib/{rver}/. PACKAGES/PACKAGES.gz/PACKAGES.rds per platform. Hosted-only; proxy/group deferred.
 17. ~~**Go version + OS matrix**~~ — **COMPLETE ✓** Unit test job now runs Go (stable, oldstable) × (ubuntu-latest, macos-latest). Coverage gate and upload scoped to ubuntu+stable only.
 
 ### Tier 5 — Quality gaps (not hard blockers)

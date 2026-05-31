@@ -1,7 +1,6 @@
-// Package cran implements a CRAN-style R package repository (source packages).
+// Package cran implements a CRAN-style R package repository.
 //
-// CRAN is the simplest of the four: static files in a fixed layout plus one
-// aggregate index file (PACKAGES) in Debian-control format.
+// Source packages (all platforms):
 //
 //	PUT /src/contrib/{pkg}_{ver}.tar.gz  -> publish (DESCRIPTION parsed for index)
 //	GET /src/contrib/PACKAGES            -> generated control-format index
@@ -9,7 +8,16 @@
 //	GET /src/contrib/PACKAGES.rds        -> R-serialized index (preferred by renv/pak)
 //	GET /src/contrib/{pkg}_{ver}.tar.gz  -> download
 //
-// Group: read-only fan-out. All index formats merge across members.
+// Binary packages (Windows .zip, macOS .tgz):
+//
+//	PUT /bin/{platform}/contrib/{rver}/{pkg}_{ver}.{zip|tgz}  -> publish
+//	GET /bin/{platform}/contrib/{rver}/PACKAGES[.gz|.rds]     -> index
+//	GET /bin/{platform}/contrib/{rver}/{pkg}_{ver}.{zip|tgz}  -> download
+//
+// Platform examples: "windows", "macosx/x86_64", "macosx/big-sur-arm64".
+// Binary trees are hosted-only; proxy and group modes are not yet supported.
+//
+// Group: read-only fan-out for source packages. All index formats merge.
 //
 // PACKAGES.rds is a gzip-compressed R serialization (XDR v2) of a character
 // matrix: rows are packages, columns are Package/Version/Depends/Imports/License.
@@ -19,6 +27,7 @@ package cran
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"errors"
@@ -70,6 +79,8 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 		h.publish(w, r, c)
 	case r.Method == http.MethodGet && strings.HasSuffix(c.Sub, ".tar.gz"):
 		h.download(w, c)
+	case strings.HasPrefix(c.Sub, "bin/"):
+		h.serveBinary(w, r, c)
 	default:
 		if c.Repo.Kind == repo.Proxy && r.Method == http.MethodGet {
 			h.proxy(w, c)
@@ -428,6 +439,172 @@ func scanDescription(data []byte) pkgRecord {
 		Depends: fields["Depends"], Imports: fields["Imports"],
 		License: fields["License"],
 	}
+}
+
+// --- Binary tree support ---------------------------------------------------
+
+// serveBinary dispatches requests under /bin/.
+func (h *Handler) serveBinary(w http.ResponseWriter, r *http.Request, c *format.Context) {
+	platform, rver, file, ok := parseBinPath(c.Sub)
+	if !ok {
+		http.Error(w, "invalid binary path", http.StatusNotFound)
+		return
+	}
+	switch {
+	case r.Method == http.MethodGet && (file == "PACKAGES" || file == "PACKAGES.gz" || file == "PACKAGES.rds"):
+		h.serveBinIndex(w, c, platform, rver, file)
+	case r.Method == http.MethodPut && (strings.HasSuffix(file, ".zip") || strings.HasSuffix(file, ".tgz")):
+		if c.Repo.Kind != repo.Hosted {
+			http.Error(w, "cannot publish to non-hosted repo", http.StatusMethodNotAllowed)
+			return
+		}
+		h.publishBin(w, r, c, platform, rver, file)
+	case r.Method == http.MethodGet && (strings.HasSuffix(file, ".zip") || strings.HasSuffix(file, ".tgz")):
+		h.downloadBin(w, c)
+	default:
+		http.Error(w, "unsupported binary request", http.StatusNotFound)
+	}
+}
+
+// serveBinIndex generates and serves the PACKAGES index for one platform+rver.
+func (h *Handler) serveBinIndex(w http.ResponseWriter, c *format.Context, platform, rver, file string) {
+	recs := h.binPkgRecords(c, platform, rver)
+	switch file {
+	case "PACKAGES":
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write(buildPackages(recs))
+	case "PACKAGES.gz":
+		w.Header().Set("Content-Type", "application/gzip")
+		gz := gzip.NewWriter(w)
+		gz.Write(buildPackages(recs))
+		gz.Close()
+	case "PACKAGES.rds":
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Write(buildPackagesRDS(recs))
+	}
+}
+
+// publishBin stores a binary package and records its metadata.
+func (h *Handler) publishBin(w http.ResponseWriter, r *http.Request, c *format.Context, platform, rver, file string) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	rec, err := parseBinDescription(body, file)
+	if err != nil {
+		// Fall back to filename when DESCRIPTION is absent or unparseable.
+		pkg, ver, ok := parsePkgFilename(file)
+		if !ok {
+			http.Error(w, "cannot determine package name from: "+file, http.StatusBadRequest)
+			return
+		}
+		rec = pkgRecord{Package: pkg, Version: ver}
+	}
+	if _, err := c.Blob.Put(c.Key(c.Sub), bytes.NewReader(body)); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	c.Meta.PutJSON(h.binNS(c, platform, rver), rec.Package+"_"+rec.Version, rec)
+	w.WriteHeader(http.StatusCreated)
+	fmt.Fprintf(w, "stored binary %s %s (%s/%s)\n", rec.Package, rec.Version, platform, rver)
+}
+
+// downloadBin serves a stored binary package.
+func (h *Handler) downloadBin(w http.ResponseWriter, c *format.Context) {
+	rc, err := c.Blob.Get(c.Key(c.Sub))
+	if err != nil {
+		http.NotFound(w, nil)
+		return
+	}
+	defer rc.Close()
+	if strings.HasSuffix(c.Sub, ".zip") {
+		w.Header().Set("Content-Type", "application/zip")
+	} else {
+		w.Header().Set("Content-Type", "application/gzip")
+	}
+	io.Copy(w, rc)
+}
+
+// binNS returns the meta namespace for binary packages of a given platform+rver.
+// e.g. "myrepo:cran:bin:windows:4.4" or "myrepo:cran:bin:macosx/x86_64:4.4".
+func (h *Handler) binNS(c *format.Context, platform, rver string) string {
+	return c.Repo.Name + ":cran:bin:" + platform + ":" + rver
+}
+
+// binPkgRecords loads all binary package records for a given platform+rver.
+func (h *Handler) binPkgRecords(c *format.Context, platform, rver string) []pkgRecord {
+	keys, _ := c.Meta.List(h.binNS(c, platform, rver))
+	sort.Strings(keys)
+	var recs []pkgRecord
+	for _, k := range keys {
+		var rec pkgRecord
+		if ok, _ := c.Meta.GetJSON(h.binNS(c, platform, rver), k, &rec); ok {
+			recs = append(recs, rec)
+		}
+	}
+	return recs
+}
+
+// parseBinPath splits a sub-path like "bin/windows/contrib/4.4/PACKAGES" into
+// (platform="windows", rver="4.4", file="PACKAGES"). Also handles multi-segment
+// platform paths e.g. "bin/macosx/x86_64/contrib/4.4/pkg_1.0.0.tgz".
+func parseBinPath(sub string) (platform, rver, file string, ok bool) {
+	rest, found := strings.CutPrefix(sub, "bin/")
+	if !found {
+		return "", "", "", false
+	}
+	idx := strings.Index(rest, "/contrib/")
+	if idx < 0 {
+		return "", "", "", false
+	}
+	platform = rest[:idx]
+	after := rest[idx+len("/contrib/"):]
+	rver, file, found = strings.Cut(after, "/")
+	return platform, rver, file, found && file != ""
+}
+
+// parsePkgFilename extracts Package and Version from a filename like
+// "mypackage_1.0.0.zip" or "mypackage_1.0.0.tgz".
+func parsePkgFilename(filename string) (pkg, ver string, ok bool) {
+	name := strings.TrimSuffix(strings.TrimSuffix(filename, ".zip"), ".tgz")
+	idx := strings.LastIndex(name, "_")
+	if idx < 0 {
+		return "", "", false
+	}
+	return name[:idx], name[idx+1:], true
+}
+
+// parseBinDescription reads the DESCRIPTION file from a binary package archive.
+// Windows packages are .zip; macOS/Linux binary packages are .tgz.
+func parseBinDescription(data []byte, filename string) (pkgRecord, error) {
+	if strings.HasSuffix(filename, ".zip") {
+		return parseDescriptionFromZip(data)
+	}
+	return parseDescription(data)
+}
+
+// parseDescriptionFromZip reads {pkg}/DESCRIPTION from a Windows .zip binary.
+func parseDescriptionFromZip(data []byte) (pkgRecord, error) {
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return pkgRecord{}, err
+	}
+	for _, f := range zr.File {
+		if path.Base(f.Name) == "DESCRIPTION" {
+			rc, err := f.Open()
+			if err != nil {
+				return pkgRecord{}, err
+			}
+			defer rc.Close()
+			content, err := io.ReadAll(rc)
+			if err != nil {
+				return pkgRecord{}, err
+			}
+			return scanDescription(content), nil
+		}
+	}
+	return pkgRecord{}, fmt.Errorf("DESCRIPTION not found in zip")
 }
 
 // BrowseRepo implements format.Browsable. allPkgRecords already handles groups.

@@ -2,6 +2,7 @@ package cran
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"encoding/binary"
@@ -385,4 +386,185 @@ func TestFormat_CRAN(t *testing.T) {
 	if got := New().Format(); got != "cran" {
 		t.Fatalf("Format() = %q, want cran", got)
 	}
+}
+
+// ── Binary tree tests ─────────────────────────────────────────────────────────
+
+func TestParseBinPath(t *testing.T) {
+	cases := []struct {
+		sub              string
+		platform, rver   string
+		file             string
+		ok               bool
+	}{
+		{"bin/windows/contrib/4.4/PACKAGES",             "windows",         "4.4", "PACKAGES",           true},
+		{"bin/windows/contrib/4.4/mypackage_1.0.0.zip",  "windows",         "4.4", "mypackage_1.0.0.zip", true},
+		{"bin/macosx/x86_64/contrib/4.4/pkg_1.0.0.tgz", "macosx/x86_64",   "4.4", "pkg_1.0.0.tgz",      true},
+		{"bin/macosx/big-sur-arm64/contrib/4.4/PACKAGES","macosx/big-sur-arm64","4.4","PACKAGES",         true},
+		{"bin/macosx/contrib/4.2/pkg_1.0.0.tgz",        "macosx",          "4.2", "pkg_1.0.0.tgz",      true},
+		{"src/contrib/pkg_1.0.0.tar.gz",                 "",                "",    "",                   false},
+		{"bin/windows/contrib/4.4",                      "windows",         "4.4", "",                   false},
+	}
+	for _, tc := range cases {
+		platform, rver, file, ok := parseBinPath(tc.sub)
+		if ok != tc.ok || platform != tc.platform || rver != tc.rver || file != tc.file {
+			t.Errorf("parseBinPath(%q) = (%q,%q,%q,%v), want (%q,%q,%q,%v)",
+				tc.sub, platform, rver, file, ok,
+				tc.platform, tc.rver, tc.file, tc.ok)
+		}
+	}
+}
+
+func TestParsePkgFilename(t *testing.T) {
+	cases := []struct {
+		file       string
+		pkg, ver   string
+		ok         bool
+	}{
+		{"mypackage_1.0.0.zip",   "mypackage", "1.0.0", true},
+		{"mypackage_1.0.0.tgz",   "mypackage", "1.0.0", true},
+		{"my_pkg_2.1.0.zip",      "my_pkg",    "2.1.0", true},
+		{"nounderscore.zip",       "",          "",      false},
+	}
+	for _, tc := range cases {
+		pkg, ver, ok := parsePkgFilename(tc.file)
+		if ok != tc.ok || pkg != tc.pkg || ver != tc.ver {
+			t.Errorf("parsePkgFilename(%q) = (%q,%q,%v), want (%q,%q,%v)",
+				tc.file, pkg, ver, ok, tc.pkg, tc.ver, tc.ok)
+		}
+	}
+}
+
+func TestParseDescriptionFromZip(t *testing.T) {
+	data := makeWindowsBinPkg(t, "ziptest", "2.0.0")
+	rec, err := parseDescriptionFromZip(data)
+	if err != nil {
+		t.Fatalf("parseDescriptionFromZip: %v", err)
+	}
+	if rec.Package != "ziptest" || rec.Version != "2.0.0" {
+		t.Fatalf("unexpected record: %+v", rec)
+	}
+}
+
+func TestBinaryTree_WindowsPublishAndIndex(t *testing.T) {
+	c := newCRANCtx(t)
+
+	// PUT a Windows binary package.
+	pkg := makeWindowsBinPkg(t, "winpkg", "1.0.0")
+	rw := cranServe(c, http.MethodPut, "bin/windows/contrib/4.4/winpkg_1.0.0.zip", bytes.NewReader(pkg))
+	if rw.Code != http.StatusCreated {
+		t.Fatalf("PUT binary: got %d, body: %s", rw.Code, rw.Body)
+	}
+
+	// GET PACKAGES — must list the uploaded package.
+	rw = cranServe(c, http.MethodGet, "bin/windows/contrib/4.4/PACKAGES", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("GET PACKAGES: got %d", rw.Code)
+	}
+	if !strings.Contains(rw.Body.String(), "Package: winpkg") {
+		t.Fatalf("PACKAGES missing package, got: %s", rw.Body)
+	}
+
+	// GET PACKAGES.gz — must decompress to the same content.
+	rw = cranServe(c, http.MethodGet, "bin/windows/contrib/4.4/PACKAGES.gz", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("GET PACKAGES.gz: got %d", rw.Code)
+	}
+	gr, _ := gzip.NewReader(rw.Body)
+	plain, _ := io.ReadAll(gr)
+	if !strings.Contains(string(plain), "Package: winpkg") {
+		t.Fatalf("PACKAGES.gz decompressed missing package")
+	}
+
+	// GET the binary file itself.
+	rw = cranServe(c, http.MethodGet, "bin/windows/contrib/4.4/winpkg_1.0.0.zip", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("GET binary package: got %d", rw.Code)
+	}
+	if rw.Header().Get("Content-Type") != "application/zip" {
+		t.Fatalf("unexpected Content-Type: %s", rw.Header().Get("Content-Type"))
+	}
+}
+
+func TestBinaryTree_macOSTgzPublishAndIndex(t *testing.T) {
+	c := newCRANCtx(t)
+
+	// PUT a macOS binary package (.tgz — same format as source but binary content).
+	pkg := makeCRANPkg(t, "macpkg", "1.0.0")
+	rw := cranServe(c, http.MethodPut, "bin/macosx/x86_64/contrib/4.4/macpkg_1.0.0.tgz", bytes.NewReader(pkg))
+	if rw.Code != http.StatusCreated {
+		t.Fatalf("PUT macOS binary: got %d, body: %s", rw.Code, rw.Body)
+	}
+
+	// PACKAGES index for this platform must list the package.
+	rw = cranServe(c, http.MethodGet, "bin/macosx/x86_64/contrib/4.4/PACKAGES", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("GET macOS PACKAGES: got %d", rw.Code)
+	}
+	if !strings.Contains(rw.Body.String(), "Package: macpkg") {
+		t.Fatalf("macOS PACKAGES missing package: %s", rw.Body)
+	}
+
+	// Windows PACKAGES must NOT bleed into macOS PACKAGES (platform isolation).
+	winPkg := makeWindowsBinPkg(t, "winpkg", "1.0.0")
+	cranServe(c, http.MethodPut, "bin/windows/contrib/4.4/winpkg_1.0.0.zip", bytes.NewReader(winPkg))
+	rw = cranServe(c, http.MethodGet, "bin/macosx/x86_64/contrib/4.4/PACKAGES", nil)
+	if strings.Contains(rw.Body.String(), "winpkg") {
+		t.Fatal("Windows package leaked into macOS PACKAGES index")
+	}
+}
+
+func TestBinaryTree_PublishToNonHostedRejected(t *testing.T) {
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	c := &format.Context{
+		Repo: repo.Repository{Name: "cran-proxy", Format: "cran", Kind: repo.Proxy},
+		Blob: b, Meta: m,
+	}
+	pkg := makeWindowsBinPkg(t, "pkg", "1.0.0")
+	rw := cranServe(c, http.MethodPut, "bin/windows/contrib/4.4/pkg_1.0.0.zip", bytes.NewReader(pkg))
+	if rw.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rw.Code)
+	}
+}
+
+func TestBinaryTree_FilenameOnlyFallback(t *testing.T) {
+	c := newCRANCtx(t)
+	// Upload a zip whose DESCRIPTION is missing — forge falls back to filename.
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	f, _ := zw.Create("mypkg/README")
+	f.Write([]byte("no DESCRIPTION here"))
+	zw.Close()
+
+	rw := cranServe(c, http.MethodPut, "bin/windows/contrib/4.4/mypkg_3.0.0.zip", &buf)
+	if rw.Code != http.StatusCreated {
+		t.Fatalf("filename fallback: got %d, body: %s", rw.Code, rw.Body)
+	}
+	rw = cranServe(c, http.MethodGet, "bin/windows/contrib/4.4/PACKAGES", nil)
+	if !strings.Contains(rw.Body.String(), "Package: mypkg") {
+		t.Fatalf("filename fallback package not indexed: %s", rw.Body)
+	}
+}
+
+func TestBinaryTree_InvalidPath(t *testing.T) {
+	c := newCRANCtx(t)
+	rw := cranServe(c, http.MethodGet, "bin/windows/nocontrib/4.4/PACKAGES", nil)
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("invalid path: expected 404, got %d", rw.Code)
+	}
+}
+
+// makeWindowsBinPkg creates a minimal Windows binary package (.zip) with a
+// DESCRIPTION file, matching the structure R expects for binary package installs.
+func makeWindowsBinPkg(t *testing.T, pkg, version string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	desc := fmt.Sprintf("Package: %s\nVersion: %s\nLicense: MIT\n", pkg, version)
+	f, _ := zw.Create(pkg + "/DESCRIPTION")
+	f.Write([]byte(desc))
+	zw.Close()
+	return buf.Bytes()
 }
