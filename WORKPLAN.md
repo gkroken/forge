@@ -63,13 +63,19 @@ Everything needed to run forge is declarative and version-controlled — a fresh
 environment is reproducible from the repo with no click-ops:
 
 - **Helm chart** for the app (templated, linted, versioned, published in CI).
-- **Terraform modules** (`deploy/terraform/`) for cloud dependencies: managed
-  Postgres, object-storage bucket + lifecycle rules, IAM/service accounts,
-  DNS/ingress. Modular per cloud (AWS/GCP/Azure) over a shared interface.
+- **`forge-stack` Helm chart** bundles Postgres + MinIO as sub-charts, giving a
+  fully self-contained production install with no external dependencies.
 - **GitOps-ready**: chart + values consumable by Argo CD / Flux; example
   `Application`/`Kustomization` provided.
 - Image build is reproducible and pinned; releases are signed with SBOM (ties
   into P7). No step in "stand up forge" is a manual console action.
+
+> **Scope note (post-GA):** Terraform modules for provisioning cloud-managed
+> dependencies (AWS RDS, GCP Cloud SQL, Azure, etc.) are out of scope for GA.
+> Orgs that need Terraform for their cloud layer can point forge at any
+> Postgres + S3-compatible store via env vars; the `forge-stack` chart covers
+> the common case without Terraform. Cloud Terraform modules are a post-GA
+> deliverable.
 
 ### C. Easy to set up
 Two clearly-separated paths, both fast:
@@ -78,9 +84,10 @@ Two clearly-separated paths, both fast:
   static binary) → forge running with embedded filesystem + SQLite-class
   metadata, no Postgres/S3 needed. This *is* the prototype's zero-config mode,
   promoted to a supported tier.
-- **Production:** `terraform apply` (deps) then `helm install` (app) with a
-  documented quickstart. Sensible defaults, generated secrets, schema
-  auto-migrate on boot behind a flag.
+- **Production:** `helm install forge-stack` (bundles Postgres + MinIO) with a
+  documented quickstart. Sensible defaults, schema auto-migrate on boot. Orgs
+  with an existing Postgres + S3-compatible store can point the standalone
+  `forge` chart at them via env vars instead.
 - **Gate:** a clean machine reaches a successful `npm publish` (or equivalent)
   in **under 10 minutes**, measured by the timed quickstart test (§5.12).
 
@@ -141,19 +148,17 @@ matures alongside every other phase rather than landing at the end.
   Ingress, HPA, PDB, ConfigMap/Secret, probes, resource limits, configurable
   storage backend (eval embedded vs Postgres+S3). `helm lint` + schema-validated
   `values.yaml`.
-- **Terraform modules** `deploy/terraform/` (P1, per-cloud): managed Postgres,
-  object bucket + lifecycle, IAM/service accounts, DNS/ingress; shared module
-  interface across AWS/GCP/Azure.
 - **GitOps assets**: example Argo CD `Application` / Flux `Kustomization`.
 - **Quickstart docs + timed setup test**: eval path (`docker compose up`) and
-  production path (`terraform apply` → `helm install`), both measured against
-  the < 10-minute gate.
+  production path (`helm install forge-stack`), both measured against the
+  < 10-minute gate.
 - **Dogfooding**: CI publishes forge's own Helm chart + OCI image *to forge*.
 - Release signing + SBOM land in P7.
+- *(Post-GA)* Terraform modules for cloud-managed Postgres/S3 (AWS, GCP, Azure).
 
 **Exit:** `helm install` brings up an HA instance on a clean cluster that passes
-the conformance smoke set; `terraform plan` is clean from zero state; the timed
-quickstart test is green for both eval and production paths (§5.12).
+the conformance smoke set; the timed quickstart test is green for both eval and
+production paths (§5.12).
 
 
 - `meta.Store` on Postgres (schema, migrations, pooling, tx boundaries).
@@ -370,15 +375,10 @@ The DevOps acceptance criteria are *tested*, not asserted in prose:
   then run the conformance smoke set against the deployed service. Asserts HPA,
   PDB, probes, and graceful drain (delete a pod mid-publish → no failed client
   op).
-- **IaC validation:** `terraform fmt -check`, `validate`, and `plan` against
-  each cloud module from zero state; `tflint`/`checkov` for policy. A nightly
-  apply→destroy in a sandbox account proves the modules actually provision.
-- **GitOps dry-run:** Argo CD / Flux render of the example app must reconcile
-  cleanly (no drift, no manual steps).
 - **Timed quickstart gate (req C):** an automated test starts from a clean
   runner and measures wall-clock to first successful publish for *both* the
-  `docker compose` eval path and the `helm install` production path. **Fails the
-  build if either exceeds 10 minutes.**
+  `docker compose` eval path and the `helm install forge-stack` production path.
+  **Fails the build if either exceeds 10 minutes.**
 - **Image hygiene:** container scan (no High/Critical), non-root + read-only
   root FS asserted, multi-arch manifest present.
 
@@ -399,11 +399,10 @@ The DevOps acceptance criteria are *tested*, not asserted in prose:
 ## 7. CI/CD
 
 - **Per-PR:** lint, vet, `go test -race` (unit/contract/integration), coverage
-  gate, affected conformance scenarios, SAST, dependency scan, `helm lint` +
-  `terraform validate`/`plan`, container scan.
+  gate, affected conformance scenarios, SAST, dependency scan, `helm lint`,
+  container scan.
 - **Nightly:** full conformance matrix (all clients × OS), live upstream smoke,
-  DAST, container scan, **kind/k3s `helm install` + timed quickstart gate**,
-  Terraform apply→destroy in a sandbox account.
+  DAST, container scan, **kind/k3s `helm install` + timed quickstart gate**.
 - **Pre-release:** load + soak + chaos, migration up/down on prod-sized data,
   SBOM + signed artifacts, **publish image + Helm chart (dogfooded to forge).**
 - **Matrix:** Go (stable, prior), Linux/macOS; client versions per §5.4.

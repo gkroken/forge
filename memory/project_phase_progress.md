@@ -1,75 +1,83 @@
 ---
 name: project-phase-progress
-description: Current phase completion status and what's in progress for the forge artifact repository project
+description: Current phase completion status and GA gap analysis for the forge artifact repository project — verified against codebase 2026-05-31
 metadata:
   type: project
 ---
 
-Progress as of 2026-05-31.
+Progress as of 2026-05-31. All findings verified by direct codebase inspection.
 
 **Why:** Building forge from prototype → GA per WORKPLAN.md. Phases are sequential but Phase K is cross-cutting.
 
-**Completed phases:**
-- P0: CI, testcontainers harness, golden-file framework, coverage gates
-- P1: Postgres meta.Store, S3/MinIO blob.Store
-- P2: Token-based AuthN/AuthZ with per-repo RBAC
-- P3: All format completeness (Maven SNAPSHOT, Gradle .module, npm dist-tags/deprecate/audit, OCI/Docker registry, CRAN PACKAGES.rds, group repos)
-- P4: Proxy cache correctness — TTL, ETag, negative cache, stale-on-error, retries, upstream auth, circuit breaker (all in internal/proxy)
-- P5: Job queue (internal/queue — Mem + PG impls), idempotent npm packument regen (internal/indexer), Maven SNAPSHOT race fix (per-artifact records), server wired with queue
-- P6: Admin API, web UI, metrics/tracing, audit log, Grafana dashboard, runbooks (all exit criteria met)
-- Phase K: Container image, Helm chart (forge + forge-stack), Terraform modules (AWS/GCP), GitOps assets, CI cluster-install + quickstart gate (all exit criteria met)
+---
 
-**Phase 7 — Security & GA hardening — COMPLETE (as of 2026-05-31):**
-All P7 deliverables shipped. Remaining GA blockers are tracked separately below.
+## Phase completion (code-verified)
 
-Delivered in P7:
-- meta.FS path traversal fix: resolve()/resolveDir() reject ns inputs that escape root (was unfixed; blob.FS was already safe)
-- CI security job (per-PR): gosec SAST (-severity medium), govulncheck dependency scan
-- CI docker job extended: Trivy image scan (HIGH/CRITICAL, ignore-unfixed) on every PR build
-- publish job extended: syft SPDX-JSON SBOM (source + image), cosign keyless image signing (Sigstore/Rekor), self-verification, SBOM attached to GitHub releases on vX.Y.Z tags
-- Path-traversal fuzz suite: FuzzBlobFSKey, FuzzMetaFSNS, FuzzMetaFSKey (seed-corpus runs in go test ./...; engine mode via -fuzz flag)
-- AuthZ matrix extended to 35 HTTP-level cases: OCI middleware (WWW-Authenticate, JSON error body), HEAD/DELETE/POST/PATCH method mapping, npm Basic-auth bearer format, RequireAdmin, expired token
-- Security response headers middleware: X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Content-Security-Policy (frame-ancestors 'none', no unsafe-eval) on every response
-- DAST CI job (nightly): ZAP baseline passive scan via docker compose; .zap/rules.tsv tunes false positives; fails on Medium+
-- k6 load suite: load/smoke.js (3-min nightly gate — metadata GET p99<50ms, 50 concurrent publishes zero-failure, index-verify 100% readable); load/soak.js (24h pre-release, not CI-gated)
-- Pen test scope + threat model: docs/security/pentest-scope.md (55-route endpoint inventory, known-safe list, 7 priority targets), docs/security/threat-model.md (STRIDE table, 6 open findings)
-- SEC-001 fixed: http.MaxBytesReader (5 GiB default) + Content-Length pre-check → 413 on PUT/POST/PATCH
-- SEC-002 fixed: validateGroupPolicy + validateMemberPolicy in admin API; public group over private member rejected in both directions
+**Genuinely complete:**
+- P0: CI, testcontainers harness, golden-file framework (maven-metadata, snapshot, helm index, CRAN PACKAGES text+RDS), coverage gate (75% overall)
+- P1: Postgres meta.Store + S3/MinIO blob.Store; contract suites run against both (integration tag); up/down migration test
+- P4: Full proxy/cache correctness — TTL, ETag revalidation, negative cache, stale-on-error, retries, upstream auth, circuit breaker (all in internal/proxy)
+- P6 (partial — see gap #10): Admin API, web UI, metrics (Prometheus), audit log, Grafana dashboard, runbooks, search — but **tracing is missing**
 
-**Open findings in threat model (not GA-blocking individually, but documented):**
-- SEC-003 (Low): No rate limiting — backlog
-- SEC-004 (Info): Admin SSRF via proxy upstream — accepted risk
-- SEC-005 (Info): Bootstrap token window — accepted risk, deployment guidance written
-- SEC-006 (Info): /metrics unauthenticated — accepted risk, network policy recommended
+**Partially complete (gaps below):**
+- P2: Token auth + per-repo RBAC + authz matrix test ✓ — **OIDC/LDAP/SAML never implemented**
+- P3: Most deliverables done — **CRAN binary trees (/bin/) not implemented; Helm oci:// untested in conformance; scoped npm and group-mode conformance absent**
+- P5: Job queue + idempotent indexer ✓ — **queue.NewPG never wired in main.go; production always uses MemQueue** (critical HA bug)
+- P7: SAST, DAST, dep scan, container scan, SBOM, signing ✓ — **chaos suite not implemented; pen test pending (external)**
+- Phase K: Container image, Helm chart, forge-stack bundled chart, GitOps assets, cluster-install test, quickstart gate ✓ — **dogfooding not implemented** *(Terraform cloud modules descoped to post-GA — see §1a.B)*
 
-**GA blockers remaining (from §1 workplan):**
+---
 
-1. **Conformance suite incomplete (HARD BLOCKER)**
-   - Only npm has real-client conformance tests (3 tests: proxy install, cache hit, hosted publish+install) in internal/conformance/
-   - Maven (mvn 3.6/3.9, gradle 7/8), Helm (helm 3.x, OCI push/pull), CRAN (R 4.x, renv, pak), OCI (docker/oras) have ZERO conformance tests
-   - Workplan §1 requires all formats × {hosted, proxy} × client matrix green
-   - This is the largest remaining code gap; ~2-3 days per format
+## GA blockers — full list (verified 2026-05-31)
 
-2. **Coverage gate not met (HARD BLOCKER)**
-   - Current: 55.5% overall, target ≥75% (§5.10); core packages target ≥85%
-   - Per-package: auth 82.6% ✓, proxy 85.5% ✓, server 69.9%, indexer 73.8%, meta 55.1%, blob 43.5%, format handlers 23-66%
-   - s3store.go and pgstore.go show 0% in unit suite (they're integration-tagged; don't count toward gate)
-   - CI coverage gate is still at the 35% lenient placeholder — needs ratcheting once coverage improves
-   - Format handler coverage best raised in parallel with conformance (same HTTP paths exercised)
+### Tier 0 — External (cannot code-fix)
 
-3. **Third-party pen test (HARD BLOCKER — external)**
-   - Scope document ready (docs/security/pentest-scope.md)
-   - Actual engagement not yet scheduled; must complete with no High/Critical open for GA
-   - Not a code task — needs external scheduling
+1. **Third-party pen test** — hard §1 blocker; scope doc at docs/security/pentest-scope.md; engagement not scheduled
+2. **24h soak run** — soft §1 blocker; load/soak.js exists; needs persistent deployment + manual trigger
 
-4. **24h soak test not run (SOFT — pre-release step)**
-   - load/soak.js exists and is documented
-   - Needs a persistent deployment and manual trigger before GA tag
-   - Not CI-gated by design
+### Tier 1 — Code bug that breaks a stated §1 guarantee
 
-5. **Multi-node HA not explicitly tested (SOFT)**
-   - Architecture is stateless (P1 storage interfaces); CI tests single-node kind
-   - "≥2 app nodes, no sticky state" from §1 not yet exercised end-to-end
-   - Can be validated during soak test or as a separate chaos run
+3. **PG queue not wired in main.go** — `cmd/forge/main.go:161` always uses `queue.NewMem(256)`, even when `POSTGRES_DSN` is set. The comment on line 158 documents the fix ("pass a `queue.NewPG(metaPG.DB())` here instead") but the code never does it. In HA multi-pod mode: index-regen jobs are lost on pod restart and not shared across pods. Directly breaks §1 HA claim and P5 "no lost updates" exit criterion. **This is a code fix, not a scheduling task.**
 
-**How to apply:** Start the next session on the two actionable code blockers: conformance suite (Maven first, then Helm/CRAN/OCI) and coverage ratchet. Third-party pen test and soak are scheduling tasks, not code tasks.
+### Tier 2 — §1/§1a criteria violations
+
+4. **OIDC/LDAP/SAML not implemented** (P2) — only token auth exists. P2 exit criterion requires OIDC + LDAP/SAML. Must either implement or formally descope for initial GA.
+5. ~~**Azure Terraform module**~~ — **descoped to post-GA.** Terraform cloud modules (AWS/GCP/Azure) are out of scope for GA. The `forge-stack` Helm chart (bundled Postgres + MinIO) is the IaC production path. Existing AWS + GCP modules remain in the repo as a bonus.
+6. **Per-package ≥85% coverage not CI-gated** (§5.10) — only a comment in ci.yml:67; the gate only checks overall 75%. format/npm is at 67.1%; would fail if enforced.
+
+### Tier 3 — Conformance client matrix gaps (§5.4 / §1 first bullet)
+
+7. No Gradle 7/8 conformance test (Maven)
+8. No pnpm/yarn conformance test (npm)
+9. No renv/pak conformance test (CRAN)
+10. No docker CLI conformance test (OCI — only oras tested)
+11. No `helm push oci://` conformance test (Helm OCI mode)
+
+### Tier 4 — Phase deliverables never built
+
+12. **Distributed tracing** (P6) — no OpenTelemetry/Jaeger anywhere; obs package is Prometheus + slog only
+13. **Chaos suite** (§5.8/P7) — no pod-kill or S3/PG-blip tests; not in CI
+14. ~~**Terraform apply→destroy nightly**~~ — **descoped to post-GA** with Terraform modules
+15. **Dogfooding in CI** (Phase K exit) — CI publishes to GHCR, not to a forge instance
+16. **CRAN per-OS binary trees** under /bin/ (P3) — only src/contrib/ is served
+17. **Go version + OS matrix** (§7) — CI uses only ubuntu-latest + single go.mod version; no Go stable-1 or macOS runners
+
+### Tier 5 — Quality gaps (not hard blockers)
+
+18. Migration test against production-sized dataset (§5.9) — only writes one record before rollback
+19. blobtest.RunContract missing "traversal-reject" and "large-stream" cases (§5.3 workplan comment)
+20. No authz fuzz test (§5.6 requirement)
+21. GitOps dry-run (ArgoCD/Flux reconcile) not in CI (§5.12)
+22. HPA and PDB disabled by default; not asserted in cluster-install CI test
+
+---
+
+## What the previous memory got wrong
+
+The previous entry said "both actionable code blockers are resolved" and "no further code changes needed to unblock GA." This was inaccurate:
+
+- Gap #3 (PG queue) is a **code bug**, not a scheduling task — it breaks the HA guarantee
+- Gaps #4–17 are all code/CI work, not external dependencies
+- P2, P3, P5, P6, P7, and Phase K all have unimplemented deliverables
+
+**How to apply:** When estimating GA readiness or planning next sessions, treat Tier 1 (gap #3) as a one-session fix, Tier 2-3 as multiple sprints of work, and Tier 4 as a deliberate descope decision unless the full workplan scope is required.
