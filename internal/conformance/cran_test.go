@@ -63,6 +63,78 @@ Rscript -e "
 `, repo))
 }
 
+// cranBuildScript is the shell portion that creates and uploads a minimal
+// pure-R source package to a hosted CRAN repo. Requires $REPO to be set.
+// Used by the pak and renv tests so they can share the upload step.
+const cranBuildScript = `
+apt-get update -qq && apt-get install -y -qq --no-install-recommends curl
+
+mkdir -p /tmp/mypackage/R
+cat > /tmp/mypackage/DESCRIPTION <<'DESC'
+Package: mypackage
+Version: 1.0.0
+Title: Conformance Test Package
+Description: Minimal pure-R package for forge conformance testing.
+License: MIT
+Encoding: UTF-8
+DESC
+echo 'greet <- function() cat("hello from mypackage\n")' > /tmp/mypackage/R/greet.R
+echo "exportPattern('.')" > /tmp/mypackage/NAMESPACE
+cd /tmp && tar czf mypackage_1.0.0.tar.gz mypackage/
+curl -sf -X PUT --data-binary @mypackage_1.0.0.tar.gz \
+  "${REPO}src/contrib/mypackage_1.0.0.tar.gz"
+`
+
+// TestCRAN_pak_Hosted_Install uploads a minimal package to the hosted CRAN
+// repository, then installs it using pak::pkg_install to verify that pak
+// can consume forge as a CRAN-compatible source.
+func TestCRAN_pak_Hosted_Install(t *testing.T) {
+	if !conformance.IsReachable("https://cloud.r-project.org") {
+		t.Skip("CRAN not reachable (needed to install pak)")
+	}
+
+	srv := conformance.StartForge(t)
+	repo := srv.ContainerRepo("cran-hosted")
+
+	conformance.RunScript(t, cranImage, fmt.Sprintf(`
+set -e
+REPO="%s"
+%s
+Rscript -e "
+  install.packages('pak', repos='https://cloud.r-project.org', quiet=TRUE)
+  options(repos=c(CRAN='${REPO}'))
+  pak::pkg_install('mypackage', lib='/tmp/paklib', ask=FALSE)
+  library(mypackage, lib.loc='/tmp/paklib')
+  greet()
+"
+`, repo, cranBuildScript))
+}
+
+// TestCRAN_renv_Hosted_Install uploads a minimal package to the hosted CRAN
+// repository, then installs it using renv::install to verify that renv
+// can consume forge as a CRAN-compatible source.
+func TestCRAN_renv_Hosted_Install(t *testing.T) {
+	if !conformance.IsReachable("https://cloud.r-project.org") {
+		t.Skip("CRAN not reachable (needed to install renv)")
+	}
+
+	srv := conformance.StartForge(t)
+	repo := srv.ContainerRepo("cran-hosted")
+
+	conformance.RunScript(t, cranImage, fmt.Sprintf(`
+set -e
+REPO="%s"
+%s
+Rscript -e "
+  install.packages('renv', repos='https://cloud.r-project.org', quiet=TRUE)
+  options(repos=c(CRAN='${REPO}'))
+  renv::install('mypackage', library='/tmp/renvlib', prompt=FALSE)
+  library(mypackage, lib.loc='/tmp/renvlib')
+  greet()
+"
+`, repo, cranBuildScript))
+}
+
 // TestCRAN_Proxy_Download fetches a small pure-R package tarball through
 // forge's cran-proxy repository using R's download.file, verifying that the
 // proxy correctly fetches and caches the artifact from upstream CRAN.

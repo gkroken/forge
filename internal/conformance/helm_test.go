@@ -48,6 +48,39 @@ test -f myapp-0.1.0.tgz
 `, repo))
 }
 
+// TestHelm_OCI_PushPull pushes a Helm chart to forge's OCI registry using the
+// oci:// scheme (helm push / helm pull oci://) and verifies the full round-trip.
+// This exercises forge's OCI Distribution API handler from the Helm client,
+// which uses different media types (application/vnd.cncf.helm.*) from Docker images.
+// Requires Helm 3.14+ for --plain-http support; alpine/helm:3 satisfies this.
+func TestHelm_OCI_PushPull(t *testing.T) {
+	srv := conformance.StartForge(t)
+	registry := srv.ContainerHost()
+
+	conformance.RunScript(t, helmImage, fmt.Sprintf(`
+set -e
+REGISTRY="%s"
+
+apk add -q --no-cache curl
+
+helm create oci-chart
+helm package oci-chart
+
+# Push to forge's OCI registry using the oci:// scheme.
+# --plain-http: forge runs without TLS in eval mode (requires Helm 3.14+).
+helm push oci-chart-0.1.0.tgz oci://${REGISTRY}/docker-hosted --plain-http
+
+# Verify the manifest is accessible directly via the OCI API.
+curl -sf "http://${REGISTRY}/v2/docker-hosted/oci-chart/manifests/0.1.0" \
+  -H "Accept: application/vnd.oci.image.manifest.v1+json" | grep schemaVersion
+
+# Pull back from forge and verify the tarball is present.
+rm oci-chart-0.1.0.tgz
+helm pull oci://${REGISTRY}/docker-hosted/oci-chart --version 0.1.0 --plain-http
+test -f oci-chart-0.1.0.tgz
+`, registry))
+}
+
 // TestHelm_Group_Resolve pushes a chart to the hosted Helm repository and
 // verifies that it is visible and downloadable through the helm-public group
 // repository (which fans out to helm-hosted).

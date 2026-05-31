@@ -45,13 +45,14 @@ Progress as of 2026-05-31. All findings verified by direct codebase inspection.
 5. ~~**Azure Terraform module**~~ — **descoped to post-GA.** Terraform cloud modules (AWS/GCP/Azure) are out of scope for GA. The `forge-stack` Helm chart (bundled Postgres + MinIO) is the IaC production path. Existing AWS + GCP modules remain in the repo as a bonus.
 6. **Per-package ≥85% coverage not CI-gated** (§5.10) — only a comment in ci.yml:67; the gate only checks overall 75%. format/npm is at 67.1%; would fail if enforced.
 
-### Tier 3 — Conformance client matrix gaps (§5.4 / §1 first bullet)
+### Tier 3 — Conformance client matrix gaps — COMPLETE ✓
 
-7. No Gradle 7/8 conformance test (Maven)
-8. No pnpm/yarn conformance test (npm)
-9. No renv/pak conformance test (CRAN)
-10. No docker CLI conformance test (OCI — only oras tested)
-11. No `helm push oci://` conformance test (Helm OCI mode)
+All client matrix gaps closed (2026-05-31):
+- Maven: TestMaven_Gradle_Hosted_PublishResolve (gradle:8.7-jdk21, maven-publish plugin)
+- npm: TestNpm_pnpm_Proxy_Install (pnpm), TestNpm_Yarn_Hosted_PublishInstall (yarn v1)
+- CRAN: TestCRAN_pak_Hosted_Install (pak), TestCRAN_renv_Hosted_Install (renv)
+- OCI: TestOCI_Crane_PushPull (crane, daemon-free; gates on Docker Hub reachable)
+- Helm OCI: TestHelm_OCI_PushPull (helm push/pull oci://, requires Helm 3.14+ / --plain-http)
 
 ### Tier 4 — Phase deliverables never built
 

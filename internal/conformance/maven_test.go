@@ -142,6 +142,84 @@ mvn -B --no-transfer-progress -gs /tmp/gs.xml -s /tmp/us.xml \
 	conformance.RunScript(t, mavenImage, resolve)
 }
 
+// TestMaven_Gradle_Hosted_PublishResolve publishes a JAR to the hosted Maven
+// repository using Gradle's maven-publish plugin, then resolves it from a
+// fresh consumer project, verifying the full round-trip from a second build tool.
+func TestMaven_Gradle_Hosted_PublishResolve(t *testing.T) {
+	srv := conformance.StartForge(t)
+	repo := srv.ContainerRepo("maven-hosted")
+
+	conformance.RunScript(t, "gradle:8.7-jdk21", fmt.Sprintf(`
+set -e
+REPO="%s"
+
+# ── Publisher project ──────────────────────────────────────────────────────
+mkdir -p /tmp/publisher/src/main/java && cd /tmp/publisher
+
+cat > settings.gradle <<'SETTINGS'
+rootProject.name = 'mylib'
+SETTINGS
+
+# Unquoted heredoc: $REPO is expanded by the shell into the Gradle script.
+cat > build.gradle <<GRADLE
+plugins {
+    id 'java'
+    id 'maven-publish'
+}
+group = 'com.forge.test'
+version = '1.0.0'
+publishing {
+    publications {
+        mavenJava(MavenPublication) { from components.java }
+    }
+    repositories {
+        maven {
+            url = "$REPO"
+            allowInsecureProtocol = true
+        }
+    }
+}
+GRADLE
+
+cat > src/main/java/Hello.java <<'JAVA'
+public class Hello {}
+JAVA
+
+gradle publish --no-daemon -q
+
+# Verify the POM is available at the expected Maven coordinate path.
+curl -sf "${REPO}com/forge/test/mylib/1.0.0/mylib-1.0.0.pom" \
+  | grep '<artifactId>mylib</artifactId>'
+
+# ── Consumer project ───────────────────────────────────────────────────────
+mkdir -p /tmp/consumer && cd /tmp/consumer
+
+cat > settings.gradle <<'SETTINGS'
+rootProject.name = 'consumer'
+SETTINGS
+
+cat > build.gradle <<GRADLE
+configurations { forgeLib }
+repositories {
+    maven {
+        url = "$REPO"
+        allowInsecureProtocol = true
+    }
+}
+dependencies {
+    forgeLib 'com.forge.test:mylib:1.0.0'
+}
+task resolve(type: Copy) {
+    from configurations.forgeLib
+    into '/tmp/resolved'
+}
+GRADLE
+
+gradle resolve --no-daemon -q
+test -f /tmp/resolved/mylib-1.0.0.jar
+`, repo))
+}
+
 // TestMaven_Hosted_SnapshotDeploy deploys a SNAPSHOT JAR to the hosted Maven
 // repository and verifies:
 //   - forge generates SNAPSHOT-level maven-metadata.xml with <snapshotVersions>,
