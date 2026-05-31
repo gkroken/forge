@@ -1,17 +1,23 @@
 #!/usr/bin/env bash
-# End-to-end smoke test for forge. Starts the server, exercises every format,
-# and prints PASS/FAIL per check.
+# End-to-end smoke test for forge.
+#
+# Default mode: starts its own forge server on :8080 using ./data.
+# External mode: set FORGE_BASE=http://host:port to test a running server
+#   (the server is not started or stopped; ./data is not touched).
 set -u
-BASE="http://localhost:8080"
+BASE="${FORGE_BASE:-http://localhost:8080}"
 PASS=0; FAIL=0
 ok()   { echo "  PASS: $1"; PASS=$((PASS+1)); }
 bad()  { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 check(){ if echo "$2" | grep -q "$3"; then ok "$1"; else bad "$1 (got: $(echo "$2" | head -c120))"; fi; }
 
-rm -rf ./data
-./forge -addr :8080 -data ./data >/tmp/forge.log 2>&1 &
-SRV=$!
-trap "kill $SRV 2>/dev/null" EXIT
+if [ -z "${FORGE_BASE:-}" ]; then
+  rm -rf ./data
+  ./forge -addr :8080 -data ./data >/tmp/forge.log 2>&1 &
+  SRV=$!
+  trap "kill $SRV 2>/dev/null" EXIT
+  sleep 1
+fi
 sleep 1
 
 echo "== service index =="

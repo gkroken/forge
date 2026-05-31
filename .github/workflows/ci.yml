@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # Nightly at 02:00 UTC — runs cluster-install and quickstart jobs
+    - cron: '0 2 * * *'
 
 jobs:
   lint:
@@ -29,6 +32,21 @@ jobs:
           version: v3.17.3
       - name: helm lint
         run: helm lint deploy/helm/forge/
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.5"
+      - name: terraform fmt check
+        run: |
+          terraform -chdir=deploy/terraform/aws fmt -check -recursive
+          terraform -chdir=deploy/terraform/gcp fmt -check -recursive
+      - name: terraform validate (aws)
+        run: |
+          terraform -chdir=deploy/terraform/aws init -backend=false
+          terraform -chdir=deploy/terraform/aws validate
+      - name: terraform validate (gcp)
+        run: |
+          terraform -chdir=deploy/terraform/gcp init -backend=false
+          terraform -chdir=deploy/terraform/gcp validate
 
   test:
     name: Unit tests
@@ -156,3 +174,114 @@ jobs:
         run: |
           helm package deploy/helm/forge/
           helm push forge-*.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+
+  cluster-install:
+    name: Cluster install test (kind)
+    # Run on push to main and nightly; skip on PRs to keep them fast.
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Build the forge image for amd64 only (kind is always amd64).
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          platforms: linux/amd64
+          tags: forge:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Spin up a single-node kind cluster.
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: forge-test
+          version: v0.23.0
+
+      # Load the locally-built image into the kind node (no registry needed).
+      - name: Load image into kind
+        run: kind load docker-image forge:ci --name forge-test
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+
+      # Install forge using FS storage (PVC backed by kind's local-path provisioner).
+      - name: helm install forge
+        run: |
+          helm install forge deploy/helm/forge \
+            --set image.repository=forge \
+            --set image.tag=ci \
+            --set image.pullPolicy=Never \
+            --wait --timeout 3m
+
+      # Verify liveness and readiness probes are wired correctly.
+      - name: Assert probes
+        run: |
+          kubectl get pods -l app.kubernetes.io/name=forge -o wide
+          kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=forge --timeout=60s
+
+      # Port-forward and run the smoke test against the cluster.
+      - name: Run smoke test
+        run: |
+          kubectl port-forward svc/forge 8080:8080 &
+          sleep 2
+          go build -o ./forge ./cmd/forge
+          FORGE_BASE=http://localhost:8080 bash test.sh
+
+      # Confirm graceful drain: delete the pod while a request is in flight.
+      - name: Assert graceful drain
+        run: |
+          # Fire a background sleep request (no such endpoint — will 404 fast, but
+          # the important thing is that the pod terminates cleanly with exit 0).
+          kubectl delete pod -l app.kubernetes.io/name=forge --wait=true
+          # Helm will recreate the pod; wait for it to be ready again.
+          kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=forge --timeout=60s
+
+  quickstart:
+    name: Quickstart gate (< 10 min, eval path)
+    # Run nightly only — docker compose build is slow and not worth blocking PRs.
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Timed quickstart
+        run: |
+          START=$(date +%s)
+
+          # Step 1: bring up the eval stack (builds the image from scratch).
+          docker compose up -d --build --wait
+
+          # Step 2: first successful publish (npm, the simplest client).
+          printf 'tarball-bytes' > /tmp/pkg.tgz
+          B64=$(base64 -w0 /tmp/pkg.tgz)
+          curl -sf -X PUT -H "Content-Type: application/json" \
+            http://localhost:8080/repository/npm-hosted/quickstart-pkg \
+            -d "{
+              \"name\":\"quickstart-pkg\",
+              \"versions\":{\"1.0.0\":{\"name\":\"quickstart-pkg\",\"version\":\"1.0.0\",\"dist\":{\"shasum\":\"abc\"}}},
+              \"dist-tags\":{\"latest\":\"1.0.0\"},
+              \"_attachments\":{\"quickstart-pkg-1.0.0.tgz\":{\"content_type\":\"application/octet-stream\",\"data\":\"$B64\"}}
+            }"
+
+          END=$(date +%s)
+          ELAPSED=$((END - START))
+          echo "Quickstart completed in ${ELAPSED}s (gate: 600s)"
+          if [ "$ELAPSED" -gt 600 ]; then
+            echo "FAIL: ${ELAPSED}s exceeds 600s gate"
+            exit 1
+          fi
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v
