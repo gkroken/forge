@@ -1,34 +1,119 @@
-# forge — a multi-format package repository (prototype)
+# forge — multi-format artifact repository
 
-A working prototype of a Nexus-style artifact repository supporting **Maven,
-npm, Helm, and CRAN**, in both **hosted** and **proxy** modes. Single static Go
-binary, no external services required (filesystem storage + JSON metadata for
-the prototype; both sit behind interfaces so S3/Postgres drop in for production).
+A Nexus-style artifact repository supporting **Maven, npm, Helm, CRAN, and OCI**
+in hosted, proxy, and group modes. Single static Go binary; zero external
+dependencies for eval mode; Postgres + S3-compatible object store for production.
 
-## Why it's shaped this way
+[![CI](https://github.com/gkroken/forge/actions/workflows/ci.yml/badge.svg)](https://github.com/gkroken/forge/actions/workflows/ci.yml)
 
-Every package format is a different protocol, but they all sit on the same spine.
-The whole bet of this design is: **build the spine once, make formats a plugin.**
+---
+
+## Quick start
+
+**Eval (zero dependencies):**
+```bash
+docker compose up          # forge on :8080, data in a named volume
+```
+
+**Production (Kubernetes):**
+```bash
+# Bundles Postgres + MinIO — no external services needed
+helm install forge-stack deploy/helm/forge-stack \
+  --set forge.image.tag=latest \
+  --wait
+```
+
+**Binary:**
+```bash
+go build -o forge ./cmd/forge
+./forge -addr :8080 -data ./data
+```
+
+---
+
+## Format support
+
+| Format | Hosted | Proxy | Group | Clients verified |
+|--------|:------:|:-----:|:-----:|-----------------|
+| Maven  | ✅ | ✅ | ✅ | `mvn` 3.9, `gradle` 8.7 |
+| npm    | ✅ | ✅ | ✅ | `npm`, `pnpm`, `yarn` |
+| Helm   | ✅ | — | ✅ | `helm` 3.x (repo + `oci://`) |
+| CRAN   | ✅ | ✅ | ✅ | `R` install.packages, `renv`, `pak` |
+| OCI    | ✅ | — | — | `oras`, `crane`, `helm push oci://` |
+
+All clients are exercised by the conformance suite against a live forge instance
+(see `internal/conformance/`). The suite runs in CI on every push.
+
+---
+
+## Client usage
+
+```bash
+# npm — install through the proxy
+npm install lodash --registry http://localhost:8080/repository/npm-proxy/
+
+# npm — publish to hosted
+npm publish --registry http://localhost:8080/repository/npm-hosted/
+
+# Maven — resolve through the proxy (settings.xml)
+#   <repository><url>http://localhost:8080/repository/maven-central/</url></repository>
+
+# Maven — deploy to hosted (settings.xml + distributionManagement)
+mvn deploy -DrepositoryId=forge -Durl=http://localhost:8080/repository/maven-hosted/
+
+# Helm — classic repo
+helm repo add forge http://localhost:8080/repository/helm-hosted/
+helm push mychart-0.1.0.tgz oci://localhost:8080/docker-hosted   # OCI mode
+
+# CRAN (R)
+install.packages("pkg", repos="http://localhost:8080/repository/cran-hosted/")
+# or set as your default mirror:
+options(repos=c(forge="http://localhost:8080/repository/cran-public/"))
+
+# OCI / Docker
+oras push localhost:8080/docker-hosted/myimage:v1 artifact.bin
+```
+
+---
+
+## Authentication
+
+Enable token auth with `-auth`:
+```bash
+./forge -addr :8080 -data ./data -auth
+# Prints a bootstrap admin token on first run. Store it — shown once.
+```
+
+Create scoped tokens via the API:
+```bash
+curl -s -X POST http://localhost:8080/api/v1/tokens \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"description":"ci-bot","grants":[{"repo":"npm-hosted","role":"write"}]}'
+```
+
+Roles: `read`, `write`, `admin`. Repos support `anonymousRead: true` for open
+access (typical for install/resolve paths). Token auth is enforced as middleware
+before every handler.
+
+---
+
+## Architecture
+
+One shared spine; formats are plugins.
 
 ```
-            HTTP request  /repository/{repo}/{path...}
-                          │
-                ┌─────────▼──────────┐
-                │   server (router)  │   resolves repo name → Repository
-                └─────────┬──────────┘
-                          │ looks up Format → Handler
-        ┌─────────────────┼─────────────────┐
-        ▼                 ▼                 ▼
-   ┌────────┐        ┌────────┐        ┌────────┐
-   │ maven  │        │  npm   │  ...   │  helm  │   format.Handler plugins
-   └───┬────┘        └───┬────┘        └───┬────┘
-       └─────────────────┼─────────────────┘
-              ┌──────────┴──────────┐
-              ▼                     ▼
-        ┌──────────┐         ┌────────────┐
-        │  blob    │         │   meta     │     storage interfaces
-        │ (fs/S3)  │         │ (json/PG)  │
-        └──────────┘         └────────────┘
+HTTP /repository/{repo-name}/{path...}
+         │
+    server.go         resolves repo name → Repository
+         │             looks up Format → Handler
+         ▼
+  format.Registry     maps "maven"/"npm"/"helm"/"cran"/"oci" → Handler
+         │
+  Handler.Serve()     receives format.Context (repo, blob, meta, http client, sub-path)
+         │
+  ┌──────┴──────┐
+blob.Store   meta.Store    interfaces; FS impl for eval, S3+Postgres for production
 ```
 
 Adding a format = implementing one interface:
@@ -42,98 +127,97 @@ type Handler interface {
 
 Nothing in routing, storage, or the repository model knows what Maven is.
 
-## Layout
+**Storage backends:**
 
-```
-cmd/forge/main.go          entrypoint: wires stores, registers handlers, defines repos
-internal/blob/             blob.Store interface + filesystem impl (checksums, traversal-safe)
-internal/meta/             meta.Store interface + JSON-file impl
-internal/repo/             Repository model (hosted/proxy/group) + manager
-internal/format/           Handler interface + registry
-internal/format/maven/     Maven 2 layout: PUT/GET, checksum sidecars, maven-metadata.xml, proxy
-internal/format/npm/       npm registry: publish, packument, tarballs, read-through proxy
-internal/format/helm/      Helm repo: chart upload, index.yaml generation, chart API
-internal/format/cran/      CRAN repo: DESCRIPTION parse, PACKAGES index, proxy
-internal/server/           HTTP router and repo→handler dispatch
-test.sh                    end-to-end smoke test (20 checks, all passing)
-```
+| | Eval | Production |
+|--|------|-----------|
+| Blob | filesystem (`data/blobs/`) | S3 / MinIO (set `S3_ENDPOINT`) |
+| Meta | filesystem (`data/meta/`) | Postgres (set `POSTGRES_DSN`) |
+| Queue | in-memory | Postgres (auto-selected when `POSTGRES_DSN` is set) |
 
-## Run it
+---
+
+## Kubernetes deployment
+
+The `deploy/helm/forge` chart is the primary install path.
 
 ```bash
-go build -o forge ./cmd/forge
-./forge -addr :8080 -data ./data
-curl localhost:8080/            # lists configured repositories
+# Standalone chart — point at existing Postgres + S3
+helm install forge deploy/helm/forge \
+  --set extraEnv.POSTGRES_DSN="postgres://..." \
+  --set extraEnv.S3_ENDPOINT="https://..." \
+  --set extraEnv.S3_BUCKET="forge-artifacts"
+
+# forge-stack — bundles Postgres (Bitnami) + MinIO, no external deps
+helm install forge-stack deploy/helm/forge-stack
 ```
 
-Use it with real clients:
+The chart includes: liveness/readiness/startup probes, HPA, PodDisruptionBudget,
+graceful SIGTERM drain, non-root + read-only root FS, multi-arch image
+(amd64/arm64), ConfigMap/Secret-based config, Prometheus `ServiceMonitor`.
 
-```bash
-# npm — install through the proxy
-npm install lodash --registry http://localhost:8080/repository/npm-proxy/
+GitOps examples: `deploy/gitops/argocd-application.yaml` and
+`deploy/gitops/flux-helmrelease.yaml`.
 
-# Maven — point settings.xml / distributionManagement at:
-#   http://localhost:8080/repository/maven-hosted/
+---
 
-# Helm
-helm repo add forge http://localhost:8080/repository/helm-hosted/
-helm push mychart-0.1.0.tgz   # (via helm-push plugin / ChartMuseum API)
+## Repository layout
 
-# CRAN (in R)
-# install.packages("pkg", repos="http://localhost:8080/repository/cran-hosted")
+```
+cmd/forge/              entrypoint — wires stores, registers handlers, seeds repos
+internal/
+  blob/                 blob.Store interface; FS + S3 implementations + contract suite
+  meta/                 meta.Store interface; FS + Postgres implementations + contract suite
+  auth/                 token store, per-repo RBAC, auth middleware (Bearer + npm Basic)
+  proxy/                shared proxy fetcher: TTL, ETag revalidation, negative cache,
+                        stale-on-error, retries, circuit breaker, upstream auth
+  queue/                async index-regen queue; Mem (eval) + Postgres (HA) implementations
+  indexer/              npm packument regen worker (idempotent, queue-driven)
+  format/maven/         Maven 2: PUT/GET, checksum sidecars, maven-metadata.xml,
+                        SNAPSHOT metadata, Gradle .module, parent-POM prefetch
+  format/npm/           npm registry: publish, packument, tarballs, dist-tags,
+                        deprecate, unpublish, audit bridge, login, group fan-out
+  format/helm/          Helm repo: chart upload, index.yaml, chart API, OCI mode
+  format/cran/          CRAN: DESCRIPTION parse, PACKAGES + PACKAGES.gz + PACKAGES.rds
+  format/oci/           OCI Distribution Spec v1.0: blobs, manifests, tags, uploads
+  server/               HTTP router, auth middleware wiring, admin API, browse/search UI
+  obs/                  Prometheus metrics, structured logging, audit log
+  conformance/          end-to-end conformance tests (real clients in Docker containers)
+deploy/
+  helm/forge/           production Helm chart
+  helm/forge-stack/     all-in-one chart (forge + Postgres + MinIO)
+  gitops/               ArgoCD Application + Flux HelmRelease examples
+  terraform/            AWS + GCP modules for cloud-managed Postgres/S3 (post-GA)
+docs/
+  runbooks/             operations runbooks (backup, incident response, token mgmt, …)
+  security/             threat model, pen test scope
+load/
+  smoke.js              k6 load test: metadata GET p99 < 50ms, 50 concurrent publishes
+  soak.js               24h soak script (run manually pre-release)
 ```
 
-## Status matrix
+---
 
-| Format | Hosted | Proxy | Notes |
-|--------|:------:|:-----:|-------|
-| Maven  | ✅ | ✅ | generated maven-metadata.xml, synthesized md5/sha1/sha256 sidecars |
-| npm    | ✅ | ✅ | publish + install; proxy rewrites tarball URLs; **verified with real npm CLI** |
-| Helm   | ✅ | — | chart upload, index.yaml generation, chart list/delete API |
-| CRAN   | ✅ | ✅ | DESCRIPTION parse, PACKAGES + PACKAGES.gz generation |
+## CI
 
-`test.sh` exercises all of the above (Maven/Helm/npm/CRAN hosted + a **live**
-npm proxy fetch from registry.npmjs.org): 20/20 passing.
+Every push runs: lint (`go vet`, `helm lint`, `terraform validate`), unit tests
+with `-race`, coverage gate (overall ≥75%, core packages ≥85%), integration tests
+(Postgres + MinIO via testcontainers), conformance tests (all clients × formats),
+SAST (`gosec`), dependency scan (`govulncheck`), and container scan (Trivy).
 
-## Deliberately stubbed (the honest TODO list)
+Nightly: full conformance matrix, DAST (ZAP baseline), k6 load test (SLO gate),
+kind cluster install + conformance smoke, timed quickstart gate (< 10 min).
 
-These are understood and scoped, just not built in the prototype:
+---
 
-- **Auth & RBAC** — no authentication yet. Production needs tokens, per-repo
-  permissions, and OIDC/LDAP. Slots in as middleware before handler dispatch.
-- **Group repositories** — the model has the `Group` kind; merging logic
-  (e.g. unioning maven-metadata.xml / index.yaml across members) isn't written.
-- **Maven SNAPSHOT** — timestamped snapshot metadata not handled; release
-  versions work fully.
-- **Maven parent-POM prefetch** in proxy mode (clients chase `<parent>` refs).
-- **Helm OCI** (`helm push oci://…`) — needs a Docker/OCI registry handler.
-- **CRAN PACKAGES.rds** — modern R reads PACKAGES for source installs; renv/pak
-  prefer the R-serialized .rds, which needs an rds writer or an R process. Also
-  no per-OS binary trees under /bin/.
-- **Proxy cache policy** — currently cache-forever on read. Needs TTL, negative
-  caching, and revalidation (ETag/Last-Modified).
-- **Production stores** — swap blob.FS → S3 and meta.FS → Postgres (interfaces
-  already in place). Add an index/search service for browse + search.
-- **Admin API / UI** — repos are hardcoded in main.go; production needs CRUD.
+## Post-GA roadmap
 
-## Suggested build order from here
-
-1. Postgres-backed `meta.Store` + S3-backed `blob.Store` (prove the interfaces).
-2. Auth middleware + token model + per-repo RBAC.
-3. Proxy cache policy (TTL + revalidation) across all formats.
-4. Group repositories + metadata merging.
-5. Maven SNAPSHOT handling and Gradle `.module` metadata.
-6. Helm OCI + a Docker/OCI registry handler (biggest new surface).
-7. CRAN .rds + binary trees; search/index service; admin UI.
-
-Realistic timeline to a serious all-four-formats OSS competitor: ~9–15 months
-for a small team. This prototype is the spine that makes that tractable.
-
-## DevOps adoption requirements
-
-Three non-negotiable acceptance criteria for DevOps adoption are tracked in
-`WORKPLAN.md` §1a and gated in CI (§5.12): **(A)** Kubernetes-native (Helm chart,
-HA, probes/HPA/PDB), **(B)** Infrastructure as Code (Helm + Terraform, GitOps,
-no click-ops), and **(C)** easy setup (`docker compose up` eval mode; < 10-minute
-time-to-first-publish). The `blob.Store`/`meta.Store` interfaces already give the
-zero-dependency eval mode and the Postgres+S3 production mode behind one codebase.
+- **OIDC / LDAP federation** — self-service token issuance via Keycloak/AD; token
+  model covers current production workflows (anonymous install, CI service tokens).
+- **CRAN binary trees** (`/bin/`) — per-OS pre-compiled packages; source packages
+  work for current use cases.
+- **Distributed tracing** — OpenTelemetry integration; Prometheus metrics +
+  structured logs cover current operational needs.
+- **Chaos suite** — automated pod-kill and S3/PG-blip recovery tests.
+- **Cloud Terraform modules** — AWS + GCP modules exist; Azure and nightly
+  apply/destroy validation are post-GA.
