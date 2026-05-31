@@ -229,6 +229,7 @@ func TestAuthzMatrix_OCI(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	_, writeSecret, _ := s.Create("write", []auth.Grant{{Repo: "oci-private", Role: auth.RoleWrite}}, nil)
+	_, readSecret, _ := s.Create("read", []auth.Grant{{Repo: "oci-private", Role: auth.RoleRead}}, nil)
 
 	doOCI := func(method, repo, secret string) (int, http.Header, map[string]any) {
 		req, _ := http.NewRequest(method, srv.URL+"/v2/"+repo+"/manifests/latest", nil)
@@ -253,12 +254,13 @@ func TestAuthzMatrix_OCI(t *testing.T) {
 		wantStatus int
 		wantWWW    bool // expect WWW-Authenticate header on 401
 	}{
-		{"anon GET private", "GET", "oci-private", "", http.StatusUnauthorized, true},
-		{"anon PUT private", "PUT", "oci-private", "", http.StatusUnauthorized, true},
-		{"anon GET public", "GET", "oci-public", "", http.StatusOK, false},
-		{"write GET private", "GET", "oci-private", writeSecret, http.StatusOK, false},
-		{"write PUT private", "PUT", "oci-private", writeSecret, http.StatusOK, false},
-		{"invalid token",     "GET", "oci-private", "forge_" + nHex(64), http.StatusUnauthorized, true},
+		{"anon GET private",   "GET", "oci-private", "",           http.StatusUnauthorized, true},
+		{"anon PUT private",   "PUT", "oci-private", "",           http.StatusUnauthorized, true},
+		{"anon GET public",    "GET", "oci-public",  "",           http.StatusOK,           false},
+		{"write GET private",  "GET", "oci-private", writeSecret,  http.StatusOK,           false},
+		{"write PUT private",  "PUT", "oci-private", writeSecret,  http.StatusOK,           false},
+		{"read PUT private",   "PUT", "oci-private", readSecret,   http.StatusForbidden,    false},
+		{"invalid token",      "GET", "oci-private", "forge_" + nHex(64), http.StatusUnauthorized, true},
 	}
 
 	for _, tc := range cases {
@@ -445,6 +447,61 @@ func TestAuthzMatrix_ExpiredToken(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("expired token: got %d want 401", resp.StatusCode)
+	}
+}
+
+func TestRole_String(t *testing.T) {
+	cases := []struct {
+		role auth.Role
+		want string
+	}{
+		{auth.RoleRead, "read"},
+		{auth.RoleWrite, "write"},
+		{auth.RoleAdmin, "admin"},
+		{auth.RoleNone, "none"},
+		{auth.Role(99), "none"},
+	}
+	for _, tc := range cases {
+		if got := tc.role.String(); got != tc.want {
+			t.Errorf("Role(%d).String() = %q, want %q", tc.role, got, tc.want)
+		}
+	}
+}
+
+func TestParseRole(t *testing.T) {
+	cases := []struct {
+		input   string
+		want    auth.Role
+		wantErr bool
+	}{
+		{"read", auth.RoleRead, false},
+		{"write", auth.RoleWrite, false},
+		{"admin", auth.RoleAdmin, false},
+		{"", auth.RoleNone, true},
+		{"superuser", auth.RoleNone, true},
+	}
+	for _, tc := range cases {
+		got, err := auth.ParseRole(tc.input)
+		if (err != nil) != tc.wantErr {
+			t.Errorf("ParseRole(%q) err=%v wantErr=%v", tc.input, err, tc.wantErr)
+		}
+		if got != tc.want {
+			t.Errorf("ParseRole(%q) = %v, want %v", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestTokenStore_Count(t *testing.T) {
+	s := newStore(t)
+	n, err := s.Count()
+	if err != nil || n != 0 {
+		t.Fatalf("empty store: Count()=%d err=%v", n, err)
+	}
+	s.Create("t1", nil, nil)
+	s.Create("t2", nil, nil)
+	n, err = s.Count()
+	if err != nil || n != 2 {
+		t.Fatalf("after 2 creates: Count()=%d err=%v", n, err)
 	}
 }
 

@@ -63,9 +63,27 @@ jobs:
         run: |
           TOTAL=$(go tool cover -func=coverage.out | awk '/^total:/{print $NF}' | tr -d '%')
           echo "Total coverage: ${TOTAL}%"
-          # Gate ratchets up; never down. Current measured: 75.2%.
-          # Target per workplan: overall ≥75%, core packages ≥85%.
           awk -v t="$TOTAL" 'BEGIN { if (t+0 < 75) { print "FAIL: " t "% is below the 75% gate"; exit 1 } }'
+
+          # Per-package ≥85% gate for packages fully exercisable without containers.
+          # blob/meta/queue have integration-only backends (s3store, pgstore, pg.go)
+          # that are correctly at 0% here and covered by the integration CI job.
+          # Format handlers are judged by conformance, not line coverage (§5.10).
+          FAIL=0
+          for PKG in \
+            forge/internal/auth \
+            forge/internal/proxy \
+            forge/internal/indexer \
+            forge/internal/server; do
+            PCT=$(go tool cover -func=coverage.out \
+              | awk -v p="$PKG/" '$1 ~ p {sum+=$3; n++} END {if(n>0) printf "%.1f", sum/n}' \
+              | tr -d '%')
+            echo "  ${PKG##*/}: ${PCT}%"
+            awk -v pkg="${PKG##*/}" -v pct="$PCT" \
+              'BEGIN { if (pct+0 < 85) { print "FAIL: " pkg " is at " pct "% (gate: 85%)"; exit 1 } }' \
+              || FAIL=1
+          done
+          exit $FAIL
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         with:

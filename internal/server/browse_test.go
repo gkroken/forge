@@ -167,3 +167,23 @@ func TestSearch_emptyQuery(t *testing.T) {
 		t.Errorf("expected empty results for empty query, got %v", resp.Results)
 	}
 }
+
+func TestClampedInt(t *testing.T) {
+	cases := []struct {
+		query string
+		want  int
+	}{
+		{"", 10},    // absent → default
+		{"abc", 10}, // invalid → default
+		{"0", 1},    // below min → min
+		{"999", 100}, // above max → max
+		{"50", 50},  // in range → value
+	}
+	for _, tc := range cases {
+		r := httptest.NewRequest(http.MethodGet, "/?n="+tc.query, nil)
+		got := clampedInt(r, "n", 10, 1, 100)
+		if got != tc.want {
+			t.Errorf("clampedInt(%q): got %d, want %d", tc.query, got, tc.want)
+		}
+	}
+}

@@ -135,6 +135,34 @@ func TestTokens_BadBody(t *testing.T) {
 	}
 }
 
+// TestTokens_ListRequiresAdmin verifies that a non-admin token gets 403 on list.
+func TestTokens_ListRequiresAdmin(t *testing.T) {
+	srv, authStore := newAuthServer(t)
+	_, adminSecret, _ := authStore.Create("admin", []auth.Grant{{Repo: "*", Role: auth.RoleAdmin}}, nil)
+	_ = adminSecret // needed to move past bootstrap so the next create requires admin
+	_, readSecret, _ := authStore.Create("reader", []auth.Grant{{Repo: "x", Role: auth.RoleRead}}, nil)
+
+	rw := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw, tokenReq(t, http.MethodGet, "/api/v1/tokens", readSecret, ""))
+	if rw.Code != http.StatusForbidden {
+		t.Fatalf("non-admin list: expected 403, got %d", rw.Code)
+	}
+}
+
+// TestTokens_RevokeRequiresAdmin verifies that a non-admin token gets 403 on revoke.
+func TestTokens_RevokeRequiresAdmin(t *testing.T) {
+	srv, authStore := newAuthServer(t)
+	tok, adminSecret, _ := authStore.Create("admin", []auth.Grant{{Repo: "*", Role: auth.RoleAdmin}}, nil)
+	_ = adminSecret
+	_, readSecret, _ := authStore.Create("reader", []auth.Grant{{Repo: "x", Role: auth.RoleRead}}, nil)
+
+	rw := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw, tokenReq(t, http.MethodDelete, "/api/v1/tokens/"+tok.ID, readSecret, ""))
+	if rw.Code != http.StatusForbidden {
+		t.Fatalf("non-admin revoke: expected 403, got %d", rw.Code)
+	}
+}
+
 // TestServer_OCI_BaseEndpoint covers handleOCI's /v2/ base check.
 func TestServer_OCI_BaseEndpoint(t *testing.T) {
 	srv := newAdminServer(t)

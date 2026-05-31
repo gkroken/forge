@@ -282,6 +282,26 @@ func TestMemberPolicy_MakePrivateBlockedByPublicGroup(t *testing.T) {
 	}
 }
 
+func TestAdminRepos_DeleteNotFound(t *testing.T) {
+	srv := newAdminServer(t)
+	rw := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw, adminReq(t, http.MethodDelete, "/api/v1/repos/ghost", nil))
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("delete nonexistent: expected 404, got %d", rw.Code)
+	}
+}
+
+func TestAdminRepos_UpdateNotFound(t *testing.T) {
+	srv := newAdminServer(t)
+	rw := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw, adminReq(t, http.MethodPut, "/api/v1/repos/ghost", map[string]any{
+		"name": "ghost", "format": "npm", "kind": "hosted",
+	}))
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("update nonexistent: expected 404, got %d", rw.Code)
+	}
+}
+
 func TestMemberPolicy_MakePrivateAfterGroupFixed_Allowed(t *testing.T) {
 	srv := newAdminServer(t)
 	h := srv.Routes()

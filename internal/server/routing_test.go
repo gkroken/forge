@@ -10,6 +10,7 @@ import (
 
 	"forge/internal/obs"
 	"forge/internal/queue"
+	"forge/internal/repo"
 )
 
 func TestServer_WithMetrics(t *testing.T) {
@@ -82,5 +83,55 @@ func TestServer_HandleIndex_NotFound(t *testing.T) {
 	srv.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodGet, "/no/such/path", nil))
 	if rw.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", rw.Code)
+	}
+}
+
+// TestRouteLabel covers all branches of the low-cardinality route labeller.
+func TestRouteLabel(t *testing.T) {
+	cases := []struct {
+		path string
+		want string
+	}{
+		{"/healthz", "/healthz"},
+		{"/readyz", "/readyz"},
+		{"/metrics", "/metrics"},
+		{"/repository/npm-hosted/pkg", "/repository/{repo}"},
+		{"/v2/docker-hosted/img/manifests/latest", "/v2/{repo}"},
+		{"/api/v1/tokens", "/api/v1/tokens"},
+		{"/api/v1/tokens/abc123", "/api/v1/tokens"},
+		{"/ui/", "other"},
+	}
+	for _, tc := range cases {
+		got := routeLabel(tc.path)
+		if got != tc.want {
+			t.Errorf("routeLabel(%q) = %q, want %q", tc.path, got, tc.want)
+		}
+	}
+}
+
+// TestServer_HandleOCI_WrongFormat covers the rp.Format != "oci" branch of
+// handleOCI: repo exists but is registered as a different format.
+func TestServer_HandleOCI_WrongFormat(t *testing.T) {
+	srv := newAdminServer(t)
+	// Register a non-OCI repo so the lookup succeeds but the format check fails.
+	srv.Repos.Add(repo.Repository{Name: "npm-hosted", Format: "npm", Kind: repo.Hosted}) //nolint:errcheck
+	rw := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw,
+		httptest.NewRequest(http.MethodGet, "/v2/npm-hosted/image/manifests/latest", nil))
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("wrong format: expected 404, got %d", rw.Code)
+	}
+}
+
+// TestServer_HandleOCI_HandlerNotRegistered covers the "OCI handler not in
+// registry" branch: an OCI-format repo exists but no handler is registered.
+func TestServer_HandleOCI_HandlerNotRegistered(t *testing.T) {
+	srv := newAdminServer(t) // no handlers registered
+	srv.Repos.Add(repo.Repository{Name: "docker-hosted", Format: "oci", Kind: repo.Hosted}) //nolint:errcheck
+	rw := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw,
+		httptest.NewRequest(http.MethodGet, "/v2/docker-hosted/img/manifests/latest", nil))
+	if rw.Code != http.StatusNotImplemented {
+		t.Fatalf("no handler: expected 501, got %d", rw.Code)
 	}
 }
