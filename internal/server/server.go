@@ -242,11 +242,25 @@ func routeLabel(path string) string {
 	}
 }
 
-// middleware is the outermost handler: structured access log + Prometheus metrics.
-// Probe endpoints (/healthz, /readyz) are passed through without logging to
-// keep log volume low during liveness checks.
+// middleware is the outermost handler: security headers + structured access log
+// + Prometheus metrics. Probe endpoints (/healthz, /readyz) are passed through
+// without logging to keep log volume low during liveness checks.
 func (s *Server) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		// CSP: allow htmx from unpkg CDN; inline styles needed for templates.
+		// frame-ancestors 'none' supersedes X-Frame-Options in modern browsers.
+		h.Set("Content-Security-Policy",
+			"default-src 'self'; "+
+				"script-src 'self' https://unpkg.com; "+
+				"style-src 'self' 'unsafe-inline'; "+
+				"img-src 'self' data:; "+
+				"connect-src 'self'; "+
+				"frame-ancestors 'none'")
+
 		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
 			next.ServeHTTP(w, r)
 			return
