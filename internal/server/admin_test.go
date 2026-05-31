@@ -195,3 +195,118 @@ func TestAdminRepos_AuthRequired(t *testing.T) {
 		t.Errorf("expected 401 without token, got %d", rw.Code)
 	}
 }
+
+// ── SEC-002: group anonymousRead policy ───────────────────────────────────────
+
+func TestGroupPolicy_PublicGroupPrivateMember_Rejected(t *testing.T) {
+	srv := newAdminServer(t)
+	h := srv.Routes()
+
+	// Create a private member repo.
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, adminReq(t, http.MethodPost, "/api/v1/repos", map[string]any{
+		"name": "npm-private", "format": "npm", "kind": "hosted",
+		"anonymousRead": false,
+	}))
+	if rw.Code != http.StatusCreated {
+		t.Fatalf("create private repo: %d %s", rw.Code, rw.Body)
+	}
+
+	// Creating a public group that includes the private member must be rejected.
+	rw2 := httptest.NewRecorder()
+	h.ServeHTTP(rw2, adminReq(t, http.MethodPost, "/api/v1/repos", map[string]any{
+		"name": "npm-public-group", "format": "npm", "kind": "group",
+		"members": []string{"npm-private"}, "anonymousRead": true,
+	}))
+	if rw2.Code != http.StatusBadRequest {
+		t.Errorf("public group over private member: got %d want 400", rw2.Code)
+	}
+}
+
+func TestGroupPolicy_PublicGroupPublicMember_Allowed(t *testing.T) {
+	srv := newAdminServer(t)
+	h := srv.Routes()
+
+	h.ServeHTTP(httptest.NewRecorder(), adminReq(t, http.MethodPost, "/api/v1/repos", map[string]any{
+		"name": "npm-pub", "format": "npm", "kind": "hosted", "anonymousRead": true,
+	}))
+
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, adminReq(t, http.MethodPost, "/api/v1/repos", map[string]any{
+		"name": "npm-pub-group", "format": "npm", "kind": "group",
+		"members": []string{"npm-pub"}, "anonymousRead": true,
+	}))
+	if rw.Code != http.StatusCreated {
+		t.Errorf("public group + public member: got %d want 201", rw.Code)
+	}
+}
+
+func TestGroupPolicy_PrivateGroupPrivateMember_Allowed(t *testing.T) {
+	srv := newAdminServer(t)
+	h := srv.Routes()
+
+	h.ServeHTTP(httptest.NewRecorder(), adminReq(t, http.MethodPost, "/api/v1/repos", map[string]any{
+		"name": "npm-priv2", "format": "npm", "kind": "hosted", "anonymousRead": false,
+	}))
+
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, adminReq(t, http.MethodPost, "/api/v1/repos", map[string]any{
+		"name": "npm-priv-group", "format": "npm", "kind": "group",
+		"members": []string{"npm-priv2"}, "anonymousRead": false,
+	}))
+	if rw.Code != http.StatusCreated {
+		t.Errorf("private group + private member: got %d want 201", rw.Code)
+	}
+}
+
+func TestMemberPolicy_MakePrivateBlockedByPublicGroup(t *testing.T) {
+	srv := newAdminServer(t)
+	h := srv.Routes()
+
+	// Set up: public member inside a public group.
+	h.ServeHTTP(httptest.NewRecorder(), adminReq(t, http.MethodPost, "/api/v1/repos", map[string]any{
+		"name": "npm-member", "format": "npm", "kind": "hosted", "anonymousRead": true,
+	}))
+	h.ServeHTTP(httptest.NewRecorder(), adminReq(t, http.MethodPost, "/api/v1/repos", map[string]any{
+		"name": "npm-group", "format": "npm", "kind": "group",
+		"members": []string{"npm-member"}, "anonymousRead": true,
+	}))
+
+	// Attempt to make the member private while the group is still public.
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, adminReq(t, http.MethodPut, "/api/v1/repos/npm-member", map[string]any{
+		"name": "npm-member", "format": "npm", "kind": "hosted", "anonymousRead": false,
+	}))
+	if rw.Code != http.StatusBadRequest {
+		t.Errorf("making member private while in public group: got %d want 400", rw.Code)
+	}
+}
+
+func TestMemberPolicy_MakePrivateAfterGroupFixed_Allowed(t *testing.T) {
+	srv := newAdminServer(t)
+	h := srv.Routes()
+
+	// Set up: public member inside a public group.
+	h.ServeHTTP(httptest.NewRecorder(), adminReq(t, http.MethodPost, "/api/v1/repos", map[string]any{
+		"name": "npm-mem2", "format": "npm", "kind": "hosted", "anonymousRead": true,
+	}))
+	h.ServeHTTP(httptest.NewRecorder(), adminReq(t, http.MethodPost, "/api/v1/repos", map[string]any{
+		"name": "npm-grp2", "format": "npm", "kind": "group",
+		"members": []string{"npm-mem2"}, "anonymousRead": true,
+	}))
+
+	// First fix the group (make it private).
+	h.ServeHTTP(httptest.NewRecorder(), adminReq(t, http.MethodPut, "/api/v1/repos/npm-grp2", map[string]any{
+		"name": "npm-grp2", "format": "npm", "kind": "group",
+		"members": []string{"npm-mem2"}, "anonymousRead": false,
+	}))
+
+	// Now making the member private must be allowed.
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, adminReq(t, http.MethodPut, "/api/v1/repos/npm-mem2", map[string]any{
+		"name": "npm-mem2", "format": "npm", "kind": "hosted", "anonymousRead": false,
+	}))
+	if rw.Code != http.StatusOK {
+		t.Errorf("making member private after group is fixed: got %d want 200", rw.Code)
+	}
+}

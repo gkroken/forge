@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -58,6 +59,52 @@ func validateRepo(r repo.Repository) string {
 	}
 	if r.Kind == repo.Group && len(r.Members) == 0 {
 		return "members is required for group repositories"
+	}
+	return ""
+}
+
+// validateGroupPolicy rejects a public group (anonymousRead=true) whose
+// members include a private repo (anonymousRead=false). Without this check
+// an anonymous client can read private artifacts through the group.
+func validateGroupPolicy(group repo.Repository, mgr *repo.Manager) string {
+	if group.Kind != repo.Group || !group.AnonymousRead {
+		return ""
+	}
+	for _, memberName := range group.Members {
+		member, ok := mgr.Get(memberName)
+		if !ok {
+			continue // unknown member — let the handler return 404
+		}
+		if !member.AnonymousRead {
+			return fmt.Sprintf(
+				"group %q has anonymousRead=true but member %q has anonymousRead=false: "+
+					"anonymous clients would read private content through the group",
+				group.Name, memberName,
+			)
+		}
+	}
+	return ""
+}
+
+// validateMemberPolicy rejects disabling anonymousRead on a repo that is
+// already included in a public group.
+func validateMemberPolicy(updated repo.Repository, mgr *repo.Manager) string {
+	if updated.AnonymousRead {
+		return ""
+	}
+	for _, g := range mgr.All() {
+		if g.Kind != repo.Group || !g.AnonymousRead {
+			continue
+		}
+		for _, m := range g.Members {
+			if m == updated.Name {
+				return fmt.Sprintf(
+					"cannot set anonymousRead=false on %q: public group %q would expose it to anonymous clients; "+
+						"update the group first",
+					updated.Name, g.Name,
+				)
+			}
+		}
 	}
 	return ""
 }
@@ -133,6 +180,10 @@ func (s *Server) createRepo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
+	if msg := validateGroupPolicy(newRepo, s.Repos); msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
+		return
+	}
 	if err := s.Repos.Add(newRepo); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
@@ -156,6 +207,14 @@ func (s *Server) updateRepo(w http.ResponseWriter, r *http.Request, name string)
 		return
 	}
 	if msg := validateRepo(updated); msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
+		return
+	}
+	if msg := validateGroupPolicy(updated, s.Repos); msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
+		return
+	}
+	if msg := validateMemberPolicy(updated, s.Repos); msg != "" {
 		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}

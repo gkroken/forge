@@ -40,24 +40,31 @@ func ociError(w http.ResponseWriter, code, message string, status int) {
 	})
 }
 
+// defaultMaxUpload is the default per-request body limit (5 GiB).
+// Large enough for any realistic artifact; prevents runaway clients from
+// exhausting disk/S3 capacity. Override with Server.MaxUpload.
+const defaultMaxUpload = 5 << 30
+
 type Server struct {
-	Repos    *repo.Manager
-	Handlers *format.Registry
-	Blob     blob.Store
-	Meta     meta.Store
-	Auth     auth.Store     // nil = auth not enabled (eval mode)
-	Enforcer *auth.Enforcer // always non-nil; uses AllowAll when Auth is nil
-	Queue    queue.Queue    // nil = no async index regen (eval / tests)
-	Metrics  *obs.Metrics   // nil = no instrumentation (tests)
-	reg      prometheus.Gatherer
-	client   *http.Client
+	Repos     *repo.Manager
+	Handlers  *format.Registry
+	Blob      blob.Store
+	Meta      meta.Store
+	Auth      auth.Store     // nil = auth not enabled (eval mode)
+	Enforcer  *auth.Enforcer // always non-nil; uses AllowAll when Auth is nil
+	Queue     queue.Queue    // nil = no async index regen (eval / tests)
+	Metrics   *obs.Metrics   // nil = no instrumentation (tests)
+	MaxUpload int64          // per-request body limit; 0 = use defaultMaxUpload
+	reg       prometheus.Gatherer
+	client    *http.Client
 }
 
 func New(m *repo.Manager, reg *format.Registry, b blob.Store, mt meta.Store, a auth.Store) *Server {
 	return &Server{
 		Repos: m, Handlers: reg, Blob: b, Meta: mt, Auth: a,
-		Enforcer: auth.NewEnforcer(a, m),
-		client:   &http.Client{Timeout: 30 * time.Second},
+		Enforcer:  auth.NewEnforcer(a, m),
+		client:    &http.Client{Timeout: 30 * time.Second},
+		MaxUpload: defaultMaxUpload,
 	}
 }
 
@@ -266,6 +273,21 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// Enforce upload size limit on methods that carry a request body.
+		// Content-Length check is a fast path for clients that declare size
+		// upfront; MaxBytesReader covers chunked / unknown-length bodies.
+		if isWriteMethod(r.Method) {
+			limit := s.MaxUpload
+			if limit <= 0 {
+				limit = defaultMaxUpload
+			}
+			if r.ContentLength > limit {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+		}
+
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w}
 		next.ServeHTTP(rec, r)
@@ -298,4 +320,14 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 		}
 
 	})
+}
+
+// isWriteMethod reports whether method carries a request body that counts
+// against the upload size limit.
+func isWriteMethod(method string) bool {
+	switch method {
+	case http.MethodPut, http.MethodPost, http.MethodPatch:
+		return true
+	}
+	return false
 }

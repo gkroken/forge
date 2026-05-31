@@ -228,8 +228,8 @@ Phase: P7 (Security & GA hardening)
 
 | ID | Severity | Description | Status |
 |----|----------|-------------|--------|
-| SEC-001 | Medium | No upload size limit; large artifacts can exhaust storage | Backlog |
-| SEC-002 | Low | Group repo auth model allows public group over private member | Backlog |
+| SEC-001 | Medium | No upload size limit; large artifacts can exhaust storage | **Fixed** — `http.MaxBytesReader` (5 GiB default) + Content-Length pre-check in middleware; `TestMaxUpload_*` |
+| SEC-002 | Low | Group repo auth model allows public group over private member | **Fixed** — `validateGroupPolicy` + `validateMemberPolicy` in admin API; `TestGroupPolicy_*` + `TestMemberPolicy_*` |
 | SEC-003 | Low | No rate limiting on any endpoint | Backlog — out of P7 scope |
 | SEC-004 | Info | Admin SSRF via proxy upstream (admin-only exploitation) | Accepted risk; document upstream URL allowlisting as recommendation |
 | SEC-005 | Info | Bootstrap token window on first start | Accepted risk; mitigated by deployment guidance |

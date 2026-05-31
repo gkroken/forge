@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -64,6 +65,79 @@ func TestSecurityHeaders_PresentOnAllRoutes(t *testing.T) {
 				t.Errorf("CSP must not allow unsafe-eval: %s", csp)
 			}
 		})
+	}
+}
+
+// ── SEC-001: upload size limit ────────────────────────────────────────────────
+
+func TestMaxUpload_ContentLengthRejected(t *testing.T) {
+	srv := newUIServer(t)
+	srv.MaxUpload = 100 // tiny limit for this test
+	h := srv.Routes()
+
+	// Body within limit but Content-Length header declares oversize.
+	body := bytes.Repeat([]byte("x"), 10)
+	r := httptest.NewRequest(http.MethodPut, "/repository/npm-hosted/pkg", bytes.NewReader(body))
+	r.ContentLength = 200 // declared size > limit
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("oversized Content-Length: got %d want 413", w.Code)
+	}
+}
+
+func TestMaxUpload_ReadTruncated(t *testing.T) {
+	srv := newUIServer(t)
+	srv.MaxUpload = 50 // 50 bytes
+	h := srv.Routes()
+
+	// Send a body larger than the limit with no Content-Length (chunked-style).
+	big := bytes.Repeat([]byte("x"), 1000)
+	r := httptest.NewRequest(http.MethodPut, "/repository/npm-hosted/pkg", bytes.NewReader(big))
+	r.ContentLength = -1 // unknown size
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	// Handler must not return 200; exact code (400 or 413) depends on Go version.
+	if w.Code == http.StatusOK {
+		t.Errorf("oversized body with unknown Content-Length: expected non-200, got 200")
+	}
+}
+
+func TestMaxUpload_LegitimateBodyAllowed(t *testing.T) {
+	srv := newUIServer(t)
+	srv.MaxUpload = 1 << 20 // 1 MiB
+	h := srv.Routes()
+
+	// A small well-formed JSON body must not be rejected by the size limit.
+	body := []byte(`{"name":"x"}`)
+	r := httptest.NewRequest(http.MethodPut, "/repository/npm-hosted/x", bytes.NewReader(body))
+	r.ContentLength = int64(len(body))
+	r.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	// 413 must not be returned for a body under the limit.
+	if w.Code == http.StatusRequestEntityTooLarge {
+		t.Errorf("small legitimate body rejected with 413")
+	}
+}
+
+func TestMaxUpload_GetNotLimited(t *testing.T) {
+	srv := newUIServer(t)
+	srv.MaxUpload = 1 // absurdly small — must not affect GET
+	h := srv.Routes()
+
+	r := httptest.NewRequest(http.MethodGet, "/repository/npm-hosted/lodash", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code == http.StatusRequestEntityTooLarge {
+		t.Errorf("GET should never trigger upload size limit")
 	}
 }
 
