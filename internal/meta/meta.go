@@ -7,6 +7,7 @@ package meta
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,13 +31,35 @@ func NewFS(root string) (*FS, error) {
 	return &FS{root: root}, nil
 }
 
-func (f *FS) path(ns, key string) string {
+// resolve returns the absolute file path for (ns, key), rejecting any input
+// that would escape the store root. key's slashes are replaced with __ to
+// flatten the key into a filename component.
+func (f *FS) resolve(ns, key string) (string, error) {
 	safe := strings.ReplaceAll(key, "/", "__")
-	return filepath.Join(f.root, ns, safe+".json")
+	full := filepath.Join(f.root, ns, safe+".json")
+	root := filepath.Clean(f.root)
+	if !strings.HasPrefix(full, root+string(os.PathSeparator)) {
+		return "", fmt.Errorf("illegal meta key ns=%q key=%q", ns, key)
+	}
+	return full, nil
+}
+
+// resolveDir returns the absolute directory path for ns, rejecting traversal.
+func (f *FS) resolveDir(ns string) (string, error) {
+	dir := filepath.Join(f.root, ns)
+	root := filepath.Clean(f.root)
+	if dir != root && !strings.HasPrefix(dir, root+string(os.PathSeparator)) {
+		return "", fmt.Errorf("illegal meta namespace %q", ns)
+	}
+	return dir, nil
 }
 
 func (f *FS) GetJSON(ns, key string, v any) (bool, error) {
-	b, err := os.ReadFile(f.path(ns, key))
+	p, err := f.resolve(ns, key)
+	if err != nil {
+		return false, err
+	}
+	b, err := os.ReadFile(p)
 	if os.IsNotExist(err) {
 		return false, nil
 	}
@@ -47,7 +70,10 @@ func (f *FS) GetJSON(ns, key string, v any) (bool, error) {
 }
 
 func (f *FS) PutJSON(ns, key string, v any) error {
-	p := f.path(ns, key)
+	p, err := f.resolve(ns, key)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
 	}
@@ -59,7 +85,11 @@ func (f *FS) PutJSON(ns, key string, v any) error {
 }
 
 func (f *FS) List(ns string) ([]string, error) {
-	entries, err := os.ReadDir(filepath.Join(f.root, ns))
+	dir, err := f.resolveDir(ns)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -78,7 +108,11 @@ func (f *FS) List(ns string) ([]string, error) {
 }
 
 func (f *FS) Delete(ns, key string) error {
-	err := os.Remove(f.path(ns, key))
+	p, err := f.resolve(ns, key)
+	if err != nil {
+		return err
+	}
+	err = os.Remove(p)
 	if os.IsNotExist(err) {
 		return nil
 	}
