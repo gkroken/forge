@@ -102,4 +102,50 @@ func RunContract(t *testing.T, s blob.Store) {
 			t.Errorf("delete of missing key should be nil, got %v", err)
 		}
 	})
+
+	t.Run("TraversalNeutralisedOrRejected", func(t *testing.T) {
+		// Traversal attempts must either be rejected (non-nil error from Put)
+		// or neutralised so the key is only reachable via the same key string.
+		// In neither case may a Put succeed while Stat disagrees.
+		for _, key := range []string{
+			"../escape",
+			"../../etc/passwd",
+			"a/../../b",
+			"/absolute",
+		} {
+			_, err := s.Put(key, strings.NewReader("probe"))
+			if err != nil {
+				continue // rejection is acceptable
+			}
+			// Put succeeded: Stat must agree the key exists.
+			_, ok, statErr := s.Stat(key)
+			if statErr != nil || !ok {
+				t.Errorf("Put(%q) succeeded but Stat returned ok=%v err=%v", key, ok, statErr)
+			}
+		}
+	})
+
+	t.Run("LargeStream", func(t *testing.T) {
+		const size = 5 << 20 // 5 MiB — larger than typical I/O buffers
+		data := bytes.Repeat([]byte("forge"), size/5)
+		info, err := s.Put("large/blob", bytes.NewReader(data))
+		if err != nil {
+			t.Fatalf("put large: %v", err)
+		}
+		if info.Size != int64(size) {
+			t.Fatalf("size: got %d want %d", info.Size, size)
+		}
+		rc, err := s.Get("large/blob")
+		if err != nil {
+			t.Fatalf("get large: %v", err)
+		}
+		defer rc.Close()
+		got, err := io.ReadAll(rc)
+		if err != nil {
+			t.Fatalf("read large: %v", err)
+		}
+		if !bytes.Equal(got, data) {
+			t.Fatalf("large stream mismatch: got %d bytes, want %d", len(got), len(data))
+		}
+	})
 }

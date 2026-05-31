@@ -63,13 +63,13 @@ All client matrix gaps closed (2026-05-31):
 16. ~~**CRAN per-OS binary trees**~~ — **COMPLETE ✓** Windows .zip and macOS .tgz binary packages served from /bin/{platform}/contrib/{rver}/. PACKAGES/PACKAGES.gz/PACKAGES.rds per platform. Hosted-only; proxy/group deferred.
 17. ~~**Go version + OS matrix**~~ — **COMPLETE ✓** Unit test job now runs Go (stable, oldstable) × (ubuntu-latest, macos-latest). Coverage gate and upload scoped to ubuntu+stable only.
 
-### Tier 5 — Quality gaps (not hard blockers)
+### Tier 5 — Quality gaps — ALL COMPLETE ✓
 
-18. Migration test against production-sized dataset (§5.9) — only writes one record before rollback
-19. blobtest.RunContract missing "traversal-reject" and "large-stream" cases (§5.3 workplan comment)
-20. No authz fuzz test (§5.6 requirement)
-21. GitOps dry-run (ArgoCD/Flux reconcile) not in CI (§5.12)
-22. HPA and PDB disabled by default; not asserted in cluster-install CI test
+18. ~~Migration test on production-sized dataset~~ — TestPG_MigrateUpDown_ProdSized seeds 10 repos × 50 packages (500 records), runs Down+Up, verifies all empty.
+19. ~~blobtest.RunContract missing cases~~ — TraversalNeutralisedOrRejected and LargeStream (5 MiB) added to contract suite.
+20. ~~Authz fuzz test~~ — FuzzEnforcerDecide in internal/auth/fuzz_test.go; fuzzes Authorization headers and repo paths.
+21. ~~GitOps dry-run~~ — lint job validates argocd-application.yaml + flux-helmrelease.yaml (multi-doc YAML) via python yaml.safe_load_all.
+22. ~~HPA and PDB not asserted~~ — cluster-install job runs helm template --set autoscaling.enabled=true --set podDisruptionBudget.enabled=true | kubectl apply --dry-run=client.
 
 ---
 

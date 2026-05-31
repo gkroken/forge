@@ -47,6 +47,24 @@ jobs:
         run: |
           terraform -chdir=deploy/terraform/gcp init -backend=false
           terraform -chdir=deploy/terraform/gcp validate
+      # GitOps dry-run: validate ArgoCD Application + Flux HelmRelease YAML.
+      # Uses python's yaml parser (always available) to check validity and
+      # assert required top-level fields without needing ArgoCD/Flux CRDs.
+      - name: GitOps dry-run (ArgoCD + Flux YAML validation)
+        run: |
+          python3 - deploy/gitops/argocd-application.yaml \
+                    deploy/gitops/flux-helmrelease.yaml << 'EOF'
+          import yaml, sys
+          for path in sys.argv[1:]:
+              docs = list(yaml.safe_load_all(open(path)))
+              for doc in docs:
+                  if doc is None:
+                      continue
+                  assert doc.get("apiVersion"), f"{path}: missing apiVersion"
+                  assert doc.get("kind"),       f"{path}: missing kind"
+                  assert doc.get("metadata", {}).get("name"), f"{path}: missing metadata.name"
+                  print(f"OK: {path} ({doc['kind']})")
+          EOF
 
   test:
     name: Unit tests (${{ matrix.go }}, ${{ matrix.os }})
@@ -409,6 +427,19 @@ jobs:
         run: |
           kubectl delete pod -l app.kubernetes.io/name=forge --wait=true
           kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=forge --timeout=60s
+
+      # Assert HPA and PDB templates render and apply correctly.
+      # Uses helm template + kubectl apply --dry-run=client so the live cluster
+      # isn't modified and no metrics server is required for HPA creation.
+      - name: Assert HPA and PDB (dry-run)
+        run: |
+          helm template forge deploy/helm/forge \
+            --set image.repository=forge \
+            --set image.tag=ci \
+            --set autoscaling.enabled=true \
+            --set podDisruptionBudget.enabled=true \
+            | kubectl apply --dry-run=client -f -
+          echo "HPA and PDB templates render and validate cleanly"
 
       # ── forge-stack (production on-prem path) ───────────────────────────────
       - name: helm dep update (forge-stack)
