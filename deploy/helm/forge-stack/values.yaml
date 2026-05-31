@@ -1,0 +1,89 @@
+# forge-stack: complete on-premises forge deployment.
+#
+# Quick start (recommended release name is forge-stack):
+#
+#   helm dependency update deploy/helm/forge-stack
+#   helm install forge-stack deploy/helm/forge-stack \
+#     --set postgresql.auth.postgresPassword=<strong-password> \
+#     --set minio.auth.rootPassword=<strong-password> \
+#     --set forge.extraEnv.POSTGRES_DSN="postgres://postgres:<pg-password>@forge-stack-postgresql:5432/forge?sslmode=disable" \
+#     --set forge.extraEnv.S3_SECRET_KEY=<minio-password>
+#
+# The fullnameOverride values on postgresql and minio fix the service names so
+# they remain stable regardless of the Helm release name you choose.
+#
+# IMPORTANT: the default passwords below are for local testing only.
+# Always override them before exposing forge to a network.
+
+# ── forge ──────────────────────────────────────────────────────────────────────
+forge:
+  storage:
+    type: external
+
+  # Credentials wired to the postgresql and minio sub-charts below.
+  # If you change postgresql.auth.postgresPassword or minio.auth.rootPassword
+  # you MUST update the corresponding values here to match.
+  extraEnv:
+    POSTGRES_DSN: "postgres://postgres:changeme-db@forge-stack-postgresql:5432/forge?sslmode=disable"
+    S3_ENDPOINT:  "forge-stack-minio:9000"
+    S3_BUCKET:    "forge-blobs"
+    S3_ACCESS_KEY: "forge"
+    S3_SECRET_KEY: "changeme-minio"
+    S3_USE_SSL:   "false"
+
+  replicaCount: 2
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ── postgresql ─────────────────────────────────────────────────────────────────
+postgresql:
+  # Fixed service name — forge's POSTGRES_DSN hard-codes this hostname.
+  # Change both together if you need a different name.
+  fullnameOverride: forge-stack-postgresql
+
+  auth:
+    postgresPassword: "changeme-db"   # ← CHANGE THIS
+    database: "forge"
+
+  primary:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
+    persistence:
+      size: 8Gi
+
+# ── minio ───────────────────────────────────────────────────────────────────────
+minio:
+  # Fixed service name — forge's S3_ENDPOINT hard-codes this hostname.
+  fullnameOverride: forge-stack-minio
+
+  mode: standalone  # use mode: distributed for production HA
+
+  auth:
+    rootUser: "forge"
+    rootPassword: "changeme-minio"   # ← CHANGE THIS
+
+  defaultBuckets: "forge-blobs"
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+  persistence:
+    size: 20Gi

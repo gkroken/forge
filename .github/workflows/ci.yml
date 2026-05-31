@@ -230,22 +230,45 @@ jobs:
           kubectl get pods -l app.kubernetes.io/name=forge -o wide
           kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=forge --timeout=60s
 
+      # Build the forge binary (needed only as a path; FORGE_BASE means test.sh
+      # won't start it — the binary just needs to exist for the trap to be set).
+      - name: Build forge binary
+        run: go build -o ./forge ./cmd/forge
+
       # Port-forward and run the smoke test against the cluster.
-      - name: Run smoke test
+      - name: Run smoke test (standalone chart)
         run: |
           kubectl port-forward svc/forge 8080:8080 &
+          PF_PID=$!
           sleep 2
-          go build -o ./forge ./cmd/forge
           FORGE_BASE=http://localhost:8080 bash test.sh
+          kill $PF_PID 2>/dev/null || true
 
-      # Confirm graceful drain: delete the pod while a request is in flight.
+      # Confirm graceful drain: delete the pod and assert it restarts cleanly.
       - name: Assert graceful drain
         run: |
-          # Fire a background sleep request (no such endpoint — will 404 fast, but
-          # the important thing is that the pod terminates cleanly with exit 0).
           kubectl delete pod -l app.kubernetes.io/name=forge --wait=true
-          # Helm will recreate the pod; wait for it to be ready again.
           kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=forge --timeout=60s
+
+      # ── forge-stack (production on-prem path) ───────────────────────────────
+      - name: helm dep update (forge-stack)
+        run: helm dependency update deploy/helm/forge-stack/
+
+      - name: helm install forge-stack
+        run: |
+          helm install forge-stack deploy/helm/forge-stack \
+            --set forge.image.repository=forge \
+            --set forge.image.tag=ci \
+            --set forge.image.pullPolicy=Never \
+            --wait --timeout 5m
+
+      - name: Run smoke test (forge-stack)
+        run: |
+          kubectl port-forward svc/forge-stack-forge 8080:8080 &
+          PF_PID=$!
+          sleep 2
+          FORGE_BASE=http://localhost:8080 bash test.sh
+          kill $PF_PID 2>/dev/null || true
 
   quickstart:
     name: Quickstart gate (< 10 min, eval path)

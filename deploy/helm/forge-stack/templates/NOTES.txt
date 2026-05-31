@@ -1,0 +1,39 @@
+forge-stack has been deployed. Wait for all pods to be ready:
+
+  kubectl wait pod \
+    -l app.kubernetes.io/instance={{ .Release.Name }} \
+    --for=condition=Ready --timeout=180s
+
+Access the web UI:
+
+  kubectl port-forward svc/{{ .Release.Name }}-forge 8080:8080 &
+  open http://localhost:8080/ui/
+
+Health check:
+
+  curl http://localhost:8080/healthz   # → ok
+
+First publish (npm example — no auth required in default config):
+
+  npm publish --registry http://localhost:8080/repository/npm-hosted/
+
+Metrics (Prometheus):
+
+  curl http://localhost:8080/metrics
+
+{{- if eq .Values.postgresql.auth.postgresPassword "changeme-db" }}
+
+⚠  WARNING: default PostgreSQL password is in use.
+   Set a strong password before exposing this instance to a network:
+     helm upgrade {{ .Release.Name }} . \
+       --set postgresql.auth.postgresPassword=<strong-password> \
+       --set forge.extraEnv.POSTGRES_DSN="postgres://postgres:<strong-password>@forge-stack-postgresql:5432/forge?sslmode=disable"
+{{- end }}
+{{- if eq .Values.minio.auth.rootPassword "changeme-minio" }}
+
+⚠  WARNING: default MinIO password is in use.
+   Set a strong password before exposing this instance to a network:
+     helm upgrade {{ .Release.Name }} . \
+       --set minio.auth.rootPassword=<strong-password> \
+       --set forge.extraEnv.S3_SECRET_KEY=<strong-password>
+{{- end }}

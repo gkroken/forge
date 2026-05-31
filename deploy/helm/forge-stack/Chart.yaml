@@ -1,0 +1,30 @@
+apiVersion: v2
+name: forge-stack
+description: >
+  Complete forge deployment for on-premises Kubernetes. Bundles forge,
+  PostgreSQL (meta store), and MinIO (S3-compatible blob store) — no
+  external services required beyond a Kubernetes cluster.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - artifact-repository
+  - on-premises
+maintainers:
+  - name: forge maintainers
+
+dependencies:
+  # Local forge chart — run `helm dependency update` to package it.
+  - name: forge
+    version: "0.1.0"
+    repository: "file://../forge"
+
+  # Bitnami PostgreSQL — schema migrations run automatically on forge startup.
+  - name: postgresql
+    version: ">=15.0.0 <16.0.0"
+    repository: "https://charts.bitnami.com/bitnami"
+
+  # Bitnami MinIO — S3-compatible blob store; bucket is created on startup.
+  - name: minio
+    version: ">=14.0.0 <15.0.0"
+    repository: "https://charts.bitnami.com/bitnami"

@@ -2,3 +2,4 @@
 data/
 *:Zone.Identifier
 /tmp/
+deploy/helm/forge-stack/charts/

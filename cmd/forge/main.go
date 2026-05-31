@@ -10,6 +10,7 @@ import (
 	"flag"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -51,10 +52,38 @@ func main() {
 		os.Exit(0)
 	}
 
-	blobStore, err := blob.NewFS(*data + "/blobs")
-	must(err)
-	metaStore, err := meta.NewFS(*data + "/meta")
-	must(err)
+	// Storage backend selection.
+	// External mode: set POSTGRES_DSN + S3_ENDPOINT + S3_BUCKET env vars.
+	// Eval mode (default): filesystem under -data directory, zero external deps.
+	var (
+		blobStore blob.Store
+		metaStore meta.Store
+		err       error
+	)
+
+	if pgDSN := os.Getenv("POSTGRES_DSN"); pgDSN != "" {
+		metaStore, err = meta.NewPG(pgDSN)
+		must(err)
+		slog.Info("meta store: postgres", "dsn", redactDSN(pgDSN))
+	} else {
+		metaStore, err = meta.NewFS(*data + "/meta")
+		must(err)
+	}
+
+	if s3Ep := os.Getenv("S3_ENDPOINT"); s3Ep != "" {
+		blobStore, err = blob.NewS3(blob.S3Config{
+			Endpoint:  s3Ep,
+			Bucket:    os.Getenv("S3_BUCKET"),
+			AccessKey: os.Getenv("S3_ACCESS_KEY"),
+			SecretKey: os.Getenv("S3_SECRET_KEY"),
+			UseSSL:    os.Getenv("S3_USE_SSL") == "true",
+		})
+		must(err)
+		slog.Info("blob store: s3", "endpoint", s3Ep, "bucket", os.Getenv("S3_BUCKET"))
+	} else {
+		blobStore, err = blob.NewFS(*data + "/blobs")
+		must(err)
+	}
 
 	// Auth store: nil = AllowAll (eval mode); non-nil = token enforcement.
 	var authStore auth.Store
@@ -165,4 +194,14 @@ func must(err error) {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
 	}
+}
+
+// redactDSN strips the password from a postgres DSN for safe logging.
+func redactDSN(dsn string) string {
+	u, err := url.Parse(dsn)
+	if err != nil || u.User == nil {
+		return dsn
+	}
+	u.User = url.User(u.User.Username())
+	return u.String()
 }
