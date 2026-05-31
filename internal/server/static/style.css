@@ -1,0 +1,184 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:           #ffffff;
+  --bg-alt:       #f8f9fa;
+  --border:       #dee2e6;
+  --text:         #212529;
+  --text-muted:   #6c757d;
+  --accent:       #0d6efd;
+  --nav-bg:       #1a1a2e;
+  --nav-text:     #e9ecef;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+}
+
+/* ── nav ──────────────────────────────────────────────────────────────── */
+nav {
+  background: var(--nav-bg);
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 0 1.5rem;
+  height: 52px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+nav a.brand {
+  color: var(--nav-text);
+  text-decoration: none;
+  font-size: 1.05rem;
+  font-weight: 600;
+  white-space: nowrap;
+  letter-spacing: -.01em;
+}
+
+nav form { flex: 1; max-width: 440px; }
+
+nav input[type=search] {
+  width: 100%;
+  padding: 6px 12px;
+  border: 1px solid rgba(255,255,255,.15);
+  border-radius: 6px;
+  background: rgba(255,255,255,.1);
+  color: var(--nav-text);
+  font-size: 13px;
+  outline: none;
+}
+nav input[type=search]::placeholder { color: rgba(255,255,255,.4); }
+nav input[type=search]:focus {
+  border-color: var(--accent);
+  background: rgba(255,255,255,.15);
+}
+
+/* ── layout ───────────────────────────────────────────────────────────── */
+main { max-width: 1080px; margin: 0 auto; padding: 2rem 1.5rem; }
+
+h1 { font-size: 1.35rem; font-weight: 600; margin-bottom: 1.5rem; }
+h2 { font-size: 1.05rem; font-weight: 600; margin-bottom: 1rem; color: var(--text-muted); }
+
+/* ── breadcrumb ──────────────────────────────────────────────────────── */
+.breadcrumb {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 1rem;
+}
+.breadcrumb a { color: var(--accent); text-decoration: none; }
+.breadcrumb a:hover { text-decoration: underline; }
+.breadcrumb span { margin: 0 .35rem; }
+
+/* ── badges ──────────────────────────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+.kind-hosted { background: #dbeafe; color: #1e40af; }
+.kind-proxy  { background: #fef9c3; color: #854d0e; }
+.kind-group  { background: #dcfce7; color: #166534; }
+.fmt-maven   { background: #fce7f3; color: #9d174d; }
+.fmt-npm     { background: #fee2e2; color: #991b1b; }
+.fmt-helm    { background: #d1fae5; color: #065f46; }
+.fmt-cran    { background: #dbeafe; color: #1e3a8a; }
+.fmt-oci     { background: #ede9fe; color: #4c1d95; }
+
+.repo-meta { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: 1.5rem; align-items: center; }
+.repo-meta .upstream { font-size: 12px; color: var(--text-muted); margin-left: .25rem; }
+
+/* ── tables ──────────────────────────────────────────────────────────── */
+.table-wrap { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+
+table { width: 100%; border-collapse: collapse; }
+
+thead th {
+  text-align: left;
+  padding: 9px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--text-muted);
+  background: var(--bg-alt);
+  border-bottom: 1px solid var(--border);
+}
+
+tbody tr { border-bottom: 1px solid var(--border); }
+tbody tr:last-child { border-bottom: none; }
+tbody tr:hover { background: var(--bg-alt); }
+
+td { padding: 10px 14px; font-size: 13px; vertical-align: middle; }
+td a { color: var(--accent); text-decoration: none; font-weight: 500; }
+td a:hover { text-decoration: underline; }
+
+.col-name    { font-weight: 500; }
+.col-latest  { font-family: ui-monospace, monospace; font-size: 12px; }
+.col-count   { color: var(--text-muted); font-size: 12px; }
+.col-actions { text-align: right; }
+
+/* ── filter bar ──────────────────────────────────────────────────────── */
+.filter-bar { margin-bottom: 1rem; }
+.filter-bar input {
+  width: 100%;
+  max-width: 380px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  outline: none;
+  background: var(--bg);
+  color: var(--text);
+}
+.filter-bar input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(13,110,253,.1);
+}
+
+/* ── pagination ──────────────────────────────────────────────────────── */
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  margin-top: 1rem;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.btn {
+  display: inline-block;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn:hover { background: var(--bg-alt); border-color: #adb5bd; }
+.btn:disabled, .btn[aria-disabled=true] { opacity: .4; pointer-events: none; }
+
+/* ── search results ───────────────────────────────────────────────────── */
+.search-meta { font-size: 12px; color: var(--text-muted); margin-bottom: 1rem; }
+.result-repo { font-size: 11px; color: var(--text-muted); }
+
+/* ── empty + loading states ──────────────────────────────────────────── */
+.empty {
+  padding: 3rem 1rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.htmx-indicator { display: none; }
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator { display: inline; }

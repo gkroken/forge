@@ -1,0 +1,56 @@
+{{define "content"}}
+<h1>Search</h1>
+<div class="filter-bar">
+  <input type="search"
+         name="q"
+         value="{{.Query}}"
+         placeholder="Search all repos…"
+         autocomplete="off"
+         autofocus
+         hx-get="/ui/search"
+         hx-trigger="input changed delay:300ms, search"
+         hx-target="#search-results"
+         hx-include="[name='q']">
+  <span class="htmx-indicator" style="font-size:12px;color:#888;margin-left:.5rem">searching…</span>
+</div>
+
+<div id="search-results">
+  {{template "search-results" .}}
+</div>
+{{end}}
+
+{{define "search-results"}}
+{{if .Query}}
+  {{if .Results}}
+  <p class="search-meta">{{len .Results}} result{{if ne (len .Results) 1}}s{{end}} for "{{.Query}}"</p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Repository</th>
+          <th>Format</th>
+          <th>Latest</th>
+          <th>Versions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Results}}
+        <tr>
+          <td class="col-name">{{.Name}}</td>
+          <td><a href="/ui/repos/{{.Repo}}">{{.Repo}}</a></td>
+          <td><span class="badge fmt-{{.Format}}">{{.Format}}</span></td>
+          <td class="col-latest">{{if .Versions}}{{index .Versions 0}}{{end}}</td>
+          <td class="col-count">{{len .Versions}} version{{if ne (len .Versions) 1}}s{{end}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <div class="empty">No results for "{{.Query}}".</div>
+  {{end}}
+{{else}}
+<div class="empty">Enter a search term above.</div>
+{{end}}
+{{end}}

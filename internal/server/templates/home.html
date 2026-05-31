@@ -1,0 +1,27 @@
+{{define "content"}}
+<h1>Repositories</h1>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Format</th>
+        <th>Kind</th>
+        <th>Components</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Repos}}
+      <tr>
+        <td class="col-name"><a href="/ui/repos/{{.Name}}">{{.Name}}</a></td>
+        <td><span class="badge fmt-{{.Format}}">{{.Format}}</span></td>
+        <td><span class="badge kind-{{.Kind}}">{{.Kind}}</span></td>
+        <td class="col-count">{{if lt .Count 0}}—{{else}}{{.Count}}{{end}}</td>
+      </tr>
+      {{else}}
+      <tr><td colspan="4" class="empty">No repositories configured.</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}

@@ -1,0 +1,72 @@
+{{define "content"}}
+<div class="breadcrumb">
+  <a href="/ui/">Repositories</a><span>/</span>{{.Repo.Name}}
+</div>
+
+<h1>{{.Repo.Name}}</h1>
+<div class="repo-meta">
+  <span class="badge fmt-{{.Repo.Format}}">{{.Repo.Format}}</span>
+  <span class="badge kind-{{.Repo.Kind}}">{{.Repo.Kind}}</span>
+  {{if .Repo.Upstream}}<span class="upstream">↑ {{.Repo.Upstream}}</span>{{end}}
+</div>
+
+<div class="filter-bar">
+  <input type="search"
+         name="q"
+         value="{{.Query}}"
+         placeholder="Filter components…"
+         autocomplete="off"
+         hx-get="/ui/repos/{{.Repo.Name}}"
+         hx-trigger="input changed delay:250ms, search"
+         hx-target="#components-section"
+         hx-include="[name='q']">
+  <span class="htmx-indicator" style="font-size:12px;color:#888;margin-left:.5rem">searching…</span>
+</div>
+
+<div id="components-section">
+  {{template "components-section" .}}
+</div>
+{{end}}
+
+{{define "components-section"}}
+{{if .Components}}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Latest</th>
+        <th>Versions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Components}}
+      <tr>
+        <td class="col-name">{{.Name}}</td>
+        <td class="col-latest">{{if .Versions}}{{index .Versions 0}}{{end}}</td>
+        <td class="col-count">
+          {{$n := len .Versions}}
+          {{if le $n 3}}{{join .Versions ", "}}
+          {{else}}{{join (slice3 .Versions) ", "}} <span style="color:#999">+{{sub $n 3}} more</span>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+<div class="pagination">
+  <span>Showing {{len .Components}} of {{.Total}}</span>
+  {{if gt .Page 1}}
+  <a class="btn" href="/ui/repos/{{.Repo.Name}}?page={{sub .Page 1}}&q={{.Query}}">← Prev</a>
+  {{end}}
+  {{if .HasMore}}
+  <a class="btn" href="/ui/repos/{{.Repo.Name}}?page={{add .Page 1}}&q={{.Query}}">Next →</a>
+  {{end}}
+</div>
+{{else}}
+<div class="empty">
+  {{if .Query}}No components match "{{.Query}}".{{else}}No components in this repository yet.{{end}}
+</div>
+{{end}}
+{{end}}

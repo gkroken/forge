@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — forge</title>
+  <link rel="stylesheet" href="/ui/static/style.css">
+  <script src="https://unpkg.com/htmx.org@2.0.3/dist/htmx.min.js" defer></script>
+</head>
+<body>
+  <nav>
+    <a href="/ui/" class="brand">⬡ forge</a>
+    <form action="/ui/search" method="get">
+      <input type="search" name="q" placeholder="Search all repos…" autocomplete="off"
+             value="{{if eq .Title "Search"}}{{.Query}}{{end}}">
+    </form>
+  </nav>
+  <main>
+    {{block "content" .}}{{end}}
+  </main>
+</body>
+</html>
