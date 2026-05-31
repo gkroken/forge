@@ -15,7 +15,9 @@ const orasImage = "ghcr.io/oras-project/oras:v1.1.0"
 
 // craneImage is the Google go-containerregistry crane CLI — a daemon-free OCI
 // client that complements oras with a different protocol implementation.
-const craneImage = "gcr.io/go-containerregistry/crane:latest"
+// :debug variant is busybox-based and has /bin/sh, required by RunScript.
+// :latest is a scratch image with no shell and cannot be used with RunScript.
+const craneImage = "gcr.io/go-containerregistry/crane:debug"
 
 // TestOCI_Crane_PushPull copies a small public image (hello-world ~13 KB) from
 // Docker Hub into forge's OCI registry using crane, then pulls it back to verify

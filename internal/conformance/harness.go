@@ -94,7 +94,7 @@ func RunScript(t *testing.T, image, script string) {
 	t.Helper()
 	ctx := context.Background()
 
-	timeout := 3 * time.Minute
+	timeout := 10 * time.Minute
 	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image: image,

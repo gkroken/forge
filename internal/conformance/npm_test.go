@@ -74,7 +74,7 @@ REGISTRY="%s"
 npm install -g pnpm --quiet
 mkdir /tmp/proj && cd /tmp/proj
 echo '{"name":"test","version":"1.0.0"}' > package.json
-pnpm add is-odd@3.0.1 --registry "$REGISTRY" --prefer-online
+pnpm add is-odd@3.0.1 --registry "$REGISTRY"
 test -d node_modules/is-odd
 node -e "require('is-odd'); console.log('pnpm: is-odd OK')"
 `, registry))
@@ -90,7 +90,7 @@ func TestNpm_Yarn_Hosted_PublishInstall(t *testing.T) {
 	conformance.RunScript(t, "node:20-alpine", fmt.Sprintf(`
 set -e
 REGISTRY="%s"
-npm install -g yarn --quiet
+# node:20-alpine ships yarn; no need to install it.
 
 # Configure auth token so yarn can publish to forge (eval mode accepts any token).
 REGISTRY_KEY="${REGISTRY#http:}"

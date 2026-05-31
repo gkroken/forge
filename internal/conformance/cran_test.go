@@ -85,6 +85,11 @@ curl -sf -X PUT --data-binary @mypackage_1.0.0.tar.gz \
   "${REPO}src/contrib/mypackage_1.0.0.tar.gz"
 `
 
+// pakImage is rocker/r-ver:4.4 — pre-configures p3m.dev as the CRAN mirror
+// which serves pre-compiled Ubuntu binary packages. This avoids the 8+ minute
+// source compilation of pak and its C++ dependencies that r-base:4.4.0 requires.
+const pakImage = "rocker/r-ver:4.4"
+
 // TestCRAN_pak_Hosted_Install uploads a minimal package to the hosted CRAN
 // repository, then installs it using pak::pkg_install to verify that pak
 // can consume forge as a CRAN-compatible source.
@@ -96,13 +101,15 @@ func TestCRAN_pak_Hosted_Install(t *testing.T) {
 	srv := conformance.StartForge(t)
 	repo := srv.ContainerRepo("cran-hosted")
 
-	conformance.RunScript(t, cranImage, fmt.Sprintf(`
+	conformance.RunScript(t, pakImage, fmt.Sprintf(`
 set -e
 REPO="%s"
 %s
 Rscript -e "
-  install.packages('pak', repos='https://cloud.r-project.org', quiet=TRUE)
+  # rocker/r-ver pre-configures p3m.dev binary repos — pak installs in seconds.
+  install.packages('pak', quiet=TRUE)
   options(repos=c(CRAN='${REPO}'))
+  dir.create('/tmp/paklib', recursive=TRUE)
   pak::pkg_install('mypackage', lib='/tmp/paklib', ask=FALSE)
   library(mypackage, lib.loc='/tmp/paklib')
   greet()
@@ -125,6 +132,7 @@ func TestCRAN_renv_Hosted_Install(t *testing.T) {
 set -e
 REPO="%s"
 %s
+mkdir -p /tmp/renvlib
 Rscript -e "
   install.packages('renv', repos='https://cloud.r-project.org', quiet=TRUE)
   options(repos=c(CRAN='${REPO}'))
