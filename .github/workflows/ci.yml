@@ -49,17 +49,25 @@ jobs:
           terraform -chdir=deploy/terraform/gcp validate
 
   test:
-    name: Unit tests
-    runs-on: ubuntu-latest
+    name: Unit tests (${{ matrix.go }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ['stable', 'oldstable']
+        os: ['ubuntu-latest', 'macos-latest']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: ${{ matrix.go }}
           cache: true
       - name: Run tests (race detector + coverage)
         run: go test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
+      # Coverage gate runs once: ubuntu + stable. Other matrix entries just
+      # verify the tests pass — coverage numbers are identical across the matrix.
       - name: Coverage gate
+        if: matrix.os == 'ubuntu-latest' && matrix.go == 'stable'
         run: |
           TOTAL=$(go tool cover -func=coverage.out | awk '/^total:/{print $NF}' | tr -d '%')
           echo "Total coverage: ${TOTAL}%"
@@ -85,6 +93,7 @@ jobs:
           done
           exit $FAIL
       - name: Upload coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.go == 'stable'
         uses: actions/upload-artifact@v4
         with:
           name: coverage
@@ -232,6 +241,45 @@ jobs:
         run: |
           helm package deploy/helm/forge/
           helm push forge-*.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+
+      # ── Dogfooding ────────────────────────────────────────────────────────
+      # Prove forge can host its own artifacts: push the just-packaged Helm
+      # chart to a live forge instance, then pull it back and verify.
+      # This satisfies the Phase K exit criterion and closes the loop on the
+      # claim that forge is a usable artifact repository.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Dogfood — forge hosts its own Helm chart
+        run: |
+          # Build the forge binary and start it in eval mode (no external deps).
+          go build -o /tmp/forge-bin ./cmd/forge
+          mkdir -p /tmp/dogfood-data
+          /tmp/forge-bin -addr :8888 -data /tmp/dogfood-data &
+          FORGE_PID=$!
+
+          # Wait until healthy (up to 15 s).
+          for i in $(seq 1 15); do
+            curl -sf http://localhost:8888/healthz && break
+            sleep 1
+          done
+
+          # Push the packaged chart to forge's OCI registry.
+          helm push forge-*.tgz oci://localhost:8888/docker-hosted --plain-http
+
+          # Pull it back from forge to prove it is served correctly.
+          CHART_VERSION=$(helm show chart forge-*.tgz | awk '/^version:/{print $2}')
+          mkdir -p /tmp/dogfood-pull
+          helm pull oci://localhost:8888/docker-hosted/forge \
+            --version "$CHART_VERSION" --plain-http \
+            --destination /tmp/dogfood-pull
+          test -f /tmp/dogfood-pull/forge-"$CHART_VERSION".tgz
+          echo "Dogfood OK: forge hosted its own Helm chart at v${CHART_VERSION}"
+
+          kill "$FORGE_PID" 2>/dev/null || true
+          rm -rf /tmp/dogfood-data /tmp/dogfood-pull
 
       # ── SBOM ──────────────────────────────────────────────────────────────
       - name: Install syft

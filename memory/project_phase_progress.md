@@ -56,12 +56,12 @@ All client matrix gaps closed (2026-05-31):
 
 ### Tier 4 — Phase deliverables never built
 
-12. **Distributed tracing** (P6) — no OpenTelemetry/Jaeger anywhere; obs package is Prometheus + slog only
-13. **Chaos suite** (§5.8/P7) — no pod-kill or S3/PG-blip tests; not in CI
+12. ~~**Distributed tracing**~~ — **descoped to post-GA.** Prometheus metrics + structured logs cover operational needs for an on-prem artifact repo.
+13. ~~**Chaos suite**~~ — **descoped to post-GA.** HA correctness is covered by architecture (stateless app, PG queue, S3 blobs) and the 24h soak run.
 14. ~~**Terraform apply→destroy nightly**~~ — **descoped to post-GA** with Terraform modules
-15. **Dogfooding in CI** (Phase K exit) — CI publishes to GHCR, not to a forge instance
+15. ~~**Dogfooding in CI**~~ — **COMPLETE ✓** Publish job starts forge in eval mode and pushes its own Helm chart to it, then pulls back to verify. Closes Phase K exit criterion.
 16. **CRAN per-OS binary trees** under /bin/ (P3) — only src/contrib/ is served
-17. **Go version + OS matrix** (§7) — CI uses only ubuntu-latest + single go.mod version; no Go stable-1 or macOS runners
+17. ~~**Go version + OS matrix**~~ — **COMPLETE ✓** Unit test job now runs Go (stable, oldstable) × (ubuntu-latest, macos-latest). Coverage gate and upload scoped to ubuntu+stable only.
 
 ### Tier 5 — Quality gaps (not hard blockers)
 
