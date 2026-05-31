@@ -96,25 +96,62 @@ jobs:
       - name: npm conformance (proxy + hosted)
         run: go test -tags conformance -timeout 600s -v ./internal/conformance/...
 
+  security:
+    name: Security scan (SAST + deps)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # gosec: SAST for common Go security issues (G-series rules).
+      # -severity medium catches SQL injection, path traversal, weak crypto, etc.
+      # Suppress individual findings only with audited #nosec comments in source.
+      - name: gosec (SAST)
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          gosec -severity medium -confidence medium -quiet ./...
+      # govulncheck: reports only vulnerabilities reachable from our call graph,
+      # so indirect deps that are imported but never called don't fail the build.
+      - name: govulncheck (dependency scan)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
   docker:
-    name: Docker image build
+    name: Docker image build + container scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - name: Build image (PR — no push)
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           push: false
-          platforms: linux/amd64,linux/arm64
+          # Trivy runs locally so load the amd64 image into the Docker daemon.
+          load: true
+          platforms: linux/amd64
           tags: forge:ci
+      # Trivy: scan the built image for OS + application CVEs.
+      # ignore-unfixed: skip vulns with no available fix (base image distro issues
+      # we cannot resolve); still catches fixable High/Critical in our deps.
+      - name: Trivy container scan
+        uses: aquasecurity/trivy-action@0.30.0
+        with:
+          image-ref: forge:ci
+          format: table
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
 
   publish:
     name: Publish image + chart
     # Only runs on pushes to main or version tags; never on PRs.
     if: github.event_name == 'push'
-    needs: [lint, test, integration]
+    needs: [lint, test, integration, security]
     runs-on: ubuntu-latest
     permissions:
       contents: read
