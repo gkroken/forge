@@ -14,6 +14,7 @@
       <input type="search" name="q" placeholder="Search all repos…" autocomplete="off"
              value="{{if eq .Title "Search"}}{{.Query}}{{end}}">
     </form>
+    <a href="/ui/admin/" class="nav-link">Admin</a>
   </nav>
   <main>
     {{block "content" .}}{{end}}

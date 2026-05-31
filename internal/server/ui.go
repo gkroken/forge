@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+	"time"
 
 	"forge/internal/format"
 	"forge/internal/repo"
@@ -25,6 +26,12 @@ var uiFuncs = template.FuncMap{
 		}
 		return ss[:3]
 	},
+	"durStr": func(d time.Duration) string {
+		if d == 0 {
+			return ""
+		}
+		return d.String()
+	},
 }
 
 func parseUITmpl(files ...string) *template.Template {
@@ -32,9 +39,11 @@ func parseUITmpl(files ...string) *template.Template {
 }
 
 var (
-	tmplHome   = parseUITmpl("templates/base.html", "templates/home.html")
-	tmplRepo   = parseUITmpl("templates/base.html", "templates/repo.html")
-	tmplSearch = parseUITmpl("templates/base.html", "templates/search.html")
+	tmplHome        = parseUITmpl("templates/base.html", "templates/home.html")
+	tmplRepo        = parseUITmpl("templates/base.html", "templates/repo.html")
+	tmplSearch      = parseUITmpl("templates/base.html", "templates/search.html")
+	tmplAdminRepos  = parseUITmpl("templates/base.html", "templates/admin_repos.html")
+	tmplAdminForm   = parseUITmpl("templates/base.html", "templates/admin_repo_form.html")
 )
 
 // ── page data types ───────────────────────────────────────────────────────────
@@ -88,6 +97,8 @@ func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.uiRepo(w, r, name)
+	case p == "/admin" || strings.HasPrefix(p, "/admin/"):
+		s.handleUIAdmin(w, r, strings.TrimPrefix(p, "/admin"))
 	default:
 		http.NotFound(w, r)
 	}

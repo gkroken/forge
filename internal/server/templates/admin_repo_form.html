@@ -1,0 +1,91 @@
+{{define "content"}}
+<div class="breadcrumb">
+  <a href="/ui/admin/">Admin</a><span>/</span>
+  {{if .IsEdit}}Edit {{.Repo.Name}}{{else}}New repository{{end}}
+</div>
+
+<h1>{{if .IsEdit}}Edit {{.Repo.Name}}{{else}}New repository{{end}}</h1>
+
+{{if .Error}}
+<div class="alert alert-error">{{.Error}}</div>
+{{end}}
+
+<form method="POST" class="repo-form">
+  <div class="form-group">
+    <label for="f-name">Name</label>
+    <input id="f-name" type="text" name="name" value="{{.Repo.Name}}"
+           {{if .IsEdit}}readonly{{end}} required
+           placeholder="my-repo">
+    {{if .IsEdit}}<p class="form-hint">Repository name cannot be changed.</p>{{end}}
+  </div>
+
+  <div class="form-row">
+    <div class="form-group">
+      <label for="f-format">Format</label>
+      <select id="f-format" name="format">
+        {{range .Formats}}
+        <option value="{{.}}"{{if eq . $.Repo.Format}} selected{{end}}>{{.}}</option>
+        {{end}}
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="f-kind">Kind</label>
+      <select id="f-kind" name="kind" onchange="syncKind()">
+        {{range .Kinds}}
+        <option value="{{.}}"{{if eq . $.KindStr}} selected{{end}}>{{.}}</option>
+        {{end}}
+      </select>
+    </div>
+  </div>
+
+  <div class="form-group" id="g-upstream">
+    <label for="f-upstream">Upstream URL</label>
+    <input id="f-upstream" type="text" name="upstream" value="{{.Repo.Upstream}}"
+           placeholder="https://repo1.maven.org/maven2">
+  </div>
+
+  <div class="form-group" id="g-members">
+    <label for="f-members">Members <span class="form-hint-inline">comma-separated, in priority order</span></label>
+    <input id="f-members" type="text" name="members" value="{{join .Repo.Members ", "}}"
+           placeholder="my-hosted, my-proxy">
+  </div>
+
+  <div class="form-row" id="g-proxy-extra">
+    <div class="form-group">
+      <label for="f-ttl">Proxy TTL</label>
+      <input id="f-ttl" type="text" name="proxyTTL" value="{{durStr .Repo.ProxyTTL}}"
+             placeholder="24h">
+    </div>
+    <div class="form-group">
+      <label for="f-auth">Proxy Auth</label>
+      <input id="f-auth" type="text" name="proxyAuth" value="{{.Repo.ProxyAuth}}"
+             placeholder="Bearer …  or  Basic …">
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label class="checkbox-label">
+      <input type="checkbox" name="anonymousRead"{{if .Repo.AnonymousRead}} checked{{end}}>
+      Allow anonymous read access
+    </label>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">
+      {{if .IsEdit}}Save changes{{else}}Create repository{{end}}
+    </button>
+    <a href="/ui/admin/" class="btn">Cancel</a>
+  </div>
+</form>
+
+<script>
+function syncKind() {
+  var k = document.getElementById('f-kind').value;
+  document.getElementById('g-upstream').style.display    = k === 'proxy' ? '' : 'none';
+  document.getElementById('g-proxy-extra').style.display = k === 'proxy' ? '' : 'none';
+  document.getElementById('g-members').style.display     = k === 'group' ? '' : 'none';
+}
+syncKind();
+</script>
+{{end}}

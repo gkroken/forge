@@ -1,0 +1,48 @@
+{{define "content"}}
+<div class="page-header">
+  <h1>Repositories</h1>
+  <a href="/ui/admin/repos/new" class="btn btn-primary">+ New repository</a>
+</div>
+
+{{if .Flash}}
+<div class="alert alert-success">{{.Flash}}</div>
+{{end}}
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Format</th>
+        <th>Kind</th>
+        <th>Upstream / Members</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Repos}}
+      <tr>
+        <td class="col-name"><a href="/ui/repos/{{.Name}}">{{.Name}}</a></td>
+        <td><span class="badge fmt-{{.Format}}">{{.Format}}</span></td>
+        <td><span class="badge kind-{{.Kind}}">{{.Kind}}</span></td>
+        <td class="col-count">
+          {{if .Upstream}}{{.Upstream}}
+          {{else if .Members}}{{join .Members ", "}}
+          {{else}}—{{end}}
+        </td>
+        <td class="col-actions">
+          <a href="/ui/admin/repos/{{.Name}}/edit" class="btn btn-sm">Edit</a>
+          <button class="btn btn-sm btn-danger"
+                  hx-delete="/ui/admin/repos/{{.Name}}"
+                  hx-confirm="Delete «{{.Name}}»? This cannot be undone.">
+            Delete
+          </button>
+        </td>
+      </tr>
+      {{else}}
+      <tr><td colspan="5" class="empty">No repositories. <a href="/ui/admin/repos/new">Create one</a>.</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
