@@ -62,15 +62,22 @@ func validateRepo(r repo.Repository) string {
 	return ""
 }
 
-// handleAdminRepos dispatches /api/v1/repos and /api/v1/repos/{name}.
+// handleAdminRepos dispatches /api/v1/repos, /api/v1/repos/{name}, and
+// /api/v1/repos/{name}/components (browse — no admin required).
 func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
-	if !s.Enforcer.RequireAdmin(w, r) {
+	// Strip prefix to get the sub-path (may be empty, a name, or name/sub-resource).
+	name := strings.TrimPrefix(r.URL.Path, "/api/v1/repos")
+	name = strings.TrimPrefix(name, "/")
+
+	// /api/v1/repos/{name}/components — browse endpoint, no admin required.
+	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "components" {
+		s.handleComponents(w, r, repoName)
 		return
 	}
 
-	// Strip prefix to get the name segment (may be empty for collection routes).
-	name := strings.TrimPrefix(r.URL.Path, "/api/v1/repos")
-	name = strings.TrimPrefix(name, "/")
+	if !s.Enforcer.RequireAdmin(w, r) {
+		return
+	}
 
 	if name == "" {
 		switch r.Method {
