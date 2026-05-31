@@ -1,0 +1,17 @@
+# ZAP baseline scan rules for forge.
+# Format: <rule-id> TAB <action> TAB <comment>
+# Actions: IGNORE (suppress), WARN (default), FAIL (fail build), PASS (must pass).
+#
+# Security headers (X-Frame-Options, CSP, X-Content-Type-Options, Referrer-Policy)
+# are all set by the server middleware; those rules should PASS automatically.
+#
+# Rule 10202: Anti-CSRF Tokens
+#   forge uses stateless Bearer token auth, not cookie sessions.
+#   There is no CSRF attack surface.
+10202	IGNORE	stateless bearer tokens; no cookie session; CSRF N/A
+#
+# Rule 10055: CSP Scanner — unsafe-inline in style-src
+#   The htmx-based web UI requires inline styles from Go html/template.
+#   script-src does NOT allow unsafe-inline; only style-src does.
+#   Risk accepted; this is a LOW finding, not WARN/FAIL.
+10055	IGNORE	style-src unsafe-inline required for html/template UI; script-src is strict
