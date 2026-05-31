@@ -9,19 +9,21 @@ import (
 
 	"forge/internal/blob"
 	"forge/internal/meta"
+	"forge/internal/obs"
 	"forge/internal/queue"
 	"forge/internal/repo"
 )
 
 // Context is everything a handler needs to serve one request.
 type Context struct {
-	Repo  repo.Repository // the resolved repository
-	Blob  blob.Store      // raw bytes
-	Meta  meta.Store      // structured metadata
-	HTTP  *http.Client    // for proxy upstream fetches
-	Sub   string          // request path *within* the repo (no leading slash)
-	Repos *repo.Manager   // non-nil; used by group handlers to look up members
-	Queue queue.Queue     // may be nil; if set, handlers enqueue async regen jobs
+	Repo    repo.Repository // the resolved repository
+	Blob    blob.Store      // raw bytes
+	Meta    meta.Store      // structured metadata
+	HTTP    *http.Client    // for proxy upstream fetches
+	Sub     string          // request path *within* the repo (no leading slash)
+	Repos   *repo.Manager   // non-nil; used by group handlers to look up members
+	Queue   queue.Queue     // may be nil; if set, handlers enqueue async regen jobs
+	Metrics *obs.Metrics    // may be nil; used to record per-repo cache counters
 }
 
 // Key namespaces a blob key under the repo so repos never collide in storage.
@@ -38,7 +40,7 @@ func (c *Context) MemberCtx(name string) (*Context, bool) {
 	if !ok || r.Kind == repo.Group {
 		return nil, false
 	}
-	return &Context{Repo: r, Blob: c.Blob, Meta: c.Meta, HTTP: c.HTTP, Sub: c.Sub, Repos: c.Repos, Queue: c.Queue}, true
+	return &Context{Repo: r, Blob: c.Blob, Meta: c.Meta, HTTP: c.HTTP, Sub: c.Sub, Repos: c.Repos, Queue: c.Queue, Metrics: c.Metrics}, true
 }
 
 // Handler implements one package format.

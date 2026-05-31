@@ -461,6 +461,9 @@ func (h *Handler) fetchPackument(r *http.Request, c *format.Context, pkg string)
 			ttl = proxy.DefaultTTL
 		}
 		if hasCE && time.Since(ce.FetchedAt) < ttl {
+			if c.Metrics != nil {
+				c.Metrics.CacheHits.WithLabelValues(c.Repo.Name).Inc()
+			}
 			return stored, true // fresh cache hit
 		}
 		// Stale: attempt revalidation below; fall back to stored on any error.
@@ -503,6 +506,9 @@ func (h *Handler) fetchPackument(r *http.Request, c *format.Context, pkg string)
 		// Cache is still valid; refresh TTL.
 		ce.FetchedAt = time.Now()
 		c.Meta.PutJSON(h.proxyNS(c), pkg, ce)
+		if c.Metrics != nil {
+			c.Metrics.CacheHits.WithLabelValues(c.Repo.Name).Inc()
+		}
 		return stored, true
 	}
 
@@ -541,6 +547,9 @@ func (h *Handler) fetchPackument(r *http.Request, c *format.Context, pkg string)
 		ETag:         resp.Header.Get("ETag"),
 		LastModified: resp.Header.Get("Last-Modified"),
 	})
+	if c.Metrics != nil {
+		c.Metrics.CacheMisses.WithLabelValues(c.Repo.Name).Inc()
+	}
 	return doc, true
 }
 
@@ -643,7 +652,13 @@ func (h *Handler) tarball(w http.ResponseWriter, c *format.Context, sub string) 
 	}
 	// Proxy: use the shared Fetcher (TTL, ETag, stale-on-error, retries, auth).
 	upURL := strings.TrimRight(c.Repo.Upstream, "/") + "/" + sub
-	f := proxy.New(c.HTTP, proxy.Config{TTL: c.Repo.ProxyTTL, Auth: c.Repo.ProxyAuth})
+	tcfg := proxy.Config{TTL: c.Repo.ProxyTTL, Auth: c.Repo.ProxyAuth}
+	if c.Metrics != nil {
+		m, rname := c.Metrics, c.Repo.Name
+		tcfg.RecordHit = func() { m.CacheHits.WithLabelValues(rname).Inc() }
+		tcfg.RecordMiss = func() { m.CacheMisses.WithLabelValues(rname).Inc() }
+	}
+	f := proxy.New(c.HTTP, tcfg)
 	rc, _, err := f.Fetch(key, c.Repo.Name+":proxy", upURL, c.Blob, c.Meta)
 	if errors.Is(err, proxy.ErrNotFound) {
 		http.NotFound(w, nil)
@@ -667,7 +682,13 @@ func (h *Handler) groupTarball(w http.ResponseWriter, c *format.Context, sub str
 		key := mc.Key(sub)
 		if mc.Repo.Kind == repo.Proxy {
 			upURL := strings.TrimRight(mc.Repo.Upstream, "/") + "/" + sub
-			f := proxy.New(mc.HTTP, proxy.Config{TTL: mc.Repo.ProxyTTL, Auth: mc.Repo.ProxyAuth})
+			gcfg := proxy.Config{TTL: mc.Repo.ProxyTTL, Auth: mc.Repo.ProxyAuth}
+			if mc.Metrics != nil {
+				m, rname := mc.Metrics, mc.Repo.Name
+				gcfg.RecordHit = func() { m.CacheHits.WithLabelValues(rname).Inc() }
+				gcfg.RecordMiss = func() { m.CacheMisses.WithLabelValues(rname).Inc() }
+			}
+			f := proxy.New(mc.HTTP, gcfg)
 			rc, _, err := f.Fetch(key, mc.Repo.Name+":proxy", upURL, mc.Blob, mc.Meta)
 			if err == nil {
 				defer rc.Close()

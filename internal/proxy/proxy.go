@@ -93,6 +93,14 @@ type Config struct {
 	// DisableStaleOnError prevents serving stale cached content when upstream
 	// fails. Default (false) = stale IS served on error.
 	DisableStaleOnError bool
+
+	// RecordHit is called when a request is served from the local cache
+	// (TTL-fresh or ETag-revalidated). May be nil.
+	RecordHit func()
+
+	// RecordMiss is called when a full upstream 200 OK fetch was required.
+	// May be nil.
+	RecordMiss func()
 }
 
 const (
@@ -255,6 +263,9 @@ func (f *Fetcher) Fetch(blobKey, cacheNS, upURL string, blobs blob.Store, metas 
 	// ── 2. Fresh cache hit ─────────────────────────────────────────────────
 	if blobExists && hasMeta && !entry.NotFound && now.Sub(entry.FetchedAt) < f.cfg.ttl() {
 		if rc, err := blobs.Get(blobKey); err == nil {
+			if f.cfg.RecordHit != nil {
+				f.cfg.RecordHit()
+			}
 			return rc, entry.ContentType, nil
 		}
 	}
@@ -300,6 +311,9 @@ func (f *Fetcher) Fetch(blobKey, cacheNS, upURL string, blobs blob.Store, metas 
 		entry.FetchedAt = now
 		metas.PutJSON(cacheNS, blobKey, entry)
 		if rc, err := blobs.Get(blobKey); err == nil {
+			if f.cfg.RecordHit != nil {
+				f.cfg.RecordHit()
+			}
 			return rc, entry.ContentType, nil
 		}
 		return nil, "", fmt.Errorf("%w: blob disappeared after 304", ErrUpstreamFailed)
@@ -314,6 +328,9 @@ func (f *Fetcher) Fetch(blobKey, cacheNS, upURL string, blobs blob.Store, metas 
 		}
 		blobs.Put(blobKey, bytes.NewReader(upResp.body))
 		metas.PutJSON(cacheNS, blobKey, newEntry)
+		if f.cfg.RecordMiss != nil {
+			f.cfg.RecordMiss()
+		}
 		return io.NopCloser(bytes.NewReader(upResp.body)), ct, nil
 
 	case http.StatusNotFound:

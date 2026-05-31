@@ -73,7 +73,7 @@ func (s *Server) WithMetrics(metrics *obs.Metrics, gatherer prometheus.Gatherer)
 // a background goroutine that runs until ctx is cancelled.
 func (s *Server) WithQueue(ctx context.Context, q queue.Queue) *Server {
 	s.Queue = q
-	go indexer.New(s.Meta).Work(ctx, q) //nolint:errcheck
+	go indexer.New(s.Meta).WithMetrics(s.Metrics).Work(ctx, q) //nolint:errcheck
 	return s
 }
 
@@ -149,7 +149,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	}
 	h.Serve(w, r, &format.Context{
 		Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: s.client, Sub: sub,
-		Repos: s.Repos, Queue: s.Queue,
+		Repos: s.Repos, Queue: s.Queue, Metrics: s.Metrics,
 	})
 }
 
@@ -182,7 +182,7 @@ func (s *Server) handleOCI(w http.ResponseWriter, r *http.Request) {
 	}
 	h.Serve(w, r, &format.Context{
 		Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: s.client,
-		Sub: sub, Repos: s.Repos, Queue: s.Queue,
+		Sub: sub, Repos: s.Repos, Queue: s.Queue, Metrics: s.Metrics,
 	})
 }
 
@@ -203,6 +203,19 @@ func (sr *statusRecorder) written() int {
 		return http.StatusOK
 	}
 	return sr.status
+}
+
+// auditEvent returns true for requests that should be recorded in the audit log:
+// authentication failures (401/403) and successful artifact writes/deletes.
+func auditEvent(method, path string, status int) bool {
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		return true
+	}
+	if status >= 200 && status < 300 &&
+		(method == http.MethodPut || method == http.MethodPost || method == http.MethodDelete) {
+		return strings.HasPrefix(path, "/repository/") || strings.HasPrefix(path, "/v2/")
+	}
+	return false
 }
 
 // routeLabel returns a low-cardinality route label for Prometheus.
@@ -251,6 +264,16 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			"duration_ms", dur.Milliseconds(),
 			"remote", r.RemoteAddr,
 		)
+
+		if auditEvent(r.Method, r.URL.Path, status) {
+			slog.Info("audit",
+				"audit", true,
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", status,
+				"remote", r.RemoteAddr,
+			)
+		}
 
 		if s.Metrics != nil {
 			s.Metrics.HTTPRequests.WithLabelValues(r.Method, route, strconv.Itoa(status)).Inc()
