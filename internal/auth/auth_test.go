@@ -1,6 +1,8 @@
 package auth_test
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -203,6 +205,246 @@ func TestAuthzMatrix(t *testing.T) {
 				t.Errorf("got %d want %d", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestAuthzMatrix_OCI verifies MiddlewareOCI enforces auth on /v2/{name}/...
+// routes and returns the OCI-spec JSON error body + WWW-Authenticate header.
+func TestAuthzMatrix_OCI(t *testing.T) {
+	store, err := meta.NewFS(filepath.Join(t.TempDir(), "meta"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := auth.NewMetaStore(store)
+
+	mgr := repo.NewManager()
+	mgr.Add(repo.Repository{Name: "oci-private", Format: "oci", Kind: repo.Hosted, AnonymousRead: false})
+	mgr.Add(repo.Repository{Name: "oci-public", Format: "oci", Kind: repo.Hosted, AnonymousRead: true})
+
+	enforcer := auth.NewEnforcer(s, mgr)
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux := http.NewServeMux()
+	mux.Handle("/v2/", enforcer.MiddlewareOCI(inner))
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	_, writeSecret, _ := s.Create("write", []auth.Grant{{Repo: "oci-private", Role: auth.RoleWrite}}, nil)
+
+	doOCI := func(method, repo, secret string) (int, http.Header, map[string]any) {
+		req, _ := http.NewRequest(method, srv.URL+"/v2/"+repo+"/manifests/latest", nil)
+		if secret != "" {
+			req.Header.Set("Authorization", "Bearer "+secret)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("request: %v", err)
+		}
+		defer resp.Body.Close()
+		var body map[string]any
+		json.NewDecoder(resp.Body).Decode(&body)
+		return resp.StatusCode, resp.Header, body
+	}
+
+	cases := []struct {
+		name       string
+		method     string
+		repo       string
+		secret     string
+		wantStatus int
+		wantWWW    bool // expect WWW-Authenticate header on 401
+	}{
+		{"anon GET private", "GET", "oci-private", "", http.StatusUnauthorized, true},
+		{"anon PUT private", "PUT", "oci-private", "", http.StatusUnauthorized, true},
+		{"anon GET public", "GET", "oci-public", "", http.StatusOK, false},
+		{"write GET private", "GET", "oci-private", writeSecret, http.StatusOK, false},
+		{"write PUT private", "PUT", "oci-private", writeSecret, http.StatusOK, false},
+		{"invalid token",     "GET", "oci-private", "forge_" + nHex(64), http.StatusUnauthorized, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status, hdr, body := doOCI(tc.method, tc.repo, tc.secret)
+			if status != tc.wantStatus {
+				t.Errorf("status: got %d want %d", status, tc.wantStatus)
+			}
+			if tc.wantWWW && hdr.Get("WWW-Authenticate") == "" {
+				t.Error("missing WWW-Authenticate header on 401")
+			}
+			if status == http.StatusUnauthorized || status == http.StatusForbidden {
+				errs, _ := body["errors"].([]any)
+				if len(errs) == 0 {
+					t.Error("OCI error response missing 'errors' array")
+				}
+			}
+		})
+	}
+}
+
+// TestAuthzMatrix_Methods verifies HEAD maps to read and DELETE/POST/PATCH
+// map to write, consistent with actionFor() in enforce.go.
+func TestAuthzMatrix_Methods(t *testing.T) {
+	store, req := setupMatrix(t)
+	_, readSecret, _ := store.Create("read", []auth.Grant{{Repo: "private", Role: auth.RoleRead}}, nil)
+	_, writeSecret, _ := store.Create("write", []auth.Grant{{Repo: "private", Role: auth.RoleWrite}}, nil)
+
+	cases := []struct {
+		name   string
+		method string
+		secret string
+		want   int
+	}{
+		// HEAD is a read — read token allows, anon denied.
+		{"HEAD anon",        "HEAD",   "",          http.StatusUnauthorized},
+		{"HEAD read-token",  "HEAD",   readSecret,  http.StatusOK},
+		// DELETE, POST, PATCH are writes.
+		{"DELETE read-token",  "DELETE", readSecret,  http.StatusForbidden},
+		{"DELETE write-token", "DELETE", writeSecret, http.StatusOK},
+		{"POST read-token",    "POST",   readSecret,  http.StatusForbidden},
+		{"POST write-token",   "POST",   writeSecret, http.StatusOK},
+		{"PATCH write-token",  "PATCH",  writeSecret, http.StatusOK},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := req(tc.method, "private", tc.secret)
+			if got != tc.want {
+				t.Errorf("got %d want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAuthzMatrix_BearerFormats verifies that npm-style Basic auth (empty
+// username, token as password) is accepted alongside the standard Bearer header.
+func TestAuthzMatrix_BearerFormats(t *testing.T) {
+	m, _ := meta.NewFS(filepath.Join(t.TempDir(), "meta"))
+	s := auth.NewMetaStore(m)
+	_, secret, _ := s.Create("rw", []auth.Grant{{Repo: "private", Role: auth.RoleWrite}}, nil)
+
+	mgr := repo.NewManager()
+	mgr.Add(repo.Repository{Name: "private", Format: "maven", Kind: repo.Hosted, AnonymousRead: false})
+	enforcer := auth.NewEnforcer(s, mgr)
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux := http.NewServeMux()
+	mux.Handle("/repository/", enforcer.Middleware(inner))
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	send := func(name, authHeader string, wantStatus int) {
+		t.Helper()
+		t.Run(name, func(t *testing.T) {
+			r, _ := http.NewRequest("PUT", srv.URL+"/repository/private/artifact", nil)
+			r.Header.Set("Authorization", authHeader)
+			resp, err := http.DefaultClient.Do(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != wantStatus {
+				t.Errorf("got %d want %d", resp.StatusCode, wantStatus)
+			}
+		})
+	}
+
+	basicEncode := func(token string) string {
+		// npm sends Authorization: Basic base64(":"  + token) — empty username.
+		return "Basic " + base64.StdEncoding.EncodeToString([]byte(":"+token))
+	}
+
+	send("npm Basic auth",         basicEncode(secret),          http.StatusOK)
+	send("standard Bearer",        "Bearer "+secret,             http.StatusOK)
+	send("Bearer with extra space","Bearer  "+secret,            http.StatusOK)
+	send("wrong token via Basic",  basicEncode("forge_"+nHex(64)), http.StatusUnauthorized)
+	send("wrong Bearer",           "Bearer forge_"+nHex(64),     http.StatusUnauthorized)
+}
+
+// TestAuthzMatrix_RequireAdmin verifies the admin guard on token-management
+// endpoints: no token → 401, non-admin → 403, admin → passes through.
+func TestAuthzMatrix_RequireAdmin(t *testing.T) {
+	s := newStore(t)
+	mgr := repo.NewManager()
+	enforcer := auth.NewEnforcer(s, mgr)
+
+	_, nonAdminSecret, _ := s.Create("user", []auth.Grant{{Repo: "npm-hosted", Role: auth.RoleWrite}}, nil)
+	_, adminSecret, _ := s.Create("admin", []auth.Grant{{Repo: "*", Role: auth.RoleAdmin}}, nil)
+
+	adminHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !enforcer.RequireAdmin(w, r) {
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(adminHandler)
+	t.Cleanup(srv.Close)
+
+	do := func(secret string) int {
+		r, _ := http.NewRequest("POST", srv.URL+"/api/v1/tokens", nil)
+		if secret != "" {
+			r.Header.Set("Authorization", "Bearer "+secret)
+		}
+		resp, _ := http.DefaultClient.Do(r)
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	cases := []struct {
+		name   string
+		secret string
+		want   int
+	}{
+		{"no token",     "",             http.StatusUnauthorized},
+		{"non-admin",    nonAdminSecret, http.StatusForbidden},
+		{"admin",        adminSecret,    http.StatusOK},
+		{"invalid",      "forge_" + nHex(64), http.StatusUnauthorized},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := do(tc.secret)
+			if got != tc.want {
+				t.Errorf("got %d want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAuthzMatrix_ExpiredToken verifies that an expired token is rejected at
+// the HTTP layer with 401, not silently treated as anonymous.
+func TestAuthzMatrix_ExpiredToken(t *testing.T) {
+	_, req := setupMatrix(t)
+
+	// Create a second store to issue an already-expired token.
+	s2 := newStore(t)
+	past := time.Now().Add(-time.Second)
+	_, expiredSecret, _ := s2.Create("expired", []auth.Grant{{Repo: "private", Role: auth.RoleWrite}}, &past)
+
+	// The matrix server uses its own store, so this token is unknown → 401,
+	// same as an expired token from the correct store.
+	got := req("GET", "private", expiredSecret)
+	if got != http.StatusUnauthorized {
+		t.Errorf("expired/unknown token: got %d want 401", got)
+	}
+
+	// Verify with the correct store: expired → nil from Verify → 401.
+	s3 := newStore(t)
+	mgr3 := repo.NewManager()
+	mgr3.Add(repo.Repository{Name: "private", Format: "maven", Kind: repo.Hosted})
+	enforcer3 := auth.NewEnforcer(s3, mgr3)
+
+	pastTime := time.Now().Add(-time.Second)
+	_, expSecret, _ := s3.Create("exp", []auth.Grant{{Repo: "private", Role: auth.RoleRead}}, &pastTime)
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux := http.NewServeMux()
+	mux.Handle("/repository/", enforcer3.Middleware(inner))
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	r, _ := http.NewRequest("GET", srv.URL+"/repository/private/artifact", nil)
+	r.Header.Set("Authorization", "Bearer "+expSecret)
+	resp, _ := http.DefaultClient.Do(r)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expired token: got %d want 401", resp.StatusCode)
 	}
 }
 
