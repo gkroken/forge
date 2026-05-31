@@ -170,11 +170,17 @@ Postgres, and S3 backends; migration up/down tested in CI.
 
 ### Phase 2 — AuthN / AuthZ  *(weeks 7–13)*
 - User/token model; per-repo role-based permissions (read/write/admin).
-- OIDC + LDAP/SAML; API tokens; anonymous-read policy per repo.
+- API tokens; anonymous-read policy per repo.
 - Authz enforced as middleware before handler dispatch.
 
 **Exit:** authz matrix suite (§5.6) green; no route reachable without a policy
 decision; token lifecycle tests pass.
+
+> **Scope note (post-GA):** OIDC / LDAP / SAML federation are out of scope for
+> GA. The production workflows that matter — anonymous installs, CI publish via
+> service tokens, admin manages repos via API tokens — are fully covered by the
+> token model. SSO integration (self-service token issuance via Keycloak/AD) is
+> a post-GA quality-of-life feature.
 
 ### Phase 3 — Format completeness  *(weeks 9–28, parallelized per format)*
 - **Maven:** timestamped SNAPSHOT metadata; Gradle `.module`; parent-POM

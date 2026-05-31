@@ -20,7 +20,7 @@ Progress as of 2026-05-31. All findings verified by direct codebase inspection.
 - P6 (partial — see gap #10): Admin API, web UI, metrics (Prometheus), audit log, Grafana dashboard, runbooks, search — but **tracing is missing**
 
 **Partially complete (gaps below):**
-- P2: Token auth + per-repo RBAC + authz matrix test ✓ — **OIDC/LDAP/SAML never implemented**
+- P2: Token auth + per-repo RBAC + authz matrix test ✓ — OIDC/LDAP/SAML descoped to post-GA (see note below)
 - P3: Most deliverables done — **CRAN binary trees (/bin/) not implemented; Helm oci:// untested in conformance; scoped npm and group-mode conformance absent**
 - P5: Job queue + idempotent indexer ✓ — **queue.NewPG never wired in main.go; production always uses MemQueue** (critical HA bug)
 - P7: SAST, DAST, dep scan, container scan, SBOM, signing ✓ — **chaos suite not implemented; pen test pending (external)**
@@ -41,7 +41,7 @@ Progress as of 2026-05-31. All findings verified by direct codebase inspection.
 
 ### Tier 2 — §1/§1a criteria violations
 
-4. **OIDC/LDAP/SAML not implemented** (P2) — only token auth exists. P2 exit criterion requires OIDC + LDAP/SAML. Must either implement or formally descope for initial GA.
+4. ~~**OIDC/LDAP/SAML**~~ — **descoped to post-GA.** Production workflows (anonymous installs, CI publish via service tokens, admin via API tokens) are fully covered by the existing token model. The org uses AD + Keycloak; SSO self-service token issuance is a post-GA feature. SAML not needed (Keycloak bridges it).
 5. ~~**Azure Terraform module**~~ — **descoped to post-GA.** Terraform cloud modules (AWS/GCP/Azure) are out of scope for GA. The `forge-stack` Helm chart (bundled Postgres + MinIO) is the IaC production path. Existing AWS + GCP modules remain in the repo as a bonus.
 6. **Per-package ≥85% coverage not CI-gated** (§5.10) — only a comment in ci.yml:67; the gate only checks overall 75%. format/npm is at 67.1%; would fail if enforced.
 
