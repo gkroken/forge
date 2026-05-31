@@ -58,12 +58,14 @@ func main() {
 	var (
 		blobStore blob.Store
 		metaStore meta.Store
+		pgMeta    *meta.PG // non-nil when Postgres is active; used for queue wiring
 		err       error
 	)
 
 	if pgDSN := os.Getenv("POSTGRES_DSN"); pgDSN != "" {
-		metaStore, err = meta.NewPG(pgDSN)
+		pgMeta, err = meta.NewPG(pgDSN)
 		must(err)
+		metaStore = pgMeta
 		slog.Info("meta store: postgres", "dsn", redactDSN(pgDSN))
 	} else {
 		metaStore, err = meta.NewFS(*data + "/meta")
@@ -154,11 +156,19 @@ func main() {
 	promReg := prometheus.NewRegistry()
 	metrics := obs.NewMetrics(promReg)
 
-	// In eval mode (FS stores) use an in-memory queue; in production the caller
-	// would pass a queue.NewPG(metaPG.DB()) here instead.
+	// Use the Postgres queue when a PG meta store is active so that index-regen
+	// jobs survive pod restarts and are shared across all app nodes. Fall back to
+	// the in-memory queue for eval / single-node mode (FS stores).
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
-	q := queue.NewMem(256)
+	var q queue.Queue
+	if pgMeta != nil {
+		q = queue.NewPG(pgMeta.DB())
+		slog.Info("queue: postgres")
+	} else {
+		q = queue.NewMem(256)
+		slog.Info("queue: in-memory (eval mode)")
+	}
 
 	srv := &http.Server{
 		Addr: *addr,
