@@ -118,3 +118,32 @@ podDisruptionBudget:
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# Prometheus metrics
+metrics:
+  serviceMonitor:
+    # Set to true when the Prometheus Operator CRD is installed.
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    # Namespace to create the ServiceMonitor in (defaults to Release.Namespace).
+    namespace: ""
+    # Extra labels added to the ServiceMonitor — use to match your Prometheus
+    # Operator's serviceMonitorSelector, e.g. { release: kube-prometheus-stack }.
+    labels: {}
+    relabelings: []
+    metricRelabelings: []
+    namespaceSelector: {}
+
+# Grafana dashboard auto-import via grafana-sidecar
+grafana:
+  dashboard:
+    # Set to true when the Grafana sidecar (k8s-sidecar) is deployed.
+    # Creates a ConfigMap labelled grafana_dashboard=1 that the sidecar picks up.
+    # The dashboard can also be imported manually from
+    # deploy/helm/forge/dashboards/forge-overview.json.
+    enabled: false
+    # Extra labels on the ConfigMap, e.g. to set a Grafana folder:
+    #   grafana_folder: "forge"
+    labels: {}
+    annotations: {}
