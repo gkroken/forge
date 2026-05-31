@@ -39,10 +39,12 @@ curl -sf -X POST \
 curl -sf "${REPO}index.yaml" | grep 'name: myapp'
 
 # Add the repository to Helm and pull the chart from a clean cache.
+# Remove the locally-packaged file so the test -f below proves the pull worked.
+rm myapp-0.1.0.tgz
 helm repo add forge "${REPO}"
 helm repo update forge
-helm pull forge/myapp --version 0.1.0 --destination /tmp/dl
-test -f /tmp/dl/myapp-0.1.0.tgz
+helm pull forge/myapp --version 0.1.0
+test -f myapp-0.1.0.tgz
 `, repo))
 }
 
@@ -74,9 +76,10 @@ curl -sf -X POST \
 curl -sf "${GROUP}index.yaml" | grep 'name: grpchart'
 
 # Pull through the group repository.
+rm grpchart-0.1.0.tgz
 helm repo add forge-public "${GROUP}"
 helm repo update forge-public
-helm pull forge-public/grpchart --version 0.1.0 --destination /tmp/dl
-test -f /tmp/dl/grpchart-0.1.0.tgz
+helm pull forge-public/grpchart --version 0.1.0
+test -f grpchart-0.1.0.tgz
 `, hosted, group))
 }

@@ -9,7 +9,7 @@ import (
 	"forge/internal/conformance"
 )
 
-const cranImage = "r-base:4.3"
+const cranImage = "r-base:4.4.0"
 
 // TestCRAN_Hosted_PublishInstall uploads a minimal pure-R source package to
 // the hosted CRAN repository, verifies that forge generates a correct PACKAGES
@@ -39,6 +39,8 @@ Encoding: UTF-8
 DESC
 
 echo 'greet <- function() cat("hello from mypackage\n")' > /tmp/mypackage/R/greet.R
+# R 4.x requires a NAMESPACE file; exportPattern exports all visible functions.
+echo "exportPattern('.')" > /tmp/mypackage/NAMESPACE
 
 cd /tmp && tar czf mypackage_1.0.0.tar.gz mypackage/
 

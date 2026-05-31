@@ -98,7 +98,11 @@ func RunScript(t *testing.T, image, script string) {
 	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image: image,
-			Cmd:   []string{"sh", "-c", script},
+			// Override the image's ENTRYPOINT with sh so that images whose
+			// entrypoint is a specific binary (e.g. helm, oras) still run our
+			// shell script. Cmd provides the arguments to that sh invocation.
+			Entrypoint: []string{"sh"},
+			Cmd:        []string{"-c", script},
 			// Maps host.docker.internal to the host's network gateway so
 			// containers can reach forge running on the host.
 			ExtraHosts: []string{"host.docker.internal:host-gateway"},

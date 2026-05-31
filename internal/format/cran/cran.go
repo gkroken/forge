@@ -106,6 +106,11 @@ func (h *Handler) download(w http.ResponseWriter, c *format.Context) {
 	}
 	rc, err := c.Blob.Get(c.Key(c.Sub))
 	if err != nil {
+		// Proxy repos fetch from upstream on a cache miss.
+		if c.Repo.Kind == repo.Proxy {
+			h.proxy(w, c)
+			return
+		}
 		http.NotFound(w, nil)
 		return
 	}

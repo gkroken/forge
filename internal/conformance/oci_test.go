@@ -29,16 +29,17 @@ set -e
 REGISTRY="%s"
 IMAGE="${REGISTRY}/docker-hosted/conformance-artifact:v1"
 
-# Create a small test artifact.
-echo "forge conformance payload" > /tmp/artifact.txt
+# oras rejects absolute paths; work from a temp directory with relative paths.
+mkdir /tmp/push && cd /tmp/push
+echo "forge conformance payload" > artifact.txt
 
 # Push to forge (--plain-http: forge runs without TLS in eval mode).
-oras push --plain-http "${IMAGE}" /tmp/artifact.txt
+oras push --plain-http "${IMAGE}" artifact.txt
 
-# Pull back into a clean output directory and verify content.
-mkdir /tmp/pulled
-oras pull --plain-http --output /tmp/pulled "${IMAGE}"
-test -f /tmp/pulled/artifact.txt
-grep "forge conformance payload" /tmp/pulled/artifact.txt
+# Pull back into a separate clean directory and verify content.
+mkdir /tmp/pull
+oras pull --plain-http --output /tmp/pull "${IMAGE}"
+test -f /tmp/pull/artifact.txt
+grep "forge conformance payload" /tmp/pull/artifact.txt
 `, registry))
 }
