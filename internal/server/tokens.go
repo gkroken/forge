@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -77,6 +78,8 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	slog.Info("audit", "audit", true, "event", "token.create",
+		"token_id", tok.ID, "description", tok.Description)
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(createTokenResponse{Token: tok, Secret: secret})
@@ -102,6 +105,7 @@ func (s *Server) revokeToken(w http.ResponseWriter, r *http.Request, id string) 
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	slog.Info("audit", "audit", true, "event", "token.revoke", "token_id", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
