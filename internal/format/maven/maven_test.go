@@ -129,7 +129,9 @@ func TestServe_Get_SnapshotMetadata(t *testing.T) {
 }
 
 func TestServe_MethodNotAllowed(t *testing.T) {
+	// DELETE is only allowed on hosted repos; proxy should reject with 405.
 	c := ctxWith(t, "")
+	c.Repo.Kind = repo.Proxy
 	rw := serveReq(c, http.MethodDelete, "com/acme/lib/1.0.0/lib-1.0.0.jar", nil)
 	if rw.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected 405, got %d", rw.Code)

@@ -32,6 +32,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"forge/internal/blob"
 	"forge/internal/format"
@@ -75,13 +76,14 @@ type snapshotVersion struct {
 // Two PUTs to the same artifact (same ext+classifier) are last-writer-wins,
 // which is correct: the latest build's record replaces the previous one.
 type snapArtifact struct {
-	GroupID    string `json:"groupId"`
-	ArtifactID string `json:"artifactId"`
-	Version    string `json:"version"`
-	Classifier string `json:"classifier,omitempty"`
-	Extension  string `json:"extension"`
-	Value      string `json:"value"`
-	Updated    string `json:"updated"`
+	GroupID    string    `json:"groupId"`
+	ArtifactID string    `json:"artifactId"`
+	Version    string    `json:"version"`
+	Classifier string    `json:"classifier,omitempty"`
+	Extension  string    `json:"extension"`
+	Value      string    `json:"value"`
+	Updated    string    `json:"updated"`
+	UploadedAt time.Time `json:"uploadedAt,omitempty"`
 }
 
 func (h *Handler) snapNS(c *format.Context) string    { return c.Repo.Name + ":maven:snap" }
@@ -99,6 +101,12 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 			return
 		}
 		h.put(w, r, c)
+	case http.MethodDelete:
+		if c.Repo.Kind != repo.Hosted {
+			http.Error(w, "cannot delete from a non-hosted repository", http.StatusMethodNotAllowed)
+			return
+		}
+		h.deleteArtifact(w, c)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -439,6 +447,7 @@ func (h *Handler) maybeUpdateSnapshotMeta(c *format.Context) {
 	rec := snapArtifact{
 		GroupID: groupID, ArtifactID: artifactID, Version: versionDir,
 		Extension: ext, Value: value, Updated: updated,
+		UploadedAt: time.Now().UTC(),
 	}
 	// Key is unique per artifact type; concurrent PUTs to different types
 	// (jar, pom, sources) never conflict.
@@ -617,6 +626,49 @@ func contentType(p string) string {
 	default:
 		return "application/octet-stream"
 	}
+}
+
+// --- delete ----------------------------------------------------------------
+
+// deleteArtifact removes the artifact blob at the requested path and cleans
+// up any associated SNAPSHOT meta record.
+func (h *Handler) deleteArtifact(w http.ResponseWriter, c *format.Context) {
+	key := c.Key(c.Sub)
+	if _, exists, _ := c.Blob.Stat(key); !exists {
+		http.NotFound(w, nil)
+		return
+	}
+	if err := c.Blob.Delete(key); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.maybeDeleteSnapshotMeta(c)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// maybeDeleteSnapshotMeta removes the snapArtifact meta record that
+// corresponds to the just-deleted SNAPSHOT artifact file.
+func (h *Handler) maybeDeleteSnapshotMeta(c *format.Context) {
+	parts := strings.Split(c.Sub, "/")
+	if len(parts) < 3 {
+		return
+	}
+	versionDir := parts[len(parts)-2]
+	if !strings.HasSuffix(versionDir, "-SNAPSHOT") {
+		return
+	}
+	filename := parts[len(parts)-1]
+	if filename == "maven-metadata.xml" || checksumExt(filename) != "" || strings.HasSuffix(filename, ".asc") {
+		return
+	}
+	artifactID := parts[len(parts)-3]
+	snapshotPath := strings.Join(parts[:len(parts)-1], "/")
+	ext, _, ok := parseArtifactFilename(filename, artifactID)
+	if !ok {
+		return
+	}
+	key := snapshotPath + ":" + ext + ":"
+	c.Meta.Delete(h.snapVersNS(c), key) //nolint:errcheck
 }
 
 // BrowseRepo implements format.Browsable.

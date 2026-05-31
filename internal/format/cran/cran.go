@@ -37,6 +37,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"time"
 
 	"forge/internal/format"
 	"forge/internal/proxy"
@@ -51,11 +52,12 @@ func (h *Handler) Format() string { return "cran" }
 func (h *Handler) ns(c *format.Context) string { return c.Repo.Name + ":cran" }
 
 type pkgRecord struct {
-	Package string `json:"package"`
-	Version string `json:"version"`
-	Depends string `json:"depends,omitempty"`
-	Imports string `json:"imports,omitempty"`
-	License string `json:"license,omitempty"`
+	Package    string    `json:"package"`
+	Version    string    `json:"version"`
+	Depends    string    `json:"depends,omitempty"`
+	Imports    string    `json:"imports,omitempty"`
+	License    string    `json:"license,omitempty"`
+	UploadedAt time.Time `json:"uploadedAt,omitempty"`
 }
 
 func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Context) {
@@ -79,6 +81,12 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 		h.publish(w, r, c)
 	case r.Method == http.MethodGet && strings.HasSuffix(c.Sub, ".tar.gz"):
 		h.download(w, c)
+	case r.Method == http.MethodDelete && strings.HasPrefix(c.Sub, "src/contrib/") && strings.HasSuffix(c.Sub, ".tar.gz"):
+		if c.Repo.Kind != repo.Hosted {
+			http.Error(w, "cannot delete from non-hosted repository", http.StatusMethodNotAllowed)
+			return
+		}
+		h.deletePkg(w, c)
 	case strings.HasPrefix(c.Sub, "bin/"):
 		h.serveBinary(w, r, c)
 	default:
@@ -105,6 +113,7 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, c *format.Cont
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	rec.UploadedAt = time.Now().UTC()
 	c.Meta.PutJSON(h.ns(c), rec.Package+"_"+rec.Version, rec)
 	w.WriteHeader(http.StatusCreated)
 	fmt.Fprintf(w, "stored %s %s\n", rec.Package, rec.Version)
@@ -439,6 +448,26 @@ func scanDescription(data []byte) pkgRecord {
 		Depends: fields["Depends"], Imports: fields["Imports"],
 		License: fields["License"],
 	}
+}
+
+// --- delete ----------------------------------------------------------------
+
+// deletePkg removes a source package blob and its meta record so it no longer
+// appears in the generated PACKAGES index.
+func (h *Handler) deletePkg(w http.ResponseWriter, c *format.Context) {
+	key := c.Key(c.Sub)
+	if _, exists, _ := c.Blob.Stat(key); !exists {
+		http.NotFound(w, nil)
+		return
+	}
+	if err := c.Blob.Delete(key); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Meta key mirrors what publish() stores: "{Package}_{Version}"
+	metaKey := strings.TrimSuffix(path.Base(c.Sub), ".tar.gz")
+	c.Meta.Delete(h.ns(c), metaKey) //nolint:errcheck
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- Binary tree support ---------------------------------------------------

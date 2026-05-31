@@ -31,15 +31,41 @@ const (
 	Group  Kind = "group"
 )
 
+// CleanupPolicy defines automated artifact retention rules for a hosted
+// repository. All fields are optional; zero/false means "no limit".
+type CleanupPolicy struct {
+	// KeepVersions retains only the N most recent versions of each
+	// artifact/package/chart. Versions are compared as strings; for Maven
+	// the path-level version directory name is used.
+	KeepVersions int `json:"keepVersions,omitempty"`
+
+	// KeepReleasesOnly deletes all pre-release versions: Maven SNAPSHOTs
+	// (version contains "-SNAPSHOT") and npm pre-releases (version contains
+	// a pre-release separator like "-alpha", "-beta", "-rc").
+	KeepReleasesOnly bool `json:"keepReleasesOnly,omitempty"`
+
+	// DeleteSnapshotsDays deletes SNAPSHOT versions (Maven) or pre-release
+	// versions (npm) that were uploaded more than N days ago. Requires
+	// upload timestamps — only applies to artifacts published after this
+	// field was introduced.
+	DeleteSnapshotsDays int `json:"deleteSnapshotsDays,omitempty"`
+
+	// DeleteOlderThanDays deletes any artifact uploaded more than N days ago.
+	// Requires upload timestamps — only applies to artifacts published after
+	// this field was introduced.
+	DeleteOlderThanDays int `json:"deleteOlderThanDays,omitempty"`
+}
+
 type Repository struct {
-	Name          string        `json:"name"`
-	Format        string        `json:"format"`
-	Kind          Kind          `json:"kind"`
-	Upstream      string        `json:"upstream,omitempty"`
-	Members       []string      `json:"members,omitempty"`
-	AnonymousRead bool          `json:"anonymousRead"`
-	ProxyTTL      time.Duration `json:"proxyTTL,omitempty"`
-	ProxyAuth     string        `json:"proxyAuth,omitempty"`
+	Name          string         `json:"name"`
+	Format        string         `json:"format"`
+	Kind          Kind           `json:"kind"`
+	Upstream      string         `json:"upstream,omitempty"`
+	Members       []string       `json:"members,omitempty"`
+	AnonymousRead bool           `json:"anonymousRead"`
+	ProxyTTL      time.Duration  `json:"proxyTTL,omitempty"`
+	ProxyAuth     string         `json:"proxyAuth,omitempty"`
+	CleanupPolicy *CleanupPolicy `json:"cleanupPolicy,omitempty"`
 }
 
 // metaStore is the minimal interface Manager needs for persistence.

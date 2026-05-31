@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"forge/internal/cleanup"
 	"forge/internal/repo"
 )
 
@@ -122,6 +123,15 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// /api/v1/repos/{name}/cleanup — trigger retention policy (admin only).
+	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "cleanup" {
+		if !s.Enforcer.RequireAdmin(w, r) {
+			return
+		}
+		s.handleCleanup(w, r, repoName)
+		return
+	}
+
 	if !s.Enforcer.RequireAdmin(w, r) {
 		return
 	}
@@ -232,4 +242,25 @@ func (s *Server) deleteRepo(w http.ResponseWriter, name string) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleCleanup handles POST /api/v1/repos/{name}/cleanup.
+// It applies the repository's CleanupPolicy and returns a JSON summary.
+func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	rp, ok := s.Repos.Get(name)
+	if !ok {
+		http.Error(w, "repository not found: "+name, http.StatusNotFound)
+		return
+	}
+	result, err := cleanup.Run(rp, s.Blob, s.Meta)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
 }

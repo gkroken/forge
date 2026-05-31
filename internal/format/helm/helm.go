@@ -40,13 +40,14 @@ func (h *Handler) Format() string { return "helm" }
 
 // chartRecord is what we persist per chart version (meta namespace).
 type chartRecord struct {
-	Name        string `json:"name"`
-	Version     string `json:"version"`
-	AppVersion  string `json:"appVersion,omitempty"`
-	Description string `json:"description,omitempty"`
-	Digest      string `json:"digest"`
-	Created     string `json:"created"`
-	Filename    string `json:"filename"`
+	Name        string    `json:"name"`
+	Version     string    `json:"version"`
+	AppVersion  string    `json:"appVersion,omitempty"`
+	Description string    `json:"description,omitempty"`
+	Digest      string    `json:"digest"`
+	Created     string    `json:"created"`
+	Filename    string    `json:"filename"`
+	UploadedAt  time.Time `json:"uploadedAt,omitempty"`
 }
 
 func (h *Handler) ns(c *format.Context) string { return c.Repo.Name + ":helm" }
@@ -95,10 +96,12 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, c *format.Conte
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	now := time.Now().UTC()
 	rec := chartRecord{
 		Name: meta.Name, Version: meta.Version, AppVersion: meta.AppVersion,
 		Description: meta.Description, Digest: info.SHA256,
-		Created: time.Now().UTC().Format(time.RFC3339), Filename: filename,
+		Created: now.Format(time.RFC3339), Filename: filename,
+		UploadedAt: now,
 	}
 	if err := c.Meta.PutJSON(h.ns(c), meta.Name+"-"+meta.Version, rec); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

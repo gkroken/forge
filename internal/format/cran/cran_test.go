@@ -375,10 +375,12 @@ func TestBrowseRepo_CRAN(t *testing.T) {
 }
 
 func TestServe_CRAN_UnsupportedMethod(t *testing.T) {
+	// DELETE is only allowed on hosted repos; proxy should reject with 405.
 	c := newCRANCtx(t)
+	c.Repo.Kind = repo.Proxy
 	rw := cranServe(c, http.MethodDelete, "src/contrib/pkg_1.0.0.tar.gz", nil)
-	if rw.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d", rw.Code)
+	if rw.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rw.Code)
 	}
 }
 

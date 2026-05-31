@@ -302,6 +302,45 @@ func TestAdminRepos_UpdateNotFound(t *testing.T) {
 	}
 }
 
+func TestAdminCleanup_NoPolicy(t *testing.T) {
+	srv := newAdminServer(t)
+	srv.Repos.Add(repo.Repository{Name: "cran-hosted", Format: "cran", Kind: repo.Hosted}) //nolint:errcheck
+	rw := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw, adminReq(t, http.MethodPost, "/api/v1/repos/cran-hosted/cleanup", nil))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rw.Code, rw.Body.String())
+	}
+	var result struct {
+		Deleted    int   `json:"deleted"`
+		FreedBytes int64 `json:"freed_bytes"`
+	}
+	if err := json.NewDecoder(rw.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Deleted != 0 {
+		t.Fatalf("no policy: expected 0 deletions, got %d", result.Deleted)
+	}
+}
+
+func TestAdminCleanup_NotFound(t *testing.T) {
+	srv := newAdminServer(t)
+	rw := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw, adminReq(t, http.MethodPost, "/api/v1/repos/ghost/cleanup", nil))
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rw.Code)
+	}
+}
+
+func TestAdminCleanup_MethodNotAllowed(t *testing.T) {
+	srv := newAdminServer(t)
+	srv.Repos.Add(repo.Repository{Name: "r", Format: "cran", Kind: repo.Hosted}) //nolint:errcheck
+	rw := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw, adminReq(t, http.MethodGet, "/api/v1/repos/r/cleanup", nil))
+	if rw.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rw.Code)
+	}
+}
+
 func TestMemberPolicy_MakePrivateAfterGroupFixed_Allowed(t *testing.T) {
 	srv := newAdminServer(t)
 	h := srv.Routes()
