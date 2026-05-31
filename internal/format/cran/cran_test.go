@@ -1,14 +1,19 @@
 package cran
 
 import (
+	"archive/tar"
 	"bytes"
 	"compress/gzip"
 	"encoding/binary"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"forge/internal/blob"
 	"forge/internal/format"
 	"forge/internal/golden"
 	"forge/internal/meta"
@@ -197,4 +202,187 @@ func TestBuildPackagesRDS_Golden(t *testing.T) {
 	// Golden-test the decompressed bytes (deterministic, no timestamps).
 	raw := decompressRDS(t, buildPackagesRDS(recs))
 	golden.Assert(t, raw, "packages_two_pkgs.rds")
+}
+
+// --- HTTP-level tests -------------------------------------------------------
+
+// makeCRANPkg creates a minimal CRAN source tarball containing only a DESCRIPTION.
+func makeCRANPkg(t *testing.T, pkg, version string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	desc := fmt.Sprintf("Package: %s\nVersion: %s\nLicense: MIT\n", pkg, version)
+	tw.WriteHeader(&tar.Header{Name: pkg + "/DESCRIPTION", Mode: 0644, Size: int64(len(desc))})
+	tw.Write([]byte(desc))
+	tw.Close()
+	gz.Close()
+	return buf.Bytes()
+}
+
+// newCRANCtx returns a hosted CRAN Context backed by temp FS stores.
+func newCRANCtx(t *testing.T) *format.Context {
+	t.Helper()
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	return &format.Context{
+		Repo: repo.Repository{Name: "cran-hosted", Format: "cran", Kind: repo.Hosted},
+		Blob: b, Meta: m,
+	}
+}
+
+func cranServe(c *format.Context, method, sub string, body io.Reader) *httptest.ResponseRecorder {
+	c.Sub = sub
+	if body == nil {
+		body = http.NoBody
+	}
+	rw := httptest.NewRecorder()
+	New().Serve(rw, httptest.NewRequest(method, "/", body), c)
+	return rw
+}
+
+func TestServe_CRAN_PublishAndPACKAGES(t *testing.T) {
+	c := newCRANCtx(t)
+	pkg := makeCRANPkg(t, "mypackage", "1.0.0")
+
+	// PUT uploads the package.
+	rw := cranServe(c, http.MethodPut, "src/contrib/mypackage_1.0.0.tar.gz", bytes.NewReader(pkg))
+	if rw.Code != http.StatusCreated {
+		t.Fatalf("PUT: got %d, body: %s", rw.Code, rw.Body)
+	}
+
+	// GET PACKAGES lists the published package.
+	rw = cranServe(c, http.MethodGet, "src/contrib/PACKAGES", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("PACKAGES: got %d", rw.Code)
+	}
+	if !strings.Contains(rw.Body.String(), "Package: mypackage") {
+		t.Fatalf("PACKAGES missing entry: %s", rw.Body)
+	}
+}
+
+func TestServe_CRAN_PackagesGZ(t *testing.T) {
+	c := newCRANCtx(t)
+	cranServe(c, http.MethodPut, "src/contrib/pkg_1.0.0.tar.gz", bytes.NewReader(makeCRANPkg(t, "pkg", "1.0.0")))
+
+	rw := cranServe(c, http.MethodGet, "src/contrib/PACKAGES.gz", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("PACKAGES.gz: got %d", rw.Code)
+	}
+	gz, err := gzip.NewReader(rw.Body)
+	if err != nil {
+		t.Fatalf("decompressing PACKAGES.gz: %v", err)
+	}
+	body, _ := io.ReadAll(gz)
+	if !strings.Contains(string(body), "Package: pkg") {
+		t.Fatalf("PACKAGES.gz missing entry")
+	}
+}
+
+func TestServe_CRAN_PackagesRDS(t *testing.T) {
+	c := newCRANCtx(t)
+	cranServe(c, http.MethodPut, "src/contrib/pkg_1.0.0.tar.gz", bytes.NewReader(makeCRANPkg(t, "pkg", "1.0.0")))
+
+	rw := cranServe(c, http.MethodGet, "src/contrib/PACKAGES.rds", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("PACKAGES.rds: got %d", rw.Code)
+	}
+	if rw.Body.Len() == 0 {
+		t.Fatal("PACKAGES.rds empty")
+	}
+}
+
+func TestServe_CRAN_Download(t *testing.T) {
+	c := newCRANCtx(t)
+	pkg := makeCRANPkg(t, "mypackage", "1.0.0")
+	cranServe(c, http.MethodPut, "src/contrib/mypackage_1.0.0.tar.gz", bytes.NewReader(pkg))
+
+	rw := cranServe(c, http.MethodGet, "src/contrib/mypackage_1.0.0.tar.gz", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("download: got %d", rw.Code)
+	}
+	if !bytes.Equal(rw.Body.Bytes(), pkg) {
+		t.Fatal("downloaded bytes differ from uploaded")
+	}
+}
+
+func TestServe_CRAN_Download_NotFound(t *testing.T) {
+	c := newCRANCtx(t)
+	rw := cranServe(c, http.MethodGet, "src/contrib/absent_1.0.0.tar.gz", nil)
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rw.Code)
+	}
+}
+
+func TestServe_CRAN_PutOnProxy_Rejected(t *testing.T) {
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	c := &format.Context{
+		Repo: repo.Repository{Name: "cran-proxy", Format: "cran", Kind: repo.Proxy},
+		Blob: b, Meta: m,
+	}
+	rw := cranServe(c, http.MethodPut, "src/contrib/pkg_1.0.0.tar.gz",
+		bytes.NewReader(makeCRANPkg(t, "pkg", "1.0.0")))
+	if rw.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rw.Code)
+	}
+}
+
+func TestServe_CRAN_Proxy_Download(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "mock-cran-content")
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	c := &format.Context{
+		Repo: repo.Repository{
+			Name: "cran-proxy", Format: "cran", Kind: repo.Proxy,
+			Upstream: upstream.URL,
+		},
+		Blob: b, Meta: m,
+		HTTP: upstream.Client(),
+	}
+	rw := cranServe(c, http.MethodGet, "src/contrib/R.pkg_1.0.0.tar.gz", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("proxy download: got %d, body: %s", rw.Code, rw.Body)
+	}
+	if rw.Body.String() != "mock-cran-content" {
+		t.Fatalf("unexpected body: %q", rw.Body)
+	}
+}
+
+func TestBrowseRepo_CRAN(t *testing.T) {
+	c := newCRANCtx(t)
+	cranServe(c, http.MethodPut, "src/contrib/alpha_1.0.0.tar.gz", bytes.NewReader(makeCRANPkg(t, "alpha", "1.0.0")))
+	cranServe(c, http.MethodPut, "src/contrib/beta_2.0.0.tar.gz", bytes.NewReader(makeCRANPkg(t, "beta", "2.0.0")))
+
+	entries, err := New().BrowseRepo(c)
+	if err != nil {
+		t.Fatalf("BrowseRepo: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d: %v", len(entries), entries)
+	}
+	if entries[0].Name != "alpha" || entries[1].Name != "beta" {
+		t.Fatalf("unexpected entries: %v", entries)
+	}
+}
+
+func TestServe_CRAN_UnsupportedMethod(t *testing.T) {
+	c := newCRANCtx(t)
+	rw := cranServe(c, http.MethodDelete, "src/contrib/pkg_1.0.0.tar.gz", nil)
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rw.Code)
+	}
+}
+
+func TestFormat_CRAN(t *testing.T) {
+	if got := New().Format(); got != "cran" {
+		t.Fatalf("Format() = %q, want cran", got)
+	}
 }

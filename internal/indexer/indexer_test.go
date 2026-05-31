@@ -8,7 +8,10 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"forge/internal/meta"
+	"forge/internal/obs"
 	"forge/internal/queue"
 )
 
@@ -139,4 +142,26 @@ func TestConcurrentPublish(t *testing.T) {
 			t.Logf("  present: %s", ver)
 		}
 	}
+}
+
+// TestWorker_WithMetrics covers WithMetrics and the metrics-recording branch
+// inside Work. A real npm.regen job is enqueued and drained so the success
+// counter path (w.metrics != nil) is exercised.
+func TestWorker_WithMetrics(t *testing.T) {
+	m := newMetaStore(t)
+	m.PutJSON("repo1:npm:v", "pkg:1.0.0", map[string]any{"name": "pkg", "version": "1.0.0"})
+	m.PutJSON("repo1:npm:dt", "pkg", map[string]any{"latest": "1.0.0"})
+
+	metrics := obs.NewMetrics(prometheus.NewRegistry())
+	q := queue.NewMem(4)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go New(m).WithMetrics(metrics).Work(ctx, q) //nolint:errcheck
+
+	payload, _ := json.Marshal(RegenPayload{RepoName: "repo1", Pkg: "pkg"})
+	q.Enqueue(ctx, "npm.regen", RegenPayload{RepoName: "repo1", Pkg: "pkg"}) //nolint:errcheck
+	_ = payload
+	q.Drain()
 }

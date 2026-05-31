@@ -375,3 +375,178 @@ func TestGroup_PackumentNotFound(t *testing.T) {
 		t.Errorf("expected 404, got %d", rw.Code)
 	}
 }
+
+// --- packument & tarball (GET paths not exercised by the existing tests) ----
+
+func TestServe_GetPackument(t *testing.T) {
+	c, _, m := hostedCtx(t)
+	seedPackument(t, m, "npm-hosted", "mylib", []string{"1.0.0"}, map[string]string{"latest": "1.0.0"})
+
+	c.Sub = "mylib"
+	rw := httptest.NewRecorder()
+	New().Serve(rw, httptest.NewRequest(http.MethodGet, "/", nil), c)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("GET packument: %d\n%s", rw.Code, rw.Body)
+	}
+	var doc map[string]any
+	json.NewDecoder(rw.Body).Decode(&doc)
+	if doc["name"] != "mylib" {
+		t.Fatalf("name mismatch: %v", doc["name"])
+	}
+}
+
+func TestServe_GetPackument_NotFound(t *testing.T) {
+	c, _, _ := hostedCtx(t)
+	c.Sub = "ghost-pkg"
+	rw := httptest.NewRecorder()
+	New().Serve(rw, httptest.NewRequest(http.MethodGet, "/", nil), c)
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rw.Code)
+	}
+}
+
+func TestServe_GetTarball(t *testing.T) {
+	c, b, _ := hostedCtx(t)
+	b.Put("npm-hosted/mylib/-/mylib-1.0.0.tgz", strings.NewReader("tarball-bytes"))
+
+	c.Sub = "mylib/-/mylib-1.0.0.tgz"
+	rw := httptest.NewRecorder()
+	New().Serve(rw, httptest.NewRequest(http.MethodGet, "/", nil), c)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("GET tarball: %d", rw.Code)
+	}
+	if rw.Body.String() != "tarball-bytes" {
+		t.Fatalf("body mismatch: %q", rw.Body)
+	}
+}
+
+func TestServe_GetTarball_NotFound(t *testing.T) {
+	c, _, _ := hostedCtx(t)
+	c.Sub = "mylib/-/mylib-9.9.9.tgz"
+	rw := httptest.NewRecorder()
+	New().Serve(rw, httptest.NewRequest(http.MethodGet, "/", nil), c)
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rw.Code)
+	}
+}
+
+func TestBrowseRepo_NPM(t *testing.T) {
+	c, _, m := hostedCtx(t)
+	seedPackument(t, m, "npm-hosted", "alpha", []string{"1.0.0", "2.0.0"}, map[string]string{"latest": "2.0.0"})
+	seedPackument(t, m, "npm-hosted", "beta", []string{"0.1.0"}, map[string]string{"latest": "0.1.0"})
+
+	entries, err := New().BrowseRepo(c)
+	if err != nil {
+		t.Fatalf("BrowseRepo: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d: %v", len(entries), entries)
+	}
+	if entries[0].Name != "alpha" {
+		t.Fatalf("expected alpha first, got %v", entries[0])
+	}
+	if len(entries[0].Versions) != 2 {
+		t.Fatalf("expected 2 versions for alpha, got %v", entries[0].Versions)
+	}
+}
+
+func TestFormat_NPM(t *testing.T) {
+	if got := New().Format(); got != "npm" {
+		t.Fatalf("Format() = %q, want npm", got)
+	}
+}
+
+// TestServe_ProxyPackument exercises proxyNS + proxyPackument via a mock upstream.
+func TestServe_ProxyPackument(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"name": "upstream-pkg",
+			"versions": map[string]any{
+				"1.0.0": map[string]any{
+					"name": "upstream-pkg", "version": "1.0.0",
+					"dist": map[string]any{
+						"tarball": "https://upstream.example.com/upstream-pkg/-/upstream-pkg-1.0.0.tgz",
+					},
+				},
+			},
+		})
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	c := &format.Context{
+		Repo: repo.Repository{
+			Name: "npm-proxy", Format: "npm", Kind: repo.Proxy,
+			Upstream: upstream.URL,
+		},
+		Blob: b, Meta: m,
+		HTTP: upstream.Client(),
+	}
+
+	c.Sub = "upstream-pkg"
+	rw := httptest.NewRecorder()
+	New().Serve(rw, httptest.NewRequest(http.MethodGet, "/", nil), c)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("proxy packument: got %d\n%s", rw.Code, rw.Body)
+	}
+	var doc map[string]any
+	json.NewDecoder(rw.Body).Decode(&doc)
+	if doc["name"] != "upstream-pkg" {
+		t.Fatalf("name mismatch: %v", doc["name"])
+	}
+}
+
+// TestServe_GroupTarball exercises the groupTarball code path.
+func TestServe_GroupTarball(t *testing.T) {
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+
+	// Seed a tarball in the member repo's namespace.
+	b.Put("npm-member/mylib/-/mylib-1.0.0.tgz", strings.NewReader("group-tarball-bytes"))
+
+	mgr := repo.NewManager()
+	mgr.Add(repo.Repository{Name: "npm-member", Format: "npm", Kind: repo.Hosted})
+	mgr.Add(repo.Repository{
+		Name: "npm-group", Format: "npm", Kind: repo.Group,
+		Members: []string{"npm-member"},
+	})
+
+	groupRepo, _ := mgr.Get("npm-group")
+	c := &format.Context{
+		Repo: groupRepo, Blob: b, Meta: m, Repos: mgr,
+	}
+
+	c.Sub = "mylib/-/mylib-1.0.0.tgz"
+	rw := httptest.NewRecorder()
+	New().Serve(rw, httptest.NewRequest(http.MethodGet, "/", nil), c)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("group tarball: got %d", rw.Code)
+	}
+	if rw.Body.String() != "group-tarball-bytes" {
+		t.Fatalf("body mismatch: %q", rw.Body)
+	}
+}
+
+// TestServe_GroupTarball_NotFound verifies the group 404 fallback.
+func TestServe_GroupTarball_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+
+	mgr := repo.NewManager()
+	mgr.Add(repo.Repository{Name: "npm-member", Format: "npm", Kind: repo.Hosted})
+	mgr.Add(repo.Repository{Name: "npm-group", Format: "npm", Kind: repo.Group, Members: []string{"npm-member"}})
+
+	groupRepo, _ := mgr.Get("npm-group")
+	c := &format.Context{Repo: groupRepo, Blob: b, Meta: m, Repos: mgr}
+
+	c.Sub = "ghost/-/ghost-9.9.9.tgz"
+	rw := httptest.NewRecorder()
+	New().Serve(rw, httptest.NewRequest(http.MethodGet, "/", nil), c)
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rw.Code)
+	}
+}

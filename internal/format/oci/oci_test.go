@@ -345,3 +345,81 @@ func TestComputeDigest(t *testing.T) {
 		t.Errorf("computeDigest: got %q want %q", got, want)
 	}
 }
+
+func TestFormat_OCI(t *testing.T) {
+	if got := New().Format(); got != "oci" {
+		t.Fatalf("Format() = %q, want oci", got)
+	}
+}
+
+func TestDeleteBlob(t *testing.T) {
+	c := newCtx(t)
+	// Push a blob via monolithic POST (digest in query param).
+	data := []byte("some-blob-content")
+	dgst := computeDigest(data)
+	serve(t, c, "POST", "myimage/blobs/uploads/?digest="+dgst, data, nil)
+
+	// Now delete it — should return 202.
+	rw := serve(t, c, "DELETE", "myimage/blobs/"+dgst, nil, nil)
+	if rw.Code != http.StatusAccepted {
+		t.Fatalf("deleteBlob: got %d", rw.Code)
+	}
+	// Subsequent HEAD should 404.
+	rw = serve(t, c, "HEAD", "myimage/blobs/"+dgst, nil, nil)
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 after delete, got %d", rw.Code)
+	}
+}
+
+func TestBrowseRepo_OCI(t *testing.T) {
+	c := newCtx(t)
+
+	// Push a minimal manifest so the handler records the tag in meta.
+	configData := []byte("{}")
+	configDgst := computeDigest(configData)
+	serve(t, c, "POST", "myimage/blobs/uploads/?digest="+configDgst, configData, nil)
+
+	manifest := []byte(fmt.Sprintf(
+		`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.empty.v1+json","digest":%q,"size":%d},"layers":[]}`,
+		configDgst, len(configData)))
+	serve(t, c, "PUT", "myimage/manifests/v1.0", manifest,
+		map[string]string{"Content-Type": "application/vnd.oci.image.manifest.v1+json"})
+
+	entries, err := New().BrowseRepo(c)
+	if err != nil {
+		t.Fatalf("BrowseRepo: %v", err)
+	}
+	found := false
+	for _, e := range entries {
+		if e.Name == "myimage" {
+			found = true
+			for _, tag := range e.Versions {
+				if tag == "v1.0" {
+					return
+				}
+			}
+			t.Fatalf("myimage found but tag v1.0 missing: %v", e.Versions)
+		}
+	}
+	if !found {
+		t.Fatalf("myimage not found in browse entries: %v", entries)
+	}
+}
+
+func TestProxy_RejectsWrites(t *testing.T) {
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	c := &format.Context{
+		Repo: repo.Repository{Name: "oci-proxy", Format: "oci", Kind: repo.Proxy,
+			Upstream: "https://registry-1.docker.io"},
+		Blob: b, Meta: m,
+		HTTP: &http.Client{},
+	}
+	c.Sub = "library/ubuntu/blobs/uploads/"
+	rw := httptest.NewRecorder()
+	New().Serve(rw, httptest.NewRequest(http.MethodPost, "/", nil), c)
+	if rw.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rw.Code)
+	}
+}

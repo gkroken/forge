@@ -2,6 +2,9 @@ package maven
 
 import (
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -13,6 +16,284 @@ import (
 	"forge/internal/meta"
 	"forge/internal/repo"
 )
+
+// serve calls the maven handler's Serve method via httptest and returns the recorder.
+func serveReq(c *format.Context, method, sub string, body io.Reader) *httptest.ResponseRecorder {
+	c.Sub = sub
+	if body == nil {
+		body = http.NoBody
+	}
+	rw := httptest.NewRecorder()
+	New().Serve(rw, httptest.NewRequest(method, "/", body), c)
+	return rw
+}
+
+// --- HTTP endpoint tests ----------------------------------------------------
+
+func TestServe_Put_Hosted(t *testing.T) {
+	c := ctxWith(t, "")
+	rw := serveReq(c, http.MethodPut, "com/acme/lib/1.0.0/lib-1.0.0.jar",
+		strings.NewReader("artifact-bytes"))
+	if rw.Code != http.StatusCreated {
+		t.Fatalf("put: got %d, body: %s", rw.Code, rw.Body)
+	}
+}
+
+func TestServe_Put_NonHosted_Rejected(t *testing.T) {
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	c := &format.Context{
+		Repo: repo.Repository{Name: "maven-central", Format: "maven", Kind: repo.Proxy},
+		Blob: b, Meta: m,
+	}
+	rw := serveReq(c, http.MethodPut, "com/acme/lib/1.0.0/lib-1.0.0.jar",
+		strings.NewReader("bytes"))
+	if rw.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rw.Code)
+	}
+}
+
+func TestServe_Get_Artifact(t *testing.T) {
+	c := ctxWith(t, "", "maven-hosted/com/acme/lib/1.0.0/lib-1.0.0.jar")
+	rw := serveReq(c, http.MethodGet, "com/acme/lib/1.0.0/lib-1.0.0.jar", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("get: got %d", rw.Code)
+	}
+}
+
+func TestServe_Get_NotFound(t *testing.T) {
+	c := ctxWith(t, "")
+	rw := serveReq(c, http.MethodGet, "com/acme/lib/1.0.0/lib-1.0.0.jar", nil)
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rw.Code)
+	}
+}
+
+func TestServe_Get_MetadataXML_Generated(t *testing.T) {
+	c := ctxWith(t, "",
+		"maven-hosted/com/acme/lib/1.0.0/lib-1.0.0.jar",
+		"maven-hosted/com/acme/lib/1.1.0/lib-1.1.0.jar",
+	)
+	rw := serveReq(c, http.MethodGet, "com/acme/lib/maven-metadata.xml", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("metadata: got %d", rw.Code)
+	}
+	body := rw.Body.String()
+	if !strings.Contains(body, "<version>1.0.0</version>") || !strings.Contains(body, "<version>1.1.0</version>") {
+		t.Fatalf("metadata missing versions: %s", body)
+	}
+}
+
+func TestServe_Get_MetadataXML_NotFound(t *testing.T) {
+	c := ctxWith(t, "")
+	rw := serveReq(c, http.MethodGet, "com/acme/absent/maven-metadata.xml", nil)
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rw.Code)
+	}
+}
+
+func TestServe_Get_ChecksumSynthesized(t *testing.T) {
+	// SHA1 sidecar doesn't exist but the base artifact does; forge synthesizes it.
+	c := ctxWith(t, "", "maven-hosted/com/acme/lib/1.0.0/lib-1.0.0.jar")
+	rw := serveReq(c, http.MethodGet, "com/acme/lib/1.0.0/lib-1.0.0.jar.sha1", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("sidecar: got %d", rw.Code)
+	}
+	sha1 := strings.TrimSpace(rw.Body.String())
+	if len(sha1) != 40 {
+		t.Fatalf("expected 40-char sha1, got %q", sha1)
+	}
+}
+
+func TestServe_Get_ChecksumSidecar_NotFound(t *testing.T) {
+	// Base artifact also missing — nothing to synthesize from.
+	c := ctxWith(t, "")
+	rw := serveReq(c, http.MethodGet, "com/acme/lib/1.0.0/lib-1.0.0.jar.sha1", nil)
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rw.Code)
+	}
+}
+
+func TestServe_Get_SnapshotMetadata(t *testing.T) {
+	c := ctxWith(t, "")
+	putArtifact(t, c, "com/acme/lib/1.0-SNAPSHOT/lib-1.0-20240115.123456-1.jar")
+
+	rw := serveReq(c, http.MethodGet, "com/acme/lib/1.0-SNAPSHOT/maven-metadata.xml", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("snapshot metadata: got %d", rw.Code)
+	}
+	if !strings.Contains(rw.Body.String(), "snapshotVersion") {
+		t.Fatalf("snapshot metadata missing snapshotVersion: %s", rw.Body)
+	}
+}
+
+func TestServe_MethodNotAllowed(t *testing.T) {
+	c := ctxWith(t, "")
+	rw := serveReq(c, http.MethodDelete, "com/acme/lib/1.0.0/lib-1.0.0.jar", nil)
+	if rw.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rw.Code)
+	}
+}
+
+func TestServe_Head(t *testing.T) {
+	c := ctxWith(t, "", "maven-hosted/com/acme/lib/1.0.0/lib-1.0.0.jar")
+	rw := serveReq(c, http.MethodHead, "com/acme/lib/1.0.0/lib-1.0.0.jar", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("HEAD: got %d", rw.Code)
+	}
+}
+
+func TestServe_Proxy_Fetch(t *testing.T) {
+	// Spin up a fake upstream serving a small artifact.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/java-archive")
+		io.WriteString(w, "upstream-artifact")
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	c := &format.Context{
+		Repo: repo.Repository{
+			Name: "maven-proxy", Format: "maven", Kind: repo.Proxy,
+			Upstream: upstream.URL,
+		},
+		Blob: b, Meta: m,
+		HTTP: upstream.Client(),
+	}
+
+	rw := serveReq(c, http.MethodGet, "com/acme/lib/1.0.0/lib-1.0.0.jar", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("proxy fetch: got %d, body: %s", rw.Code, rw.Body)
+	}
+	if rw.Body.String() != "upstream-artifact" {
+		t.Fatalf("unexpected proxy body: %q", rw.Body.String())
+	}
+}
+
+func TestServe_Proxy_NotFound(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	c := &format.Context{
+		Repo: repo.Repository{
+			Name: "maven-proxy", Format: "maven", Kind: repo.Proxy,
+			Upstream: upstream.URL,
+		},
+		Blob: b, Meta: m,
+		HTTP: upstream.Client(),
+	}
+
+	rw := serveReq(c, http.MethodGet, "com/acme/lib/1.0.0/lib-1.0.0.jar", nil)
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 from proxy, got %d", rw.Code)
+	}
+}
+
+func TestServe_Group_Get(t *testing.T) {
+	b, m := sharedStores(t)
+	b.Put("maven-a/com/acme/lib/1.0.0/lib-1.0.0.jar", strings.NewReader("bytes"))
+
+	mgr := repo.NewManager()
+	for _, r := range []repo.Repository{
+		{Name: "maven-a", Format: "maven", Kind: repo.Hosted},
+		{Name: "maven-group", Format: "maven", Kind: repo.Group, Members: []string{"maven-a"}},
+	} {
+		mgr.Add(r)
+	}
+	groupRepo, _ := mgr.Get("maven-group")
+	c := &format.Context{
+		Repo: groupRepo, Blob: b, Meta: m,
+		Repos: mgr,
+	}
+
+	rw := serveReq(c, http.MethodGet, "com/acme/lib/1.0.0/lib-1.0.0.jar", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("group get: got %d", rw.Code)
+	}
+}
+
+func TestServe_Group_MetadataXML(t *testing.T) {
+	b, m := sharedStores(t)
+	b.Put("maven-a/com/acme/lib/1.0.0/lib-1.0.0.jar", strings.NewReader("bytes"))
+	b.Put("maven-b/com/acme/lib/2.0.0/lib-2.0.0.jar", strings.NewReader("bytes"))
+
+	mgr := repo.NewManager()
+	for _, r := range []repo.Repository{
+		{Name: "maven-a", Format: "maven", Kind: repo.Hosted},
+		{Name: "maven-b", Format: "maven", Kind: repo.Hosted},
+		{Name: "maven-group", Format: "maven", Kind: repo.Group, Members: []string{"maven-a", "maven-b"}},
+	} {
+		mgr.Add(r)
+	}
+	groupRepo, _ := mgr.Get("maven-group")
+	c := &format.Context{
+		Repo: groupRepo, Blob: b, Meta: m,
+		Repos: mgr,
+	}
+
+	rw := serveReq(c, http.MethodGet, "com/acme/lib/maven-metadata.xml", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("group metadata: got %d", rw.Code)
+	}
+	body := rw.Body.String()
+	if !strings.Contains(body, "<version>1.0.0</version>") || !strings.Contains(body, "<version>2.0.0</version>") {
+		t.Fatalf("group metadata missing versions: %s", body)
+	}
+}
+
+func TestBrowseRepo_Maven(t *testing.T) {
+	c := ctxWith(t, "",
+		"maven-hosted/com/acme/lib/1.0.0/lib-1.0.0.jar",
+		"maven-hosted/com/acme/lib/2.0.0/lib-2.0.0.jar",
+	)
+	entries, err := New().BrowseRepo(c)
+	if err != nil {
+		t.Fatalf("BrowseRepo: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name != "com.acme:lib" {
+		t.Fatalf("unexpected entries: %v", entries)
+	}
+	if len(entries[0].Versions) != 2 {
+		t.Fatalf("expected 2 versions, got %v", entries[0].Versions)
+	}
+}
+
+func TestContentType(t *testing.T) {
+	cases := map[string]string{
+		"lib.jar":    "application/java-archive",
+		"lib.pom":    "application/xml",
+		"lib.xml":    "application/xml",
+		"lib.module": "application/vnd.gradle.module+json",
+		"lib.zip":    "application/octet-stream",
+	}
+	for name, want := range cases {
+		if got := contentType(name); got != want {
+			t.Errorf("contentType(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestChecksumExt(t *testing.T) {
+	cases := map[string]string{
+		"lib.jar.md5":    "md5",
+		"lib.jar.sha1":   "sha1",
+		"lib.jar.sha256": "sha256",
+		"lib.jar":        "",
+	}
+	for name, want := range cases {
+		if got := checksumExt(name); got != want {
+			t.Errorf("checksumExt(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
 
 // putArtifact simulates a PUT of a SNAPSHOT artifact, updating snapshot meta.
 func putArtifact(t *testing.T, c *format.Context, sub string) {
@@ -297,5 +578,96 @@ func TestGradleModuleContentType(t *testing.T) {
 	want := "application/vnd.gradle.module+json"
 	if got != want {
 		t.Errorf("contentType(.module) = %q, want %q", got, want)
+	}
+}
+
+func TestFormat_Maven(t *testing.T) {
+	if got := New().Format(); got != "maven" {
+		t.Fatalf("Format() = %q, want maven", got)
+	}
+}
+
+func TestChecksumOf_UnknownExt(t *testing.T) {
+	if got := checksumOf("unknown", []byte("x")); got != "" {
+		t.Fatalf("expected empty string for unknown ext, got %q", got)
+	}
+}
+
+// TestServe_Proxy_PomWithParent exercises the POM branch of proxyFetch and
+// prefetchParentPOM by serving a POM that references a parent POM.
+func TestServe_Proxy_PomWithParent(t *testing.T) {
+	parentPOM := `<project><groupId>com.parent</groupId><artifactId>parent-pom</artifactId><version>1.0</version></project>`
+	childPOM := `<project>
+		<parent><groupId>com.parent</groupId><artifactId>parent-pom</artifactId><version>1.0</version></parent>
+		<groupId>com.acme</groupId><artifactId>lib</artifactId><version>1.0.0</version>
+	</project>`
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "parent-pom") {
+			io.WriteString(w, parentPOM)
+		} else {
+			io.WriteString(w, childPOM)
+		}
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	c := &format.Context{
+		Repo: repo.Repository{
+			Name: "maven-proxy", Format: "maven", Kind: repo.Proxy,
+			Upstream: upstream.URL,
+		},
+		Blob: b, Meta: m,
+		HTTP: upstream.Client(),
+	}
+
+	// Fetching the child POM triggers prefetchParentPOM for the parent.
+	rw := serveReq(c, http.MethodGet, "com/acme/lib/1.0.0/lib-1.0.0.pom", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("proxy POM: got %d\n%s", rw.Code, rw.Body)
+	}
+	if !strings.Contains(rw.Body.String(), "com.acme") {
+		t.Fatalf("unexpected body: %s", rw.Body)
+	}
+	// Parent POM must have been prefetched into the blob store.
+	parentKey := "maven-proxy/com/parent/parent-pom/1.0/parent-pom-1.0.pom"
+	if _, err := b.Get(parentKey); err != nil {
+		t.Fatalf("parent POM not prefetched: %v", err)
+	}
+}
+
+// TestServe_Proxy_PomWithParent_AlreadyCached checks that prefetchParentPOM
+// skips the fetch when the parent is already in the blob store.
+func TestServe_Proxy_PomAlreadyCached(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		childPOM := `<project>
+			<parent><groupId>com.parent</groupId><artifactId>parent-pom</artifactId><version>1.0</version></parent>
+			<groupId>com.acme</groupId><artifactId>lib</artifactId><version>2.0.0</version>
+		</project>`
+		io.WriteString(w, childPOM)
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+
+	// Pre-seed the parent in blob so prefetchParentPOM takes the early-return path.
+	b.Put("maven-proxy/com/parent/parent-pom/1.0/parent-pom-1.0.pom",
+		strings.NewReader("<project/>"))
+
+	c := &format.Context{
+		Repo: repo.Repository{
+			Name: "maven-proxy", Format: "maven", Kind: repo.Proxy,
+			Upstream: upstream.URL,
+		},
+		Blob: b, Meta: m,
+		HTTP: upstream.Client(),
+	}
+	rw := serveReq(c, http.MethodGet, "com/acme/lib/2.0.0/lib-2.0.0.pom", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("proxy POM cached: got %d\n%s", rw.Code, rw.Body)
 	}
 }

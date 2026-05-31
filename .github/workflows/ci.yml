@@ -63,9 +63,9 @@ jobs:
         run: |
           TOTAL=$(go tool cover -func=coverage.out | awk '/^total:/{print $NF}' | tr -d '%')
           echo "Total coverage: ${TOTAL}%"
-          # Gate ratchets up as conformance tests raise handler coverage.
-          # Current measured: 55.5%. Target per workplan: overall ≥75%, core ≥85%.
-          awk -v t="$TOTAL" 'BEGIN { if (t+0 < 55) { print "FAIL: " t "% is below the 55% gate"; exit 1 } }'
+          # Gate ratchets up; never down. Current measured: 75.2%.
+          # Target per workplan: overall ≥75%, core packages ≥85%.
+          awk -v t="$TOTAL" 'BEGIN { if (t+0 < 75) { print "FAIL: " t "% is below the 75% gate"; exit 1 } }'
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         with:
