@@ -154,8 +154,10 @@ jobs:
     needs: [lint, test, integration, security]
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: write   # needed to push to GHCR
+      contents: write      # upload release assets (SBOMs)
+      packages: write      # push image + chart to GHCR
+      id-token: write      # cosign keyless signing (OIDC token exchange)
+      attestations: write  # attach SBOM attestation to image
 
     steps:
       - uses: actions/checkout@v4
@@ -185,6 +187,7 @@ jobs:
             type=sha,prefix=sha-,format=short
 
       - name: Build and push image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -211,6 +214,60 @@ jobs:
         run: |
           helm package deploy/helm/forge/
           helm push forge-*.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+
+      # ── SBOM ──────────────────────────────────────────────────────────────
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0
+
+      # Source SBOM: walks the Go module graph (go.mod / go.sum) so the full
+      # dependency tree is captured, not just what ended up in the binary.
+      - name: Generate source SBOM
+        run: |
+          syft scan . \
+            --source-name forge \
+            --output spdx-json=sbom-source.spdx.json
+
+      # Image SBOM: scans the pushed multi-arch manifest by digest so the result
+      # is tied to an immutable reference, not a mutable tag.
+      - name: Generate image SBOM
+        run: |
+          syft scan \
+            ghcr.io/${{ github.repository_owner }}/forge@${{ steps.build.outputs.digest }} \
+            --output spdx-json=sbom-image.spdx.json
+
+      # ── Signing ───────────────────────────────────────────────────────────
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      # Keyless signing: exchanges the GitHub Actions OIDC token for a
+      # short-lived Sigstore certificate; records in the Rekor transparency
+      # log. No long-lived private key is stored in the repo.
+      - name: Sign image
+        run: |
+          cosign sign --yes \
+            ghcr.io/${{ github.repository_owner }}/forge@${{ steps.build.outputs.digest }}
+
+      # Verify immediately after signing as a CI self-check. End users should
+      # run this command when pulling from GHCR.
+      - name: Verify image signature
+        run: |
+          cosign verify \
+            --certificate-identity-regexp \
+              "https://github.com/${{ github.repository }}/.github/workflows/ci.yml@refs/.*" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            ghcr.io/${{ github.repository_owner }}/forge@${{ steps.build.outputs.digest }} \
+            | jq '.[0] | {subject: .critical.identity, issuer: .optional.Issuer}'
+
+      # ── Release assets ────────────────────────────────────────────────────
+      # Attach both SBOMs to the GitHub release. Only runs on vX.Y.Z tags;
+      # skipped on plain pushes to main where no release object exists.
+      - name: Attach SBOMs to GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            sbom-source.spdx.json
+            sbom-image.spdx.json
 
   cluster-install:
     name: Cluster install test (kind)
