@@ -59,10 +59,10 @@ resource "google_sql_database_instance" "forge" {
   name             = var.name
   database_version = "POSTGRES_16"
   region           = var.region
-  labels           = local.labels
 
   settings {
-    tier = var.db_tier
+    tier        = var.db_tier
+    user_labels = local.labels
 
     backup_configuration {
       enabled    = true
