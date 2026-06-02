@@ -14,8 +14,8 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -75,8 +75,8 @@ jobs:
         go: ['stable', 'oldstable']
         os: ['ubuntu-latest', 'macos-latest']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ matrix.go }}
           cache: true
@@ -119,7 +119,7 @@ jobs:
           exit $FAIL
       - name: Upload coverage
         if: matrix.os == 'ubuntu-latest' && matrix.go == 'stable'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: coverage.out
@@ -128,8 +128,8 @@ jobs:
     name: Integration tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -140,8 +140,8 @@ jobs:
     name: Conformance tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -152,8 +152,8 @@ jobs:
     name: Security scan (SAST + deps)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -175,7 +175,7 @@ jobs:
     name: Docker image build + container scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: docker/setup-buildx-action@v3
       - name: Build image (PR — no push)
         id: build
@@ -212,7 +212,7 @@ jobs:
       attestations: write  # attach SBOM attestation to image
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # ── Docker image ────────────────────────────────────────────────────────
       - uses: docker/setup-buildx-action@v3
@@ -272,7 +272,7 @@ jobs:
       # chart to a live forge instance, then pull it back and verify.
       # This satisfies the Phase K exit criterion and closes the loop on the
       # claim that forge is a usable artifact repository.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -366,9 +366,9 @@ jobs:
     if: github.event_name == 'push' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -452,6 +452,22 @@ jobs:
       - name: helm dep update (forge-stack)
         run: helm dependency update deploy/helm/forge-stack/
 
+      # Pre-pull all images that forge-stack needs into kind before helm install.
+      # Without this, Docker Hub pulls happen during helm --wait, consuming most
+      # of the timeout budget before PostgreSQL even initialises.
+      - name: Pre-pull forge-stack images into kind
+        run: |
+          helm template forge-stack deploy/helm/forge-stack \
+            --set forge.image.repository=forge \
+            --set forge.image.tag=ci \
+            | grep '^\s*image:' | sed 's/.*image:[[:space:]]*//' | tr -d '"' \
+            | grep -v '^forge:ci$' | sort -u \
+            | while read -r img; do
+                echo "Pulling $img"
+                docker pull "$img"
+                kind load docker-image "$img" --name forge-test
+              done
+
       - name: helm install forge-stack
         run: |
           helm install forge-stack deploy/helm/forge-stack \
@@ -474,7 +490,7 @@ jobs:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Timed quickstart
         run: |
@@ -513,7 +529,7 @@ jobs:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Build and start forge in eval mode (FS storage, no external deps).
       - name: Start forge
@@ -557,7 +573,7 @@ jobs:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Start forge
         run: docker compose up -d --build --wait
