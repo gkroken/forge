@@ -478,7 +478,7 @@ jobs:
 
       - name: Run smoke test (forge-stack)
         run: |
-          kubectl port-forward svc/forge-stack-forge 8080:8080 &
+          kubectl port-forward svc/forge-stack 8080:8080 &
           PF_PID=$!
           sleep 2
           FORGE_BASE=http://localhost:8080 bash test.sh
