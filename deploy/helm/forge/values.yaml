@@ -20,6 +20,10 @@ serviceAccount:
 
 podAnnotations: {}
 
+# initContainers run before the forge container starts. Useful in forge-stack
+# to wait for PostgreSQL and MinIO to be reachable before forge tries to connect.
+initContainers: []
+
 podSecurityContext:
   fsGroup: 65532
 

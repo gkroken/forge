@@ -31,11 +31,26 @@ forge:
     S3_SECRET_KEY: "changeme-minio"
     S3_USE_SSL:   "false"
 
-  replicaCount: 2
+  # Default to 1 replica for the bundled on-prem install.
+  # Scale up after verifying Postgres + S3 are HA themselves.
+  replicaCount: 1
 
-  podDisruptionBudget:
-    enabled: true
-    minAvailable: 1
+  # Wait for PostgreSQL and MinIO to accept connections before forge starts.
+  # Without this, forge exits immediately (no retry logic) and enters
+  # CrashLoopBackOff, which can push a cold install past the Helm --wait timeout.
+  initContainers:
+    - name: wait-for-postgresql
+      image: busybox:1.36
+      command:
+        - sh
+        - -c
+        - until nc -z forge-stack-postgresql 5432; do echo "waiting for postgresql"; sleep 2; done
+    - name: wait-for-minio
+      image: busybox:1.36
+      command:
+        - sh
+        - -c
+        - until nc -z forge-stack-minio 9000; do echo "waiting for minio"; sleep 2; done
 
   resources:
     requests:

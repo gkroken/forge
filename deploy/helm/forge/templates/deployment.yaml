@@ -29,6 +29,10 @@ spec:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       # Grace period must exceed drainTimeout to allow in-flight requests to finish.
       terminationGracePeriodSeconds: 35
+      {{- with .Values.initContainers }}
+      initContainers:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: forge
           securityContext:

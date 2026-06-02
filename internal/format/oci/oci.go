@@ -402,7 +402,7 @@ func (h *Handler) proxyPass(w http.ResponseWriter, r *http.Request, c *format.Co
 	if accept := r.Header.Get("Accept"); accept != "" {
 		req.Header.Set("Accept", accept)
 	}
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.HTTP.Do(req) // #nosec G704 -- upURL is built from admin-configured upstream, not user input
 	if err != nil {
 		ociError(w, "UNSUPPORTED", "upstream error: "+err.Error(), http.StatusBadGateway)
 		return

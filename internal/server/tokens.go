@@ -82,7 +82,7 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 		"token_id", tok.ID, "description", tok.Description)
 
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(createTokenResponse{Token: tok, Secret: secret})
+	json.NewEncoder(w).Encode(createTokenResponse{Token: tok, Secret: secret}) // #nosec G117 -- intentional: one-time secret returned only at token creation
 }
 
 func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {

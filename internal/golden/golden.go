@@ -21,16 +21,16 @@ func Assert(t *testing.T, got []byte, name string) {
 	t.Helper()
 	path := filepath.Join("testdata", name)
 	if *update {
-		if err := os.MkdirAll("testdata", 0o755); err != nil {
+		if err := os.MkdirAll("testdata", 0o750); err != nil { // #nosec G301
 			t.Fatalf("golden: mkdir: %v", err)
 		}
-		if err := os.WriteFile(path, got, 0o644); err != nil {
+		if err := os.WriteFile(path, got, 0o600); err != nil { // #nosec G306
 			t.Fatalf("golden: write %s: %v", path, err)
 		}
 		t.Logf("golden: updated %s", path)
 		return
 	}
-	want, err := os.ReadFile(path)
+	want, err := os.ReadFile(path) // #nosec G304 -- test-only, path is a fixed testdata/ relative path
 	if err != nil {
 		t.Fatalf("golden: read %s (run with -update to create): %v", path, err)
 	}

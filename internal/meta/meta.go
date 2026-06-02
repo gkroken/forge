@@ -25,7 +25,7 @@ type Store interface {
 type FS struct{ root string }
 
 func NewFS(root string) (*FS, error) {
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	if err := os.MkdirAll(root, 0o750); err != nil { // #nosec G301
 		return nil, err
 	}
 	return &FS{root: root}, nil
@@ -59,7 +59,7 @@ func (f *FS) GetJSON(ns, key string, v any) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	b, err := os.ReadFile(p)
+	b, err := os.ReadFile(p) // #nosec G304 -- path sanitised by resolve()
 	if os.IsNotExist(err) {
 		return false, nil
 	}
@@ -74,14 +74,14 @@ func (f *FS) PutJSON(ns, key string, v any) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil { // #nosec G301
 		return err
 	}
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, b, 0o644)
+	return os.WriteFile(p, b, 0o600) // #nosec G306
 }
 
 func (f *FS) List(ns string) ([]string, error) {

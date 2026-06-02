@@ -63,14 +63,14 @@ func StartForge(t *testing.T) *Server {
 	tmpDir := t.TempDir()
 	binary := filepath.Join(tmpDir, "forge")
 
-	buildCmd := exec.Command("go", "build", "-o", binary, "./cmd/forge")
+	buildCmd := exec.Command("go", "build", "-o", binary, "./cmd/forge") // #nosec G204 -- test harness only
 	buildCmd.Dir = projectRoot()
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("conformance: build forge: %v\n%s", err, out)
 	}
 
 	port := freePort(t)
-	srv := exec.Command(binary,
+	srv := exec.Command(binary, // #nosec G204 -- test harness only; binary is the forge binary built above
 		"-addr", fmt.Sprintf(":%d", port),
 		"-data", filepath.Join(tmpDir, "data"),
 	)
@@ -158,7 +158,7 @@ func projectRoot() string {
 
 func freePort(t *testing.T) int {
 	t.Helper()
-	l, err := net.Listen("tcp", ":0")
+	l, err := net.Listen("tcp", ":0") // #nosec G102 -- test port allocation; any interface is intentional
 	if err != nil {
 		t.Fatalf("conformance: find free port: %v", err)
 	}

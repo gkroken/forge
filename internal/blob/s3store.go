@@ -3,8 +3,8 @@ package blob
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
-	"crypto/sha1"
+	"crypto/md5"  // #nosec G501 -- MD5/SHA1 required by Maven/npm protocol specs
+	"crypto/sha1" // #nosec G505
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
@@ -56,8 +56,8 @@ func (s *S3) Put(key string, r io.Reader) (Info, error) {
 	// TODO: replace with streaming multipart upload for large artifacts.
 	var buf bytes.Buffer
 	hSHA256 := sha256.New()
-	hSHA1 := sha1.New()
-	hMD5 := md5.New()
+	hSHA1 := sha1.New() // #nosec G401
+	hMD5 := md5.New()   // #nosec G401
 	mw := io.MultiWriter(&buf, hSHA256, hSHA1, hMD5)
 	n, err := io.Copy(mw, r)
 	if err != nil {

@@ -311,7 +311,7 @@ func buildPackagesRDS(recs []pkgRecord) []byte {
 	)
 
 	w.i32(rSTRSXP | rHasAttr)
-	w.i32(int32(nrows * ncols))
+	w.i32(int32(nrows * ncols)) // #nosec G115 -- package counts never approach int32 overflow
 	for c := 0; c < ncols; c++ {
 		for r := 0; r < nrows; r++ {
 			w.charsxp(pkgField(recs[r], cols[c]))
@@ -323,8 +323,8 @@ func buildPackagesRDS(recs []pkgRecord) []byte {
 	w.sym("dim")
 	w.i32(rINTSXP)
 	w.i32(2)
-	w.i32(int32(nrows))
-	w.i32(int32(ncols))
+	w.i32(int32(nrows)) // #nosec G115
+	w.i32(int32(ncols)) // #nosec G115
 	// CDR: attribute 2 (dimnames node)
 	w.i32(rLISTPLY | rHasTag) // LISTSXP|HAS_TAG node
 	w.sym("dimnames")
@@ -333,7 +333,7 @@ func buildPackagesRDS(recs []pkgRecord) []byte {
 	w.i32(2) // 2 elements: row names (NULL) + col names
 	w.i32(rNIL)
 	w.i32(rSTRSXP)
-	w.i32(int32(ncols))
+	w.i32(int32(ncols)) // #nosec G115
 	for _, col := range cols {
 		w.charsxpRaw(col) // column names are never empty
 	}
@@ -373,13 +373,13 @@ func (w *rdsWriter) raw(b []byte) { w.buf.Write(b) }
 
 // i32 writes a big-endian int32.
 func (w *rdsWriter) i32(v int32) {
-	w.buf.Write([]byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)})
+	w.buf.Write([]byte{byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)}) // #nosec G115 -- big-endian int32 serialisation
 }
 
 // charsxpRaw writes a CHARSXP with the given (non-empty) string.
 func (w *rdsWriter) charsxpRaw(s string) {
 	w.i32(9) // CHARSXP, CE_NATIVE encoding
-	w.i32(int32(len(s)))
+	w.i32(int32(len(s))) // #nosec G115 -- string length bounded by CRAN field sizes
 	w.buf.WriteString(s)
 }
 

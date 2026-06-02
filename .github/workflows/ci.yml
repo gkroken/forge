@@ -87,7 +87,10 @@ jobs:
       - name: Coverage gate
         if: matrix.os == 'ubuntu-latest' && matrix.go == 'stable'
         run: |
-          TOTAL=$(go tool cover -func=coverage.out | awk '/^total:/{print $NF}' | tr -d '%')
+          # Filter to forge/internal/ only — excludes cmd/forge, helpers, and test
+          # utilities that Go may or may not include depending on toolchain version.
+          grep -E "^(mode:|forge/internal/)" coverage.out > coverage_unit.out
+          TOTAL=$(go tool cover -func=coverage_unit.out | awk '/^total:/{print $NF}' | tr -d '%')
           echo "Total coverage: ${TOTAL}%"
           awk -v t="$TOTAL" 'BEGIN { if (t+0 < 75) { print "FAIL: " t "% is below the 75% gate"; exit 1 } }'
 
@@ -101,7 +104,7 @@ jobs:
             forge/internal/proxy \
             forge/internal/indexer \
             forge/internal/server; do
-            PCT=$(go tool cover -func=coverage.out \
+            PCT=$(go tool cover -func=coverage_unit.out \
               | awk -v p="$PKG/" '$1 ~ p {sum+=$3; n++} END {if(n>0) printf "%.1f", sum/n}' \
               | tr -d '%')
             echo "  ${PKG##*/}: ${PCT}%"
@@ -184,7 +187,7 @@ jobs:
       # ignore-unfixed: skip vulns with no available fix (base image distro issues
       # we cannot resolve); still catches fixable High/Critical in our deps.
       - name: Trivy container scan
-        uses: aquasecurity/trivy-action@0.30.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: forge:ci
           format: table
@@ -530,7 +533,7 @@ jobs:
       # .zap/rules.tsv suppresses rules that are N/A for forge (see file for
       # rationale). The HTML + JSON reports are uploaded as artifacts.
       - name: ZAP baseline scan
-        uses: zaproxy/action-baseline-scan@v0.12.0
+        uses: zaproxy/action-baseline@v0.15.0
         with:
           target: 'http://localhost:8080'
           rules_file_name: '.zap/rules.tsv'
@@ -555,18 +558,13 @@ jobs:
       - name: Start forge
         run: docker compose up -d --build --wait
 
-      # Install k6 from the official Grafana package repository.
+      # Install k6 from GitHub releases — avoids GPG keyserver dependency issues.
       - name: Install k6
         run: |
-          sudo gpg --no-default-keyring \
-            --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
-            --keyserver hkp://keyserver.ubuntu.com:80 \
-            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
-          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] \
-            https://dl.k6.io/deb stable main" \
-            | sudo tee /etc/apt/sources.list.d/k6.list
-          sudo apt-get update -qq
-          sudo apt-get install -y k6
+          K6_VERSION=v2.0.0
+          curl -fsSL "https://github.com/grafana/k6/releases/download/${K6_VERSION}/k6-${K6_VERSION}-linux-amd64.tar.gz" \
+            | tar xz --strip-components=1 -C /tmp "k6-${K6_VERSION}-linux-amd64/k6"
+          sudo mv /tmp/k6 /usr/local/bin/k6
 
       # Run the smoke load test. k6 exits non-zero if any threshold fails,
       # which makes this step fail the CI job automatically.

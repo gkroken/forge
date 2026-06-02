@@ -111,7 +111,7 @@ func (s *Server) uiAdminDeleteRepo(w http.ResponseWriter, r *http.Request, name 
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	http.Redirect(w, r, target, http.StatusSeeOther)
+	http.Redirect(w, r, target, http.StatusSeeOther) // #nosec G710 -- target is a hardcoded /ui/admin/ prefix
 }
 
 // processRepoForm handles the POST for both create and edit.
@@ -176,7 +176,7 @@ func (s *Server) processRepoForm(w http.ResponseWriter, r *http.Request, existin
 	if isEdit {
 		action = "Updated"
 	}
-	http.Redirect(w, r, "/ui/admin/?flash="+action+"+repository+"+name, http.StatusSeeOther)
+	http.Redirect(w, r, "/ui/admin/?flash="+action+"+repository+"+name, http.StatusSeeOther) // #nosec G710 -- target is a hardcoded /ui/admin/ prefix
 }
 
 func (s *Server) reRenderForm(w http.ResponseWriter, r *http.Request, name string, isEdit bool, errMsg string) {

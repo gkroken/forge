@@ -1,8 +1,8 @@
 package blob
 
 import (
-	"crypto/md5"
-	"crypto/sha1"
+	"crypto/md5"    // #nosec G501 -- MD5/SHA1 required by Maven/npm protocol specs
+	"crypto/sha1"   // #nosec G505
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -20,7 +20,7 @@ type FS struct {
 
 // NewFS creates the root directory if needed and returns a filesystem store.
 func NewFS(root string) (*FS, error) {
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	if err := os.MkdirAll(root, 0o750); err != nil { // #nosec G301
 		return nil, err
 	}
 	return &FS{root: root}, nil
@@ -41,7 +41,7 @@ func (f *FS) Put(key string, r io.Reader) (Info, error) {
 	if err != nil {
 		return Info{}, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil { // #nosec G301
 		return Info{}, err
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".upload-*")
@@ -51,8 +51,8 @@ func (f *FS) Put(key string, r io.Reader) (Info, error) {
 	defer os.Remove(tmp.Name())
 
 	hSHA256 := sha256.New()
-	hSHA1 := sha1.New()
-	hMD5 := md5.New()
+	hSHA1 := sha1.New() // #nosec G401
+	hMD5 := md5.New()   // #nosec G401
 	mw := io.MultiWriter(tmp, hSHA256, hSHA1, hMD5)
 
 	n, err := io.Copy(mw, r)
@@ -79,7 +79,7 @@ func (f *FS) Get(key string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	return os.Open(path)
+	return os.Open(path) // #nosec G304 -- path sanitised by resolve()
 }
 
 func (f *FS) Stat(key string) (Info, bool, error) {
@@ -140,5 +140,5 @@ func sum(h hash.Hash, b []byte) string {
 
 // SHA256 / SHA1 / MD5 of a byte slice (used by format handlers for sidecars).
 func SHA256(b []byte) string { return sum(sha256.New(), b) }
-func SHA1(b []byte) string   { return sum(sha1.New(), b) }
-func MD5(b []byte) string    { return sum(md5.New(), b) }
+func SHA1(b []byte) string { return sum(sha1.New(), b) } // #nosec G401
+func MD5(b []byte) string  { return sum(md5.New(), b) }  // #nosec G401
