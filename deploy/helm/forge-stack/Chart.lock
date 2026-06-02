@@ -1,0 +1,9 @@
+dependencies:
+- name: forge
+  repository: file://../forge
+  version: 0.1.0
+- name: postgresql
+  repository: https://charts.bitnami.com/bitnami
+  version: 18.7.0
+digest: sha256:f967b8dfea9433106a8b31820cca447cbe84c329ecc8649cafc1e8b36be61181
+generated: "2026-06-02T22:27:15.485592532+02:00"

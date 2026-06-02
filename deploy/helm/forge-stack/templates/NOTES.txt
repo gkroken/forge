@@ -29,11 +29,11 @@ Metrics (Prometheus):
        --set postgresql.auth.postgresPassword=<strong-password> \
        --set forge.extraEnv.POSTGRES_DSN="postgres://postgres:<strong-password>@forge-stack-postgresql:5432/forge?sslmode=disable"
 {{- end }}
-{{- if eq .Values.minio.auth.rootPassword "changeme-minio" }}
+{{- if eq .Values.minio.rootPassword "changeme-minio" }}
 
 ⚠  WARNING: default MinIO password is in use.
    Set a strong password before exposing this instance to a network:
      helm upgrade {{ .Release.Name }} . \
-       --set minio.auth.rootPassword=<strong-password> \
+       --set minio.rootPassword=<strong-password> \
        --set forge.extraEnv.S3_SECRET_KEY=<strong-password>
 {{- end }}

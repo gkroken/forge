@@ -81,24 +81,9 @@ postgresql:
       size: 8Gi
 
 # ── minio ───────────────────────────────────────────────────────────────────────
+# Served by the built-in templates/minio.yaml using minio/minio:latest.
+# The bitnami/minio sub-chart is not used (Bitnami removed versioned tags from
+# Docker Hub). forge creates the bucket via MakeBucket on first startup.
 minio:
-  # Fixed service name — forge's S3_ENDPOINT hard-codes this hostname.
-  fullnameOverride: forge-stack-minio
-
-  mode: standalone  # use mode: distributed for production HA
-
-  auth:
-    rootUser: "forge"
-    rootPassword: "changeme-minio"   # ← CHANGE THIS
-
-  defaultBuckets: "forge-blobs"
-
-  resources:
-    requests:
-      cpu: 100m
-      memory: 256Mi
-    limits:
-      memory: 512Mi
-
-  persistence:
-    size: 20Gi
+  rootUser: "forge"
+  rootPassword: "changeme-minio"   # ← CHANGE THIS

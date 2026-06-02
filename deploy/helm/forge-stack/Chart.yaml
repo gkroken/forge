@@ -20,11 +20,12 @@ dependencies:
     repository: "file://../forge"
 
   # Bitnami PostgreSQL — schema migrations run automatically on forge startup.
+  # Uses chart >=18.0.0 which pins tag: latest (all versioned Bitnami tags were
+  # removed from Docker Hub; only :latest survives).
   - name: postgresql
-    version: ">=15.0.0 <16.0.0"
+    version: ">=18.0.0 <19.0.0"
     repository: "https://charts.bitnami.com/bitnami"
 
-  # Bitnami MinIO — S3-compatible blob store; bucket is created on startup.
-  - name: minio
-    version: ">=14.0.0 <15.0.0"
-    repository: "https://charts.bitnami.com/bitnami"
+  # MinIO is bundled as a built-in template (see templates/minio.yaml) using the
+  # official minio/minio image. The bitnami/minio sub-chart is not used because
+  # Bitnami removed all versioned tags from Docker Hub.
