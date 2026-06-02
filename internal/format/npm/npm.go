@@ -220,17 +220,17 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, c *format.Cont
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
-// triggerRegen enqueues a packument-rebuild job when the queue is wired in,
-// or falls back to an inline synchronous rebuild (for eval / tests).
+// triggerRegen rebuilds the packument synchronously so it is immediately
+// readable after publish, then also enqueues an async job when a queue is
+// wired in so that HA workers on other nodes stay consistent.
 func (h *Handler) triggerRegen(ctx context.Context, c *format.Context, pkg string) {
+	h.regenPackument(c, pkg)
 	if c.Queue != nil {
 		c.Queue.Enqueue(ctx, "npm.regen", indexer.RegenPayload{ //nolint:errcheck
 			RepoName: c.Repo.Name,
 			Pkg:      pkg,
 		})
-		return
 	}
-	h.regenPackument(c, pkg)
 }
 
 // regenPackument rebuilds the materialized packument synchronously from the
