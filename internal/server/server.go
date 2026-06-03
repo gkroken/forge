@@ -258,6 +258,7 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		h.Set("Cross-Origin-Resource-Policy", "same-site")
 		// CSP: allow htmx from unpkg CDN; inline styles needed for templates.
 		// frame-ancestors 'none' supersedes X-Frame-Options in modern browsers.
 		h.Set("Content-Security-Policy",

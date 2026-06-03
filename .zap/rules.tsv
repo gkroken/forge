@@ -15,3 +15,13 @@
 #   script-src does NOT allow unsafe-inline; only style-src does.
 #   Risk accepted; this is a LOW finding, not WARN/FAIL.
 10055	IGNORE	style-src unsafe-inline required for html/template UI; script-src is strict
+#
+# Rule 10049: Storable and Cacheable Content
+#   Forge is an artifact repository; artifact downloads are intentionally
+#   cacheable. Suppressed as expected behaviour, not a vulnerability.
+10049	IGNORE	artifact registry responses are intentionally cacheable
+#
+# Rule 90005: Sec-Fetch-Dest Header is Missing
+#   ZAP notes that forge's own HTTP requests lack Sec-Fetch-Dest, which is a
+#   browser-only header. Forge is a server-side service; this is not applicable.
+90005	IGNORE	Sec-Fetch-Dest is a browser header; N/A for server-side API clients

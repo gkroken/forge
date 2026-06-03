@@ -18,6 +18,7 @@ var requiredSecurityHeaders = []struct {
 	{"X-Content-Type-Options", "nosniff"},
 	{"X-Frame-Options", "DENY"},
 	{"Referrer-Policy", "strict-origin-when-cross-origin"},
+	{"Cross-Origin-Resource-Policy", "same-site"},
 	{"Content-Security-Policy", ""}, // value checked below
 }
 

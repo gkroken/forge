@@ -5,7 +5,7 @@ metadata:
   type: project
 ---
 
-Progress as of 2026-05-31. All findings verified by direct codebase inspection.
+Progress as of 2026-06-03. All findings verified by direct codebase inspection.
 
 **Why:** Building forge from prototype → GA per WORKPLAN.md. Phases are sequential but Phase K is cross-cutting.
 
@@ -28,7 +28,7 @@ Progress as of 2026-05-31. All findings verified by direct codebase inspection.
 
 ---
 
-## GA blockers — full list (verified 2026-05-31)
+## GA blockers — full list (verified 2026-06-03)
 
 ### Tier 0 — External (cannot code-fix)
 
@@ -37,13 +37,13 @@ Progress as of 2026-05-31. All findings verified by direct codebase inspection.
 
 ### Tier 1 — Code bug that breaks a stated §1 guarantee
 
-3. **PG queue not wired in main.go** — `cmd/forge/main.go:161` always uses `queue.NewMem(256)`, even when `POSTGRES_DSN` is set. The comment on line 158 documents the fix ("pass a `queue.NewPG(metaPG.DB())` here instead") but the code never does it. In HA multi-pod mode: index-regen jobs are lost on pod restart and not shared across pods. Directly breaks §1 HA claim and P5 "no lost updates" exit criterion. **This is a code fix, not a scheduling task.**
+3. ~~**PG queue not wired in main.go**~~ — **COMPLETE ✓** Fixed in commit `c374fb9` (`queue: wire queue.NewPG in production mode`). `cmd/forge/main.go:165–171` now correctly selects `queue.NewPG(pgMeta.DB())` when `POSTGRES_DSN` is set, falling back to `queue.NewMem` for eval/FS mode.
 
 ### Tier 2 — §1/§1a criteria violations
 
 4. ~~**OIDC/LDAP/SAML**~~ — **descoped to post-GA.** Production workflows (anonymous installs, CI publish via service tokens, admin via API tokens) are fully covered by the existing token model. The org uses AD + Keycloak; SSO self-service token issuance is a post-GA feature. SAML not needed (Keycloak bridges it).
 5. ~~**Azure Terraform module**~~ — **descoped to post-GA.** Terraform cloud modules (AWS/GCP/Azure) are out of scope for GA. The `forge-stack` Helm chart (bundled Postgres + MinIO) is the IaC production path. Existing AWS + GCP modules remain in the repo as a bonus.
-6. **Per-package ≥85% coverage not CI-gated** (§5.10) — only a comment in ci.yml:67; the gate only checks overall 75%. format/npm is at 67.1%; would fail if enforced.
+6. ~~**Per-package ≥85% coverage not CI-gated**~~ — **COMPLETE ✓** Per-package gate added in `f5303d5`; ci.yml gates auth/proxy/indexer/server at ≥85%.
 
 ### Tier 3 — Conformance client matrix gaps — COMPLETE ✓
 
