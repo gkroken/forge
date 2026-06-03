@@ -10,16 +10,18 @@
 </head>
 <body>
   <nav>
-    <a href="/ui/" class="brand">⬡ forge</a>
-    <form action="/ui/search" method="get" hx-boost="true">
-      <input type="search" name="q" placeholder="Search all repos…" autocomplete="off"
+    <a href="/ui/" class="brand"><span class="brand-mark">f</span>forge</a>
+    <form action="/ui/search" method="get" class="nav-search" hx-boost="true">
+      <input type="search" name="q" placeholder="Search repositories…" autocomplete="off"
              value="{{if eq .Title "Search"}}{{.Query}}{{end}}">
     </form>
-    <a href="/ui/admin/" class="nav-link">Admin</a>
-    <button id="theme-toggle" class="nav-logout">Dark mode</button>
-    <form method="POST" action="/ui/logout" style="margin:0">
-      <button type="submit" class="nav-logout">Sign out</button>
-    </form>
+    <div class="nav-end">
+      <a href="/ui/admin/" class="nav-link">Admin</a>
+      <button id="theme-toggle" class="nav-btn">Dark mode</button>
+      <form method="POST" action="/ui/logout">
+        <button type="submit" class="nav-btn">Sign out</button>
+      </form>
+    </div>
   </nav>
   <main>
     {{block "content" .}}{{end}}
