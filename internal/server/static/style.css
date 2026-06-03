@@ -324,6 +324,11 @@ td a:hover { text-decoration: underline; }
   box-shadow: 0 0 0 3px rgba(13,110,253,.1);
 }
 
+/* ── token management ────────────────────────────────────────────────── */
+.token-layout { display: flex; flex-direction: column; gap: 2.5rem; }
+.token-create { max-width: 640px; }
+.secret-reveal code { display: block; margin-top: .4rem; word-break: break-all; }
+
 /* ── login page ───────────────────────────────────────────────────────── */
 .login-wrap  { max-width: 420px; margin: 3rem auto; }
 .login-form  { margin-top: 1.5rem; }

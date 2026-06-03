@@ -49,6 +49,7 @@ var (
 	tmplAdminForm   = parseUITmpl("templates/base.html", "templates/admin_repo_form.html")
 	tmplLogin       = parseUITmpl("templates/base.html", "templates/login.html")
 	tmplComponent   = parseUITmpl("templates/base.html", "templates/component.html")
+	tmplTokens      = parseUITmpl("templates/base.html", "templates/tokens.html")
 )
 
 // ── page data types ───────────────────────────────────────────────────────────

@@ -1,7 +1,10 @@
 {{define "content"}}
 <div class="page-header">
   <h1>Repositories</h1>
-  <a href="/ui/admin/repos/new" class="btn btn-primary">+ New repository</a>
+  <div style="display:flex;gap:.5rem">
+    <a href="/ui/admin/tokens" class="btn">API Tokens</a>
+    <a href="/ui/admin/repos/new" class="btn btn-primary">+ New repository</a>
+  </div>
 </div>
 
 {{if .Flash}}

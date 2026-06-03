@@ -536,6 +536,108 @@ func TestUIRepo_ComponentLinksPresent(t *testing.T) {
 	assertContains(t, body, `href="/ui/repos/npm-hosted/lodash"`)
 }
 
+// ── /ui/admin/tokens ─────────────────────────────────────────────────────────
+
+func TestUITokens_EvalMode_ShowsNotEnabled(t *testing.T) {
+	h := newUIServer(t).Routes() // nil auth
+	rw := uiGet(t, h, "/ui/admin/tokens")
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status %d", rw.Code)
+	}
+	assertContains(t, rw.Body.String(), "not enabled")
+}
+
+func TestUITokens_AuthEnabled_ShowsForm(t *testing.T) {
+	srv, secret := newUIServerWithAuth(t)
+	h := srv.Routes()
+	r := httptest.NewRequest(http.MethodGet, "/ui/admin/tokens", nil)
+	r.AddCookie(&http.Cookie{Name: auth.UISessionCookie, Value: secret})
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, r)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status %d", rw.Code)
+	}
+	body := rw.Body.String()
+	assertContains(t, body, "New token")
+	assertContains(t, body, `name="description"`)
+	assertContains(t, body, `name="role"`)
+}
+
+func TestUITokens_UnauthenticatedRedirectsToLogin(t *testing.T) {
+	srv, _ := newUIServerWithAuth(t)
+	h := srv.Routes()
+	rw := uiGet(t, h, "/ui/admin/tokens")
+	if rw.Code != http.StatusSeeOther {
+		t.Errorf("expected 303, got %d", rw.Code)
+	}
+	assertContains(t, rw.Header().Get("Location"), "/ui/login")
+}
+
+func TestUITokens_Create_Success(t *testing.T) {
+	srv, secret := newUIServerWithAuth(t)
+	h := srv.Routes()
+	rw := uiPostWithCookie(t, h, "/ui/admin/tokens", auth.UISessionCookie, secret, url.Values{
+		"description": {"ci-token"}, "repo": {"*"}, "role": {"write"},
+	})
+	if rw.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rw.Code)
+	}
+	body := rw.Body.String()
+	assertContains(t, body, "Token created")
+	assertContains(t, body, "forge_") // secret prefix
+	assertContains(t, body, "ci-token") // appears in token list
+}
+
+func TestUITokens_Create_MissingDescription(t *testing.T) {
+	srv, secret := newUIServerWithAuth(t)
+	h := srv.Routes()
+	rw := uiPostWithCookie(t, h, "/ui/admin/tokens", auth.UISessionCookie, secret, url.Values{
+		"description": {""}, "repo": {"*"}, "role": {"read"},
+	})
+	if rw.Code != http.StatusOK {
+		t.Fatalf("expected 200 re-render, got %d", rw.Code)
+	}
+	assertContains(t, rw.Body.String(), "description is required")
+}
+
+func TestUITokens_Create_InvalidExpiry(t *testing.T) {
+	srv, secret := newUIServerWithAuth(t)
+	h := srv.Routes()
+	rw := uiPostWithCookie(t, h, "/ui/admin/tokens", auth.UISessionCookie, secret, url.Values{
+		"description": {"x"}, "repo": {"*"}, "role": {"read"}, "expires": {"not-a-date"},
+	})
+	assertContains(t, rw.Body.String(), "invalid expiry")
+}
+
+func TestUITokens_Revoke(t *testing.T) {
+	srv, secret := newUIServerWithAuth(t)
+	h := srv.Routes()
+
+	// Create a token to revoke.
+	tok, _, _ := srv.Auth.Create("to-revoke", []auth.Grant{{Repo: "*", Role: auth.RoleRead}}, nil)
+
+	r := httptest.NewRequest(http.MethodDelete, "/ui/admin/tokens/"+tok.ID, nil)
+	r.AddCookie(&http.Cookie{Name: auth.UISessionCookie, Value: secret})
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, r)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rw.Code)
+	}
+	// Verify it's gone.
+	tokens, _ := srv.Auth.List()
+	for _, listed := range tokens {
+		if listed.ID == tok.ID {
+			t.Errorf("token should have been revoked")
+		}
+	}
+}
+
+func TestUIAdminHome_TokensLink(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/admin/")
+	assertContains(t, rw.Body.String(), "/ui/admin/tokens")
+}
+
 // ── auth helpers ──────────────────────────────────────────────────────────────
 
 // newUIServerWithAuth creates a Server with auth enabled and returns it alongside
