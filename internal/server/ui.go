@@ -50,6 +50,8 @@ var (
 	tmplLogin       = parseUITmpl("templates/base.html", "templates/login.html")
 	tmplComponent   = parseUITmpl("templates/base.html", "templates/component.html")
 	tmplTokens      = parseUITmpl("templates/base.html", "templates/tokens.html")
+	tmplAccess      = parseUITmpl("templates/base.html", "templates/access.html")
+	tmplUpload      = parseUITmpl("templates/base.html", "templates/upload.html")
 )
 
 // ── page data types ───────────────────────────────────────────────────────────
@@ -124,11 +126,14 @@ func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/ui/", http.StatusFound)
 			return
 		}
-		// /repos/{name} → repo detail; /repos/{name}/{component} → component detail.
-		// strings.Cut splits on the first "/" so scoped names like @scope/pkg are preserved.
-		repoName, component, hasComponent := strings.Cut(rest, "/")
-		if hasComponent && component != "" {
-			s.uiComponent(w, r, repoName, component)
+		// /repos/{name} → repo detail
+		// /repos/{name}/upload → upload page
+		// /repos/{name}/{component} → component detail (strings.Cut on first "/" preserves @scope/pkg)
+		repoName, sub, hasComponent := strings.Cut(rest, "/")
+		if hasComponent && sub == "upload" {
+			s.uiUpload(w, r, repoName)
+		} else if hasComponent && sub != "" {
+			s.uiComponent(w, r, repoName, sub)
 		} else {
 			s.uiRepo(w, r, repoName)
 		}

@@ -3,11 +3,16 @@
   <a href="/ui/">Repositories</a><span>/</span>{{.Repo.Name}}
 </div>
 
-<h1>{{.Repo.Name}}</h1>
-<div class="repo-meta">
-  <span class="badge fmt-{{.Repo.Format}}">{{.Repo.Format}}</span>
-  <span class="badge kind-{{.Repo.Kind}}">{{.Repo.Kind}}</span>
-  {{if .Repo.Upstream}}<span class="upstream">↑ {{.Repo.Upstream}}</span>{{end}}
+<div class="page-header">
+  <div>
+    <h1 style="margin-bottom:.5rem">{{.Repo.Name}}</h1>
+    <div class="repo-meta">
+      <span class="badge fmt-{{.Repo.Format}}">{{.Repo.Format}}</span>
+      <span class="badge kind-{{.Repo.Kind}}">{{.Repo.Kind}}</span>
+      {{if .Repo.Upstream}}<span class="upstream">↑ {{.Repo.Upstream}}</span>{{end}}
+    </div>
+  </div>
+  {{if eq .Repo.Kind "hosted"}}<a href="/ui/repos/{{.Repo.Name}}/upload" class="btn">↑ Upload</a>{{end}}
 </div>
 
 <div class="filter-bar">

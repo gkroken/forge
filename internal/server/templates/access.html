@@ -1,0 +1,46 @@
+{{define "content"}}
+<div class="page-header">
+  <h1>Access</h1>
+</div>
+
+{{if not .AuthEnabled}}
+<div class="alert alert-error">Authentication is not enabled. Start forge with <code>-auth</code> to manage access.</div>
+{{else}}
+<p style="font-size:13px;color:var(--text-muted);margin-bottom:1.5rem">
+  Per-repository access granted by active API tokens.
+  Manage tokens on the <a href="/ui/admin/tokens">API Tokens</a> page.
+</p>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Repository</th>
+        <th>Format</th>
+        <th>Kind</th>
+        <th>Anonymous read</th>
+        <th>Token access</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Rows}}
+      <tr>
+        <td class="col-name"><a href="/ui/repos/{{.RepoName}}">{{.RepoName}}</a></td>
+        <td><span class="badge fmt-{{.Format}}">{{.Format}}</span></td>
+        <td><span class="badge kind-{{.Kind}}">{{.Kind}}</span></td>
+        <td>{{if .AnonymousRead}}<span class="badge kind-hosted">yes</span>{{else}}<span style="color:var(--text-muted)">no</span>{{end}}</td>
+        <td>
+          {{if .Grants}}
+          <ul class="grant-list">
+            {{range .Grants}}<li><code class="col-latest">{{.Role}}</code> {{.Description}}</li>{{end}}
+          </ul>
+          {{else}}<span style="color:var(--text-muted)">—</span>{{end}}
+        </td>
+      </tr>
+      {{else}}
+      <tr><td colspan="5" class="empty">No repositories configured.</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+{{end}}

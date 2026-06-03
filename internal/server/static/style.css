@@ -324,6 +324,35 @@ td a:hover { text-decoration: underline; }
   box-shadow: 0 0 0 3px rgba(13,110,253,.1);
 }
 
+/* ── access view ─────────────────────────────────────────────────────── */
+.grant-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .2rem; }
+.grant-list li { font-size: 12px; }
+
+/* ── upload ───────────────────────────────────────────────────────────── */
+.upload-form  { max-width: 540px; margin-top: 1rem; }
+.upload-form input[type=file] {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+.upload-cli { max-width: 640px; }
+.cli-hint {
+  margin-top: .75rem;
+  padding: 10px 14px;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+  overflow-x: auto;
+  white-space: pre;
+}
+
 /* ── token management ────────────────────────────────────────────────── */
 .token-layout { display: flex; flex-direction: column; gap: 2.5rem; }
 .token-create { max-width: 640px; }

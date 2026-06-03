@@ -1,6 +1,11 @@
 package server
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,6 +16,7 @@ import (
 	"forge/internal/auth"
 	"forge/internal/blob"
 	"forge/internal/format"
+	"forge/internal/format/cran"
 	"forge/internal/format/helm"
 	"forge/internal/format/npm"
 	"forge/internal/meta"
@@ -534,6 +540,187 @@ func TestUIRepo_ComponentLinksPresent(t *testing.T) {
 	rw := uiGet(t, h, "/ui/repos/npm-hosted")
 	body := rw.Body.String()
 	assertContains(t, body, `href="/ui/repos/npm-hosted/lodash"`)
+}
+
+// ── /ui/admin/access ─────────────────────────────────────────────────────────
+
+func TestUIAccess_EvalMode(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/admin/access")
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status %d", rw.Code)
+	}
+	assertContains(t, rw.Body.String(), "not enabled")
+}
+
+func TestUIAccess_AuthEnabled_ShowsRepos(t *testing.T) {
+	srv, secret := newUIServerWithAuth(t)
+	h := srv.Routes()
+	r := httptest.NewRequest(http.MethodGet, "/ui/admin/access", nil)
+	r.AddCookie(&http.Cookie{Name: auth.UISessionCookie, Value: secret})
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, r)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status %d", rw.Code)
+	}
+	body := rw.Body.String()
+	assertContains(t, body, "npm-hosted")
+	assertContains(t, body, "test-admin") // token description appears as a grant
+}
+
+func TestUIAccess_UnauthenticatedRedirects(t *testing.T) {
+	srv, _ := newUIServerWithAuth(t)
+	h := srv.Routes()
+	rw := uiGet(t, h, "/ui/admin/access")
+	if rw.Code != http.StatusSeeOther {
+		t.Errorf("expected 303, got %d", rw.Code)
+	}
+}
+
+func TestUIAdminHome_AccessLink(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/admin/")
+	assertContains(t, rw.Body.String(), "/ui/admin/access")
+}
+
+// ── /ui/repos/{name}/upload ───────────────────────────────────────────────────
+
+func TestUIUpload_GetForm_Helm(t *testing.T) {
+	srv := newUIServer(t)
+	srv.Repos.Add(repo.Repository{Name: "helm-upload", Format: "helm", Kind: repo.Hosted}) //nolint:errcheck
+	rw := uiGet(t, srv.Routes(), "/ui/repos/helm-upload/upload")
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status %d", rw.Code)
+	}
+	body := rw.Body.String()
+	assertContains(t, body, `name="file"`)
+	assertContains(t, body, "Chart archive")
+}
+
+func TestUIUpload_GetForm_CRAN(t *testing.T) {
+	srv := newUIServer(t)
+	srv.Handlers.Register(cran.New())
+	srv.Repos.Add(repo.Repository{Name: "cran-upload", Format: "cran", Kind: repo.Hosted}) //nolint:errcheck
+	rw := uiGet(t, srv.Routes(), "/ui/repos/cran-upload/upload")
+	body := rw.Body.String()
+	assertContains(t, body, "Package archive")
+}
+
+func TestUIUpload_GetForm_Maven_ShowsCLI(t *testing.T) {
+	srv := newUIServer(t)
+	srv.Repos.Add(repo.Repository{Name: "maven-upload", Format: "maven", Kind: repo.Hosted}) //nolint:errcheck
+	rw := uiGet(t, srv.Routes(), "/ui/repos/maven-upload/upload")
+	body := rw.Body.String()
+	assertContains(t, body, "mvn deploy")
+}
+
+func TestUIUpload_NotFound(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/repos/no-such-repo/upload")
+	if rw.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rw.Code)
+	}
+}
+
+func TestUIUpload_RepoDetail_HasUploadButton(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/repos/npm-hosted")
+	assertContains(t, rw.Body.String(), "/ui/repos/npm-hosted/upload")
+}
+
+func TestUIUpload_NPM_Success(t *testing.T) {
+	srv := newUIServer(t)
+	h := srv.Routes()
+
+	tarball := buildNPMTarball(t, "my-pkg", "1.2.3")
+	body, ct := buildMultipartForm(t, "file", "my-pkg-1.2.3.tgz", tarball)
+
+	r := httptest.NewRequest(http.MethodPost, "/ui/repos/npm-hosted/upload", body)
+	r.Header.Set("Content-Type", ct)
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, r)
+
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status %d; body: %s", rw.Code, rw.Body.String())
+	}
+	assertContains(t, rw.Body.String(), "Upload successful")
+}
+
+func TestUIUpload_CRAN_Success(t *testing.T) {
+	srv := newUIServer(t)
+	srv.Handlers.Register(cran.New())
+	srv.Repos.Add(repo.Repository{Name: "cran-test", Format: "cran", Kind: repo.Hosted}) //nolint:errcheck
+	h := srv.Routes()
+
+	tarball := buildCRANTarball(t)
+	body, ct := buildMultipartForm(t, "file", "MyPkg_1.0.0.tar.gz", tarball)
+
+	r := httptest.NewRequest(http.MethodPost, "/ui/repos/cran-test/upload", body)
+	r.Header.Set("Content-Type", ct)
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, r)
+
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status %d; body: %s", rw.Code, rw.Body.String())
+	}
+	assertContains(t, rw.Body.String(), "Upload successful")
+}
+
+func TestUIUpload_NPM_BadTarball(t *testing.T) {
+	h := newUIServer(t).Routes()
+	body, ct := buildMultipartForm(t, "file", "bad.tgz", []byte("not-a-tarball"))
+	r := httptest.NewRequest(http.MethodPost, "/ui/repos/npm-hosted/upload", body)
+	r.Header.Set("Content-Type", ct)
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, r)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("expected 200 re-render, got %d", rw.Code)
+	}
+	assertContains(t, rw.Body.String(), "package.json")
+}
+
+// ── upload test helpers ───────────────────────────────────────────────────────
+
+// buildMultipartForm returns a multipart body and its Content-Type for file upload tests.
+func buildMultipartForm(t *testing.T, field, filename string, data []byte) (*bytes.Buffer, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile(field, filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fw.Write(data)
+	mw.Close()
+	return &buf, mw.FormDataContentType()
+}
+
+// buildNPMTarball creates a minimal npm .tgz with a package/package.json.
+func buildNPMTarball(t *testing.T, name, version string) []byte {
+	t.Helper()
+	pkg, _ := json.Marshal(map[string]string{"name": name, "version": version})
+	return buildTarGz(t, map[string][]byte{"package/package.json": pkg})
+}
+
+// buildCRANTarball creates a minimal CRAN source .tar.gz with a DESCRIPTION file.
+func buildCRANTarball(t *testing.T) []byte {
+	t.Helper()
+	desc := []byte("Package: MyPkg\nVersion: 1.0.0\nTitle: Test\nDescription: Test.\nLicense: MIT\n")
+	return buildTarGz(t, map[string][]byte{"MyPkg/DESCRIPTION": desc})
+}
+
+func buildTarGz(t *testing.T, files map[string][]byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+	for name, data := range files {
+		tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(data))})
+		tw.Write(data)
+	}
+	tw.Close()
+	gw.Close()
+	return buf.Bytes()
 }
 
 // ── /ui/admin/tokens ─────────────────────────────────────────────────────────

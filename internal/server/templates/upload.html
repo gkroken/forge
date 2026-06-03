@@ -1,0 +1,74 @@
+{{define "content"}}
+<div class="breadcrumb">
+  <a href="/ui/">Repositories</a><span>/</span>
+  <a href="/ui/repos/{{.Repo.Name}}">{{.Repo.Name}}</a><span>/</span>Upload
+</div>
+
+<h1>Upload to {{.Repo.Name}}</h1>
+<div class="repo-meta">
+  <span class="badge fmt-{{.Repo.Format}}">{{.Repo.Format}}</span>
+  <span class="badge kind-{{.Repo.Kind}}">{{.Repo.Kind}}</span>
+</div>
+
+{{if .Error}}
+<div class="alert alert-error">{{.Error}}</div>
+{{end}}
+
+{{if .Flash}}
+<div class="alert alert-success">{{.Flash}}</div>
+{{end}}
+
+{{if eq .Repo.Format "helm"}}
+<form method="POST" enctype="multipart/form-data" class="upload-form">
+  <div class="form-group">
+    <label for="u-chart">Chart archive <span class="form-hint-inline">(.tgz)</span></label>
+    <input id="u-chart" type="file" name="file" accept=".tgz,.tar.gz" required>
+  </div>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Upload chart</button>
+    <a href="/ui/repos/{{.Repo.Name}}" class="btn">Cancel</a>
+  </div>
+</form>
+
+{{else if eq .Repo.Format "cran"}}
+<form method="POST" enctype="multipart/form-data" class="upload-form">
+  <div class="form-group">
+    <label for="u-pkg">Package archive <span class="form-hint-inline">({Package}_{Version}.tar.gz)</span></label>
+    <input id="u-pkg" type="file" name="file" accept=".tar.gz,.tgz" required>
+    <p class="form-hint">The filename must follow CRAN convention: <code>PackageName_1.0.0.tar.gz</code></p>
+  </div>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Upload package</button>
+    <a href="/ui/repos/{{.Repo.Name}}" class="btn">Cancel</a>
+  </div>
+</form>
+
+{{else if eq .Repo.Format "npm"}}
+<form method="POST" enctype="multipart/form-data" class="upload-form">
+  <div class="form-group">
+    <label for="u-npm">Package tarball <span class="form-hint-inline">(.tgz)</span></label>
+    <input id="u-npm" type="file" name="file" accept=".tgz,.tar.gz" required>
+    <p class="form-hint">Must contain a <code>package/package.json</code> with <code>name</code> and <code>version</code>.</p>
+  </div>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Publish package</button>
+    <a href="/ui/repos/{{.Repo.Name}}" class="btn">Cancel</a>
+  </div>
+</form>
+
+{{else}}
+<div class="upload-cli">
+  <p>Browser upload is not supported for <strong>{{.Repo.Format}}</strong> repositories.
+     Use your package manager's publish command pointed at the registry URL below.</p>
+  <div class="copy-row" style="margin-top:1rem">
+    <code class="copy-url" id="reg-url">{{.RepoURL}}</code>
+    <button class="btn btn-sm" onclick="(function(){navigator.clipboard.writeText(document.getElementById('reg-url').textContent).catch(function(){})})()">Copy</button>
+  </div>
+  {{if eq .Repo.Format "maven"}}
+  <pre class="cli-hint">mvn deploy -DaltDeploymentRepository=forge::default::{{.RepoURL}}</pre>
+  {{else if eq .Repo.Format "oci"}}
+  <pre class="cli-hint">docker push {{.RepoHost}}/repository/{{.Repo.Name}}/&lt;image&gt;:&lt;tag&gt;</pre>
+  {{end}}
+</div>
+{{end}}
+{{end}}

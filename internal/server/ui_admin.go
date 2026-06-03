@@ -32,6 +32,29 @@ type adminFormPage struct {
 	Kinds   []string
 }
 
+// ── access view types ─────────────────────────────────────────────────────────
+
+type repoGrant struct {
+	Role        string
+	Description string
+}
+
+type accessRow struct {
+	RepoName      string
+	Format        string
+	Kind          string
+	AnonymousRead bool
+	Grants        []repoGrant
+}
+
+type adminAccessPage struct {
+	Title       string
+	AuthEnabled bool
+	Rows        []accessRow
+}
+
+// ── token types ───────────────────────────────────────────────────────────────
+
 // tokenRow is a display-ready snapshot of one token for the template.
 type tokenRow struct {
 	ID           string
@@ -85,6 +108,8 @@ func (s *Server) handleUIAdmin(w http.ResponseWriter, r *http.Request, sub strin
 	case strings.HasPrefix(sub, "/tokens/") && r.Method == http.MethodDelete:
 		id := strings.TrimPrefix(sub, "/tokens/")
 		s.uiAdminRevokeToken(w, r, id)
+	case sub == "/access":
+		s.uiAdminAccess(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -385,4 +410,43 @@ func formatExpiry(t *time.Time) string {
 		return "never"
 	}
 	return t.UTC().Format("2006-01-02")
+}
+
+// ── access view ───────────────────────────────────────────────────────────────
+
+func (s *Server) uiAdminAccess(w http.ResponseWriter, r *http.Request) {
+	if !s.Enforcer.RequireAdminUI(w, r) {
+		return
+	}
+
+	page := adminAccessPage{
+		Title:       "Admin — Access",
+		AuthEnabled: s.Auth != nil,
+	}
+
+	if s.Auth != nil {
+		tokens, _ := s.Auth.List()
+		for _, rp := range s.Repos.All() {
+			row := accessRow{
+				RepoName:      rp.Name,
+				Format:        rp.Format,
+				Kind:          string(rp.Kind),
+				AnonymousRead: rp.AnonymousRead,
+			}
+			for _, tok := range tokens {
+				for _, g := range tok.Grants {
+					if g.Repo == rp.Name || g.Repo == "*" {
+						row.Grants = append(row.Grants, repoGrant{
+							Role:        g.Role.String(),
+							Description: tok.Description,
+						})
+						break
+					}
+				}
+			}
+			page.Rows = append(page.Rows, row)
+		}
+	}
+
+	render(w, tmplAccess, "base.html", page)
 }
