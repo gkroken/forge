@@ -4,17 +4,20 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Title}} — forge</title>
-  <link rel="stylesheet" href="/ui/static/style.css">
+  <link rel="stylesheet" href="/ui/static/style.css?v={{cssVer}}">
   <script src="https://unpkg.com/htmx.org@2.0.3/dist/htmx.min.js" defer></script>
 </head>
 <body>
   <nav>
     <a href="/ui/" class="brand">⬡ forge</a>
-    <form action="/ui/search" method="get">
+    <form action="/ui/search" method="get" hx-boost="true">
       <input type="search" name="q" placeholder="Search all repos…" autocomplete="off"
              value="{{if eq .Title "Search"}}{{.Query}}{{end}}">
     </form>
     <a href="/ui/admin/" class="nav-link">Admin</a>
+    <form method="POST" action="/ui/logout" style="margin:0">
+      <button type="submit" class="nav-logout">Sign out</button>
+    </form>
   </nav>
   <main>
     {{block "content" .}}{{end}}

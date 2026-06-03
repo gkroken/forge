@@ -542,6 +542,86 @@ func TestUIRepo_ComponentLinksPresent(t *testing.T) {
 	assertContains(t, body, `href="/ui/repos/npm-hosted/lodash"`)
 }
 
+// ── U3: cache-busting, dark mode, nav search, breadcrumb ─────────────────────
+
+func TestUI_CSSHasCacheBustParam(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/")
+	body := rw.Body.String()
+	// style.css link must include a ?v= query param
+	if !strings.Contains(body, "style.css?v=") {
+		t.Error("style.css link missing ?v= cache-bust parameter")
+	}
+}
+
+func TestUI_CSSVersionConsistent(t *testing.T) {
+	h := newUIServer(t).Routes()
+	r1 := uiGet(t, h, "/ui/")
+	r2 := uiGet(t, h, "/ui/search")
+	extractVer := func(body string) string {
+		i := strings.Index(body, "style.css?v=")
+		if i < 0 {
+			return ""
+		}
+		rest := body[i+len("style.css?v="):]
+		end := strings.IndexAny(rest, `"'`)
+		if end < 0 {
+			return rest
+		}
+		return rest[:end]
+	}
+	v1 := extractVer(r1.Body.String())
+	v2 := extractVer(r2.Body.String())
+	if v1 == "" || v1 != v2 {
+		t.Errorf("inconsistent CSS version: %q vs %q", v1, v2)
+	}
+}
+
+func TestUI_CSSVersionedURLServed(t *testing.T) {
+	// The versioned URL must still serve the CSS (query param ignored by FileServer).
+	h := newUIServer(t).Routes()
+	ver := cssVer
+	rw := uiGet(t, h, "/ui/static/style.css?v="+ver)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("versioned CSS URL returned %d", rw.Code)
+	}
+}
+
+func TestUISearch_HtmxBoosted_ReturnsFullPage(t *testing.T) {
+	h := newUIServer(t).Routes()
+	// Simulate a nav-bar hx-boost request: both HX-Request and HX-Boosted set.
+	r := httptest.NewRequest(http.MethodGet, "/ui/search?q=lodash", nil)
+	r.Header.Set("HX-Request", "true")
+	r.Header.Set("HX-Boosted", "true")
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, r)
+	body := rw.Body.String()
+	// Boosted request should get the full page, not just the results fragment.
+	assertContains(t, body, "<!DOCTYPE html>")
+	assertContains(t, body, "<nav")
+	assertContains(t, body, "lodash")
+}
+
+func TestUISearch_NavForm_HasHxBoost(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/")
+	assertContains(t, rw.Body.String(), "hx-boost")
+}
+
+func TestUIAdminHome_HasBreadcrumb(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/admin/")
+	body := rw.Body.String()
+	assertContains(t, body, `href="/ui/"`)
+	assertContains(t, body, "Admin")
+	// Breadcrumb must precede the page-header
+	breadcrumbIdx := strings.Index(body, "breadcrumb")
+	headerIdx := strings.Index(body, "page-header")
+	if breadcrumbIdx < 0 || headerIdx < 0 || breadcrumbIdx > headerIdx {
+		t.Error("breadcrumb missing or appearing after page-header")
+	}
+}
+
 // ── /ui/admin/access ─────────────────────────────────────────────────────────
 
 func TestUIAccess_EvalMode(t *testing.T) {

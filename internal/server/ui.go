@@ -2,7 +2,9 @@ package server
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"html/template"
 	"io/fs"
 	"net/http"
@@ -17,6 +19,16 @@ import (
 
 //go:embed templates static
 var uiFS embed.FS
+
+// cssVer is a short content-hash of style.css, computed once at startup.
+// Injected into <link> URLs so browsers cache-bust on deploy.
+var cssVer string
+
+func init() {
+	data, _ := fs.ReadFile(uiFS, "static/style.css")
+	h := sha256.Sum256(data)
+	cssVer = hex.EncodeToString(h[:4]) // 8 hex chars is plenty
+}
 
 var uiFuncs = template.FuncMap{
 	"join": strings.Join,
@@ -35,6 +47,7 @@ var uiFuncs = template.FuncMap{
 		return d.String()
 	},
 	"urlPathEscape": url.PathEscape,
+	"cssVer":        func() string { return cssVer },
 }
 
 func parseUITmpl(files ...string) *template.Template {
@@ -326,7 +339,9 @@ func (s *Server) uiSearch(w http.ResponseWriter, r *http.Request) {
 		AllRepos:   allRepos,
 		Results:    results,
 	}
-	if r.Header.Get("HX-Request") == "true" {
+	// Boosted nav-bar requests (hx-boost) want the full page; only return the
+	// partial fragment for direct htmx swap calls from the search page itself.
+	if r.Header.Get("HX-Request") == "true" && r.Header.Get("HX-Boosted") != "true" {
 		render(w, tmplSearch, "search-results", data)
 		return
 	}

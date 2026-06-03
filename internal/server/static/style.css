@@ -361,3 +361,54 @@ td a:hover { text-decoration: underline; }
 /* ── login page ───────────────────────────────────────────────────────── */
 .login-wrap  { max-width: 420px; margin: 3rem auto; }
 .login-form  { margin-top: 1.5rem; }
+
+/* ── nav sign-out button ─────────────────────────────────────────────── */
+.nav-logout {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,.6);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+  white-space: nowrap;
+}
+.nav-logout:hover { color: #fff; }
+
+/* ── dark mode ───────────────────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:         #0d1117;
+    --bg-alt:     #161b22;
+    --border:     #30363d;
+    --text:       #e6edf3;
+    --text-muted: #8b949e;
+    --accent:     #58a6ff;
+    --nav-bg:     #010409;
+    --nav-text:   #e6edf3;
+  }
+
+  /* Inputs and selects need explicit dark backgrounds */
+  input, select, textarea {
+    background: var(--bg-alt);
+    color: var(--text);
+    border-color: var(--border);
+    color-scheme: dark;
+  }
+
+  /* Badges: lighten backgrounds for dark bg readability */
+  .kind-hosted { background: #1c3354; color: #93c5fd; }
+  .kind-proxy  { background: #3b2f00; color: #fcd34d; }
+  .kind-group  { background: #14361f; color: #6ee7b7; }
+  .fmt-maven   { background: #3b1028; color: #f9a8d4; }
+  .fmt-npm     { background: #3b1212; color: #fca5a5; }
+  .fmt-helm    { background: #0d3226; color: #6ee7b7; }
+  .fmt-cran    { background: #1c3354; color: #93c5fd; }
+  .fmt-oci     { background: #2e1b5e; color: #c4b5fd; }
+
+  /* Alerts */
+  .alert-success { background: #0d3226; color: #6ee7b7; border-color: #2d6a4f; }
+  .alert-error   { background: #3b1212; color: #fca5a5; border-color: #7f1d1d; }
+
+  /* Code blocks */
+  .copy-url, .cli-hint { background: var(--bg-alt); }
+}
