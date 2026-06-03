@@ -375,9 +375,12 @@ func (s *Server) uiLogin(w http.ResponseWriter, r *http.Request) {
 			Value:    secret,
 			Path:     "/",
 			HttpOnly: true,
+			Secure:   isSecureContext(r),
 			SameSite: http.SameSiteStrictMode,
 		})
-		http.Redirect(w, r, next, http.StatusSeeOther)
+		// next is always the output of sanitizeNext(), which rejects absolute
+		// URLs and enforces a /ui/ prefix — no open-redirect risk. #nosec G710
+		http.Redirect(w, r, next, http.StatusSeeOther) //nolint:gocritic
 		return
 	}
 
@@ -395,6 +398,7 @@ func (s *Server) uiLogout(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
+		Secure:   isSecureContext(r),
 		SameSite: http.SameSiteStrictMode,
 	})
 	http.Redirect(w, r, "/ui/", http.StatusSeeOther)
@@ -410,13 +414,21 @@ func (s *Server) verifyAdminSecret(secret string) bool {
 	return err == nil && tok != nil && tok.RoleFor("*") >= auth.RoleAdmin
 }
 
-// sanitizeNext ensures the redirect target is a forge UI path, preventing
-// open redirects to external URLs.
+// sanitizeNext ensures the redirect target is a safe forge UI path,
+// preventing open redirects to external URLs. It parses the URL, rejects
+// absolute URLs, and strips any query/fragment so only the path is returned.
 func sanitizeNext(next string) string {
-	if strings.HasPrefix(next, "/ui/") {
-		return next
+	u, err := url.Parse(next)
+	if err != nil || u.IsAbs() || !strings.HasPrefix(u.Path, "/ui/") {
+		return "/ui/admin/"
 	}
-	return "/ui/admin/"
+	return u.Path
+}
+
+// isSecureContext reports whether the request arrived over TLS, either
+// directly or via a reverse proxy that sets X-Forwarded-Proto.
+func isSecureContext(r *http.Request) bool {
+	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
