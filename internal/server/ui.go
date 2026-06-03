@@ -370,7 +370,7 @@ func (s *Server) uiLogin(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		http.SetCookie(w, &http.Cookie{
+		http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure set via isSecureContext; HttpOnly+SameSiteStrict already present
 			Name:     auth.UISessionCookie,
 			Value:    secret,
 			Path:     "/",
@@ -378,9 +378,7 @@ func (s *Server) uiLogin(w http.ResponseWriter, r *http.Request) {
 			Secure:   isSecureContext(r),
 			SameSite: http.SameSiteStrictMode,
 		})
-		// next is always the output of sanitizeNext(), which rejects absolute
-		// URLs and enforces a /ui/ prefix — no open-redirect risk. #nosec G710
-		http.Redirect(w, r, next, http.StatusSeeOther) //nolint:gocritic
+		http.Redirect(w, r, next, http.StatusSeeOther) // #nosec G710 -- next is always output of sanitizeNext(), which rejects absolute URLs
 		return
 	}
 
@@ -392,7 +390,7 @@ func (s *Server) uiLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) uiLogout(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure set via isSecureContext; HttpOnly+SameSiteStrict already present
 		Name:     auth.UISessionCookie,
 		Value:    "",
 		Path:     "/",

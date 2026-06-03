@@ -59,9 +59,7 @@ func (s *Server) uiUpload(w http.ResponseWriter, r *http.Request, repoName strin
 
 func (s *Server) processUpload(w http.ResponseWriter, r *http.Request, rp repo.Repository, page uploadPage) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
-	// Body is already bounded by MaxBytesReader above; 32 MiB is only the
-	// in-memory portion — overflow goes to temp files, not unbounded RAM. #nosec G120
-	if err := r.ParseMultipartForm(32 << 20); err != nil { //nolint:gocritic
+	if err := r.ParseMultipartForm(32 << 20); err != nil { // #nosec G120 -- body already bounded by MaxBytesReader above
 		page.Error = "could not parse upload: " + err.Error()
 		render(w, tmplUpload, "base.html", page)
 		return
@@ -121,9 +119,8 @@ func (s *Server) callHandler(origR *http.Request, rp repo.Repository, method, su
 		return fmt.Errorf("invalid sub-path %q", sub)
 	}
 
-	// This request is dispatched directly to h.Serve via httptest.NewRecorder —
-	// no outbound network call is made, so SSRF does not apply. #nosec G704
-	req, err := http.NewRequest(method, "/repository/"+rp.Name+"/"+sub, bytes.NewReader(body)) //nolint:gocritic
+	// Dispatched to h.Serve via httptest.NewRecorder — no outbound network call.
+	req, err := http.NewRequest(method, "/repository/"+rp.Name+"/"+sub, bytes.NewReader(body)) // #nosec G704 -- internal dispatch only, not an outbound request
 	if err != nil {
 		return err
 	}
