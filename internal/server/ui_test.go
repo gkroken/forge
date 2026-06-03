@@ -746,6 +746,39 @@ func TestUIUpload_CRAN_Success(t *testing.T) {
 	assertContains(t, rw.Body.String(), "Upload successful")
 }
 
+func TestUIUpload_NPM_ClickThrough(t *testing.T) {
+	// Full click-through: upload via the UI, then verify the component appears
+	// in the repo browse page. This is the E2E scenario from §5 of WORKPLAN-UI.md.
+	srv := newUIServer(t)
+	h := srv.Routes()
+
+	// Step 1: upload my-pkg@1.2.3 through the upload UI.
+	tarball := buildNPMTarball(t, "my-pkg", "1.2.3")
+	body, ct := buildMultipartForm(t, "file", "my-pkg-1.2.3.tgz", tarball)
+	r := httptest.NewRequest(http.MethodPost, "/ui/repos/npm-hosted/upload", body)
+	r.Header.Set("Content-Type", ct)
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, r)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("upload: status %d; body: %s", rw.Code, rw.Body.String())
+	}
+	assertContains(t, rw.Body.String(), "Upload successful")
+
+	// Step 2: browse the repo — the component must appear.
+	rw2 := uiGet(t, h, "/ui/repos/npm-hosted")
+	if rw2.Code != http.StatusOK {
+		t.Fatalf("browse: status %d", rw2.Code)
+	}
+	assertContains(t, rw2.Body.String(), "my-pkg")
+
+	// Step 3: component detail page must resolve and show the version.
+	rw3 := uiGet(t, h, "/ui/repos/npm-hosted/my-pkg")
+	if rw3.Code != http.StatusOK {
+		t.Fatalf("detail: status %d", rw3.Code)
+	}
+	assertContains(t, rw3.Body.String(), "1.2.3")
+}
+
 func TestUIUpload_NPM_BadTarball(t *testing.T) {
 	h := newUIServer(t).Routes()
 	body, ct := buildMultipartForm(t, "file", "bad.tgz", []byte("not-a-tarball"))
