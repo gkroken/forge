@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Title}} — forge</title>
   <link rel="stylesheet" href="/ui/static/style.css?v={{cssVer}}">
+  <script src="/ui/static/theme.js"></script>
   <script src="https://unpkg.com/htmx.org@2.0.3/dist/htmx.min.js" defer></script>
 </head>
 <body>
@@ -15,6 +16,7 @@
              value="{{if eq .Title "Search"}}{{.Query}}{{end}}">
     </form>
     <a href="/ui/admin/" class="nav-link">Admin</a>
+    <button id="theme-toggle" class="nav-logout">Dark mode</button>
     <form method="POST" action="/ui/logout" style="margin:0">
       <button type="submit" class="nav-logout">Sign out</button>
     </form>

@@ -375,8 +375,13 @@ td a:hover { text-decoration: underline; }
 .nav-logout:hover { color: #fff; }
 
 /* ── dark mode ───────────────────────────────────────────────────────── */
+/* Applied when: OS prefers dark (and user hasn't overridden to light),
+   OR user has explicitly chosen dark via the toggle.                     */
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --_dark: 1; } }
+:root[data-theme="dark"] { --_dark: 1; }
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg:         #0d1117;
     --bg-alt:     #161b22;
     --border:     #30363d;
@@ -386,29 +391,49 @@ td a:hover { text-decoration: underline; }
     --nav-bg:     #010409;
     --nav-text:   #e6edf3;
   }
-
-  /* Inputs and selects need explicit dark backgrounds */
-  input, select, textarea {
-    background: var(--bg-alt);
-    color: var(--text);
-    border-color: var(--border);
-    color-scheme: dark;
-  }
-
-  /* Badges: lighten backgrounds for dark bg readability */
-  .kind-hosted { background: #1c3354; color: #93c5fd; }
-  .kind-proxy  { background: #3b2f00; color: #fcd34d; }
-  .kind-group  { background: #14361f; color: #6ee7b7; }
-  .fmt-maven   { background: #3b1028; color: #f9a8d4; }
-  .fmt-npm     { background: #3b1212; color: #fca5a5; }
-  .fmt-helm    { background: #0d3226; color: #6ee7b7; }
-  .fmt-cran    { background: #1c3354; color: #93c5fd; }
-  .fmt-oci     { background: #2e1b5e; color: #c4b5fd; }
-
-  /* Alerts */
-  .alert-success { background: #0d3226; color: #6ee7b7; border-color: #2d6a4f; }
-  .alert-error   { background: #3b1212; color: #fca5a5; border-color: #7f1d1d; }
-
-  /* Code blocks */
-  .copy-url, .cli-hint { background: var(--bg-alt); }
 }
+:root[data-theme="dark"] {
+  --bg:         #0d1117;
+  --bg-alt:     #161b22;
+  --border:     #30363d;
+  --text:       #e6edf3;
+  --text-muted: #8b949e;
+  --accent:     #58a6ff;
+  --nav-bg:     #010409;
+  --nav-text:   #e6edf3;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) input,
+  :root:not([data-theme="light"]) select,
+  :root:not([data-theme="light"]) textarea { background: var(--bg-alt); color: var(--text); border-color: var(--border); color-scheme: dark; }
+
+  :root:not([data-theme="light"]) .kind-hosted { background: #1c3354; color: #93c5fd; }
+  :root:not([data-theme="light"]) .kind-proxy  { background: #3b2f00; color: #fcd34d; }
+  :root:not([data-theme="light"]) .kind-group  { background: #14361f; color: #6ee7b7; }
+  :root:not([data-theme="light"]) .fmt-maven   { background: #3b1028; color: #f9a8d4; }
+  :root:not([data-theme="light"]) .fmt-npm     { background: #3b1212; color: #fca5a5; }
+  :root:not([data-theme="light"]) .fmt-helm    { background: #0d3226; color: #6ee7b7; }
+  :root:not([data-theme="light"]) .fmt-cran    { background: #1c3354; color: #93c5fd; }
+  :root:not([data-theme="light"]) .fmt-oci     { background: #2e1b5e; color: #c4b5fd; }
+  :root:not([data-theme="light"]) .alert-success { background: #0d3226; color: #6ee7b7; border-color: #2d6a4f; }
+  :root:not([data-theme="light"]) .alert-error   { background: #3b1212; color: #fca5a5; border-color: #7f1d1d; }
+  :root:not([data-theme="light"]) .copy-url,
+  :root:not([data-theme="light"]) .cli-hint { background: var(--bg-alt); }
+}
+:root[data-theme="dark"] input,
+:root[data-theme="dark"] select,
+:root[data-theme="dark"] textarea { background: var(--bg-alt); color: var(--text); border-color: var(--border); color-scheme: dark; }
+
+:root[data-theme="dark"] .kind-hosted { background: #1c3354; color: #93c5fd; }
+:root[data-theme="dark"] .kind-proxy  { background: #3b2f00; color: #fcd34d; }
+:root[data-theme="dark"] .kind-group  { background: #14361f; color: #6ee7b7; }
+:root[data-theme="dark"] .fmt-maven   { background: #3b1028; color: #f9a8d4; }
+:root[data-theme="dark"] .fmt-npm     { background: #3b1212; color: #fca5a5; }
+:root[data-theme="dark"] .fmt-helm    { background: #0d3226; color: #6ee7b7; }
+:root[data-theme="dark"] .fmt-cran    { background: #1c3354; color: #93c5fd; }
+:root[data-theme="dark"] .fmt-oci     { background: #2e1b5e; color: #c4b5fd; }
+:root[data-theme="dark"] .alert-success { background: #0d3226; color: #6ee7b7; border-color: #2d6a4f; }
+:root[data-theme="dark"] .alert-error   { background: #3b1212; color: #fca5a5; border-color: #7f1d1d; }
+:root[data-theme="dark"] .copy-url,
+:root[data-theme="dark"] .cli-hint { background: var(--bg-alt); }
