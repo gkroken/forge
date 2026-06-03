@@ -3,10 +3,14 @@ package auth
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"forge/internal/repo"
 )
+
+// UISessionCookie is the name of the HttpOnly session cookie set by the login page.
+const UISessionCookie = "forge_token"
 
 // Enforcer applies the per-repo auth policy on every /repository/ request.
 // When Store is nil, it uses AllowAll — every request is permitted, but a
@@ -123,6 +127,38 @@ func (e *Enforcer) RequireAdmin(w http.ResponseWriter, r *http.Request) bool {
 	tok, err := e.store.Verify(secret)
 	if err != nil || tok == nil {
 		http.Error(w, "invalid token", http.StatusUnauthorized)
+		return false
+	}
+	if tok.RoleFor("*") < RoleAdmin {
+		http.Error(w, "admin role required", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+// RequireAdminUI is like RequireAdmin but intended for browser UI handlers.
+// It accepts the token from an Authorization header OR from the forge_token
+// session cookie set by the login page.  On failure it redirects to the login
+// page (303) rather than returning 401, which is appropriate for browser flows.
+// Returns true if the caller may proceed.
+func (e *Enforcer) RequireAdminUI(w http.ResponseWriter, r *http.Request) bool {
+	if e.store == nil {
+		return true // eval mode: AllowAll
+	}
+	secret := bearerToken(r)
+	if secret == "" {
+		if c, err := r.Cookie(UISessionCookie); err == nil {
+			secret = c.Value
+		}
+	}
+	next := url.QueryEscape(r.URL.RequestURI())
+	if secret == "" {
+		http.Redirect(w, r, "/ui/login?next="+next, http.StatusSeeOther)
+		return false
+	}
+	tok, err := e.store.Verify(secret)
+	if err != nil || tok == nil {
+		http.Redirect(w, r, "/ui/login?error=invalid&next="+next, http.StatusSeeOther)
 		return false
 	}
 	if tok.RoleFor("*") < RoleAdmin {

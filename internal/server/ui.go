@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"forge/internal/auth"
 	"forge/internal/format"
 	"forge/internal/repo"
 )
@@ -44,9 +45,16 @@ var (
 	tmplSearch      = parseUITmpl("templates/base.html", "templates/search.html")
 	tmplAdminRepos  = parseUITmpl("templates/base.html", "templates/admin_repos.html")
 	tmplAdminForm   = parseUITmpl("templates/base.html", "templates/admin_repo_form.html")
+	tmplLogin       = parseUITmpl("templates/base.html", "templates/login.html")
 )
 
 // ── page data types ───────────────────────────────────────────────────────────
+
+type loginPage struct {
+	Title string
+	Error string
+	Next  string
+}
 
 type homePage struct {
 	Title string
@@ -90,6 +98,10 @@ func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 		s.uiHome(w, r)
 	case p == "/search":
 		s.uiSearch(w, r)
+	case p == "/login":
+		s.uiLogin(w, r)
+	case p == "/logout":
+		s.uiLogout(w, r)
 	case strings.HasPrefix(p, "/repos/"):
 		name := strings.TrimPrefix(p, "/repos/")
 		if name == "" {
@@ -230,6 +242,77 @@ func (s *Server) uiSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	render(w, tmplSearch, "base.html", data)
+}
+
+func (s *Server) uiLogin(w http.ResponseWriter, r *http.Request) {
+	next := sanitizeNext(r.URL.Query().Get("next"))
+
+	if r.Method == http.MethodPost {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad form", http.StatusBadRequest)
+			return
+		}
+		secret := r.FormValue("token")
+		if n := r.FormValue("next"); n != "" {
+			next = sanitizeNext(n)
+		}
+
+		ok := s.verifyAdminSecret(secret)
+		if !ok {
+			render(w, tmplLogin, "base.html", loginPage{
+				Title: "Sign in",
+				Error: "Invalid token or insufficient permissions.",
+				Next:  next,
+			})
+			return
+		}
+		http.SetCookie(w, &http.Cookie{
+			Name:     auth.UISessionCookie,
+			Value:    secret,
+			Path:     "/",
+			HttpOnly: true,
+			SameSite: http.SameSiteStrictMode,
+		})
+		http.Redirect(w, r, next, http.StatusSeeOther)
+		return
+	}
+
+	errMsg := ""
+	if r.URL.Query().Get("error") == "invalid" {
+		errMsg = "Invalid token or insufficient permissions."
+	}
+	render(w, tmplLogin, "base.html", loginPage{Title: "Sign in", Error: errMsg, Next: next})
+}
+
+func (s *Server) uiLogout(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     auth.UISessionCookie,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
+	http.Redirect(w, r, "/ui/", http.StatusSeeOther)
+}
+
+// verifyAdminSecret returns true if secret is a valid admin token (or if auth
+// is not enabled in eval mode).
+func (s *Server) verifyAdminSecret(secret string) bool {
+	if s.Auth == nil {
+		return true
+	}
+	tok, err := s.Auth.Verify(secret)
+	return err == nil && tok != nil && tok.RoleFor("*") >= auth.RoleAdmin
+}
+
+// sanitizeNext ensures the redirect target is a forge UI path, preventing
+// open redirects to external URLs.
+func sanitizeNext(next string) string {
+	if strings.HasPrefix(next, "/ui/") {
+		return next
+	}
+	return "/ui/admin/"
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

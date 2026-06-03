@@ -1,0 +1,20 @@
+{{define "content"}}
+<div class="login-wrap">
+  <h1>Sign in</h1>
+  {{if .Error}}
+  <div class="alert alert-error">{{.Error}}</div>
+  {{end}}
+  <form method="POST" class="login-form">
+    {{if .Next}}<input type="hidden" name="next" value="{{.Next}}">{{end}}
+    <div class="form-group">
+      <label for="f-token">API token</label>
+      <input id="f-token" type="password" name="token" autofocus required
+             placeholder="forge_…">
+      <p class="form-hint">Enter an admin API token. Tokens are created via <code>POST /api/v1/tokens</code>.</p>
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">Sign in</button>
+    </div>
+  </form>
+</div>
+{{end}}

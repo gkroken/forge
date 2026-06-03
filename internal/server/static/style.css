@@ -264,3 +264,7 @@ td a:hover { text-decoration: underline; }
 .htmx-indicator { display: none; }
 .htmx-request .htmx-indicator,
 .htmx-request.htmx-indicator { display: inline; }
+
+/* ── login page ───────────────────────────────────────────────────────── */
+.login-wrap  { max-width: 420px; margin: 3rem auto; }
+.login-form  { margin-top: 1.5rem; }

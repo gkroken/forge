@@ -66,6 +66,9 @@ func (s *Server) uiAdminHome(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) uiAdminNewRepo(w http.ResponseWriter, r *http.Request) {
+	if !s.Enforcer.RequireAdminUI(w, r) {
+		return
+	}
 	if r.Method == http.MethodPost {
 		s.processRepoForm(w, r, "", false)
 		return
@@ -80,6 +83,9 @@ func (s *Server) uiAdminNewRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) uiAdminEditRepo(w http.ResponseWriter, r *http.Request, name string) {
+	if !s.Enforcer.RequireAdminUI(w, r) {
+		return
+	}
 	rp, ok := s.Repos.Get(name)
 	if !ok {
 		http.NotFound(w, r)
@@ -100,6 +106,9 @@ func (s *Server) uiAdminEditRepo(w http.ResponseWriter, r *http.Request, name st
 }
 
 func (s *Server) uiAdminDeleteRepo(w http.ResponseWriter, r *http.Request, name string) {
+	if !s.Enforcer.RequireAdminUI(w, r) {
+		return
+	}
 	if err := s.Repos.Delete(name); err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return

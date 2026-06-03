@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"forge/internal/auth"
 	"forge/internal/blob"
 	"forge/internal/format"
 	"forge/internal/format/helm"
@@ -450,5 +451,214 @@ func TestUI_UnknownPath(t *testing.T) {
 	rw := uiGet(t, h, "/ui/completely/unknown/path")
 	if rw.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d", rw.Code)
+	}
+}
+
+// ── auth helpers ──────────────────────────────────────────────────────────────
+
+// newUIServerWithAuth creates a Server with auth enabled and returns it alongside
+// a valid admin token secret for use in auth tests.
+func newUIServerWithAuth(t *testing.T) (*Server, string) {
+	t.Helper()
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	authStore := auth.NewMetaStore(m)
+	mgr := repo.NewManager()
+	reg := format.NewRegistry()
+	reg.Register(npm.New())
+	mgr.Add(repo.Repository{Name: "npm-hosted", Format: "npm", Kind: repo.Hosted, AnonymousRead: true}) //nolint:errcheck
+
+	_, secret, _ := authStore.Create("test-admin", []auth.Grant{{Repo: "*", Role: auth.RoleAdmin}}, nil)
+	return New(mgr, reg, b, m, authStore), secret
+}
+
+// uiPostWithCookie performs a form POST with a session cookie.
+func uiPostWithCookie(t *testing.T, h http.Handler, path, cookieName, cookieVal string, form url.Values) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(&http.Cookie{Name: cookieName, Value: cookieVal})
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, r)
+	return rw
+}
+
+// uiDeleteWithCookie performs an htmx DELETE request with a session cookie.
+func uiDeleteWithCookie(t *testing.T, h http.Handler, path, cookieName, cookieVal string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodDelete, path, nil)
+	r.Header.Set("HX-Request", "true")
+	r.AddCookie(&http.Cookie{Name: cookieName, Value: cookieVal})
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, r)
+	return rw
+}
+
+// ── /ui/login ─────────────────────────────────────────────────────────────────
+
+func TestUILogin_GetForm(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/login")
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status %d", rw.Code)
+	}
+	body := rw.Body.String()
+	assertContains(t, body, `name="token"`)
+	assertContains(t, body, "Sign in")
+}
+
+func TestUILogin_InvalidToken(t *testing.T) {
+	srv, _ := newUIServerWithAuth(t)
+	h := srv.Routes()
+	rw := uiPost(t, h, "/ui/login", url.Values{"token": {"forge_badtoken"}})
+	if rw.Code != http.StatusOK {
+		t.Fatalf("expected 200 re-render, got %d", rw.Code)
+	}
+	assertContains(t, rw.Body.String(), "Invalid token")
+}
+
+func TestUILogin_ValidAdminToken_SetsCookieAndRedirects(t *testing.T) {
+	srv, secret := newUIServerWithAuth(t)
+	h := srv.Routes()
+	rw := uiPost(t, h, "/ui/login", url.Values{"token": {secret}})
+	if rw.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", rw.Code)
+	}
+	// Cookie must be set and HttpOnly
+	found := false
+	for _, c := range rw.Result().Cookies() {
+		if c.Name == auth.UISessionCookie && c.Value == secret && c.HttpOnly {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected HttpOnly forge_token cookie to be set")
+	}
+}
+
+func TestUILogin_ValidToken_RespectsNextParam(t *testing.T) {
+	srv, secret := newUIServerWithAuth(t)
+	h := srv.Routes()
+	rw := uiPost(t, h, "/ui/login", url.Values{
+		"token": {secret},
+		"next":  {"/ui/repos/npm-hosted"},
+	})
+	if rw.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", rw.Code)
+	}
+	if loc := rw.Header().Get("Location"); loc != "/ui/repos/npm-hosted" {
+		t.Errorf("expected redirect to /ui/repos/npm-hosted, got %q", loc)
+	}
+}
+
+func TestUILogin_ExternalNextRejected(t *testing.T) {
+	srv, secret := newUIServerWithAuth(t)
+	h := srv.Routes()
+	rw := uiPost(t, h, "/ui/login", url.Values{
+		"token": {secret},
+		"next":  {"https://evil.com"},
+	})
+	if rw.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", rw.Code)
+	}
+	if loc := rw.Header().Get("Location"); loc != "/ui/admin/" {
+		t.Errorf("external next not sanitised: got redirect to %q", loc)
+	}
+}
+
+// ── /ui/logout ────────────────────────────────────────────────────────────────
+
+func TestUILogout_ClearsCookieAndRedirects(t *testing.T) {
+	h := newUIServer(t).Routes()
+	r := httptest.NewRequest(http.MethodPost, "/ui/logout", nil)
+	r.AddCookie(&http.Cookie{Name: auth.UISessionCookie, Value: "forge_sometoken"})
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, r)
+	if rw.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", rw.Code)
+	}
+	cleared := false
+	for _, c := range rw.Result().Cookies() {
+		if c.Name == auth.UISessionCookie && c.MaxAge == -1 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Error("expected forge_token cookie to be cleared (MaxAge=-1)")
+	}
+}
+
+// ── U0: admin mutations require auth ─────────────────────────────────────────
+
+func TestUIAdmin_MutationsRedirectToLoginWhenUnauthenticated(t *testing.T) {
+	srv, _ := newUIServerWithAuth(t)
+	h := srv.Routes()
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		form   url.Values
+	}{
+		{"new GET", http.MethodGet, "/ui/admin/repos/new", nil},
+		{"new POST", http.MethodPost, "/ui/admin/repos/new", url.Values{"name": {"x"}, "format": {"npm"}, "kind": {"hosted"}}},
+		{"edit GET", http.MethodGet, "/ui/admin/repos/npm-hosted/edit", nil},
+		{"edit POST", http.MethodPost, "/ui/admin/repos/npm-hosted/edit", url.Values{"format": {"npm"}, "kind": {"hosted"}}},
+		{"delete", http.MethodDelete, "/ui/admin/repos/npm-hosted", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var rw *httptest.ResponseRecorder
+			if tc.method == http.MethodDelete {
+				rw = uiDelete(t, h, tc.path)
+			} else if tc.method == http.MethodPost {
+				rw = uiPost(t, h, tc.path, tc.form)
+			} else {
+				rw = uiGet(t, h, tc.path)
+			}
+			if rw.Code != http.StatusSeeOther {
+				t.Errorf("expected 303 redirect to login, got %d", rw.Code)
+			}
+			if loc := rw.Header().Get("Location"); !strings.Contains(loc, "/ui/login") {
+				t.Errorf("expected redirect to /ui/login, got %q", loc)
+			}
+		})
+	}
+}
+
+func TestUIAdmin_MutationsSucceedWithValidCookie(t *testing.T) {
+	srv, secret := newUIServerWithAuth(t)
+	h := srv.Routes()
+
+	// Create via form POST with cookie.
+	rw := uiPostWithCookie(t, h, "/ui/admin/repos/new", auth.UISessionCookie, secret, url.Values{
+		"name": {"cran-hosted"}, "format": {"cran"}, "kind": {"hosted"},
+	})
+	if rw.Code != http.StatusSeeOther {
+		t.Fatalf("create with cookie: expected 303, got %d; body: %s", rw.Code, rw.Body.String())
+	}
+	if _, ok := srv.Repos.Get("cran-hosted"); !ok {
+		t.Error("repo should have been created")
+	}
+
+	// Delete via htmx with cookie.
+	rw2 := uiDeleteWithCookie(t, h, "/ui/admin/repos/npm-hosted", auth.UISessionCookie, secret)
+	if rw2.Code != http.StatusOK {
+		t.Fatalf("delete with cookie: expected 200, got %d", rw2.Code)
+	}
+	if _, ok := srv.Repos.Get("npm-hosted"); ok {
+		t.Error("repo should have been deleted")
+	}
+}
+
+func TestUIAdmin_EvalMode_NoAuthRequired(t *testing.T) {
+	// Eval mode (nil auth): existing behaviour — no credentials needed.
+	h := newUIServer(t).Routes()
+	rw := uiPost(t, h, "/ui/admin/repos/new", url.Values{
+		"name": {"maven-hosted"}, "format": {"maven"}, "kind": {"hosted"},
+	})
+	if rw.Code != http.StatusSeeOther {
+		t.Errorf("eval mode: expected 303, got %d", rw.Code)
 	}
 }
