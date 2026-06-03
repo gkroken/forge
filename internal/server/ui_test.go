@@ -241,6 +241,41 @@ func TestUISearch_FullPageHasShell(t *testing.T) {
 	assertContains(t, body, "<nav")
 }
 
+func TestUISearch_FilterDropdownsPresent(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/search")
+	body := rw.Body.String()
+	assertContains(t, body, `name="format"`)
+	assertContains(t, body, `name="repo"`)
+	assertContains(t, body, "All formats")
+	assertContains(t, body, "All repositories")
+}
+
+func TestUISearch_FormatFilter(t *testing.T) {
+	h := newUIServer(t).Routes()
+	// lodash is npm; filtering to helm should return no results (htmx partial)
+	rw := uiGet(t, h, "/ui/search?q=lodash&format=helm", "HX-Request", "true")
+	body := rw.Body.String()
+	assertContains(t, body, "No results")
+	assertNotContains(t, body, "npm-hosted")
+}
+
+func TestUISearch_RepoFilter(t *testing.T) {
+	h := newUIServer(t).Routes()
+	// filtering to helm-hosted should hide npm-hosted results (htmx partial)
+	rw := uiGet(t, h, "/ui/search?q=lodash&repo=helm-hosted", "HX-Request", "true")
+	body := rw.Body.String()
+	assertNotContains(t, body, "npm-hosted")
+}
+
+func TestUISearch_FilterPreservedInHtmxPartial(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/search?q=lodash&format=npm", "HX-Request", "true")
+	body := rw.Body.String()
+	assertNotContains(t, body, "<!DOCTYPE html>")
+	assertContains(t, body, "lodash")
+}
+
 // ── /ui/admin/ ────────────────────────────────────────────────────────────────
 
 func TestUIAdminHome_OK(t *testing.T) {
@@ -452,6 +487,53 @@ func TestUI_UnknownPath(t *testing.T) {
 	if rw.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d", rw.Code)
 	}
+}
+
+// ── /ui/repos/{name}/{component} ─────────────────────────────────────────────
+
+func TestUIComponent_OK(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/repos/npm-hosted/lodash")
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status %d", rw.Code)
+	}
+	body := rw.Body.String()
+	assertContains(t, body, "lodash")
+	assertContains(t, body, "4.17.21")
+	assertContains(t, body, "4.17.20")
+	assertContains(t, body, "npm-hosted") // breadcrumb
+	assertContains(t, body, "/repository/npm-hosted/") // registry URL
+}
+
+func TestUIComponent_Breadcrumb(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/repos/npm-hosted/lodash")
+	body := rw.Body.String()
+	assertContains(t, body, `href="/ui/"`)
+	assertContains(t, body, `href="/ui/repos/npm-hosted"`)
+}
+
+func TestUIComponent_NotFoundRepo(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/repos/no-such-repo/anything")
+	if rw.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rw.Code)
+	}
+}
+
+func TestUIComponent_NotFoundComponent(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/repos/npm-hosted/no-such-pkg")
+	if rw.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rw.Code)
+	}
+}
+
+func TestUIRepo_ComponentLinksPresent(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/repos/npm-hosted")
+	body := rw.Body.String()
+	assertContains(t, body, `href="/ui/repos/npm-hosted/lodash"`)
 }
 
 // ── auth helpers ──────────────────────────────────────────────────────────────

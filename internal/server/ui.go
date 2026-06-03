@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -33,6 +34,7 @@ var uiFuncs = template.FuncMap{
 		}
 		return d.String()
 	},
+	"urlPathEscape": url.PathEscape,
 }
 
 func parseUITmpl(files ...string) *template.Template {
@@ -46,9 +48,18 @@ var (
 	tmplAdminRepos  = parseUITmpl("templates/base.html", "templates/admin_repos.html")
 	tmplAdminForm   = parseUITmpl("templates/base.html", "templates/admin_repo_form.html")
 	tmplLogin       = parseUITmpl("templates/base.html", "templates/login.html")
+	tmplComponent   = parseUITmpl("templates/base.html", "templates/component.html")
 )
 
 // ── page data types ───────────────────────────────────────────────────────────
+
+type componentPage struct {
+	Title    string
+	Repo     repo.Repository
+	Name     string
+	Versions []string
+	RepoURL  string
+}
 
 type loginPage struct {
 	Title string
@@ -80,9 +91,13 @@ type repoPage struct {
 }
 
 type searchPage struct {
-	Title   string
-	Query   string
-	Results []searchResult
+	Title      string
+	Query      string
+	Format     string
+	Repo       string
+	AllFormats []string
+	AllRepos   []string
+	Results    []searchResult
 }
 
 // ── dispatcher ────────────────────────────────────────────────────────────────
@@ -103,12 +118,19 @@ func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 	case p == "/logout":
 		s.uiLogout(w, r)
 	case strings.HasPrefix(p, "/repos/"):
-		name := strings.TrimPrefix(p, "/repos/")
-		if name == "" {
+		rest := strings.TrimPrefix(p, "/repos/")
+		if rest == "" {
 			http.Redirect(w, r, "/ui/", http.StatusFound)
 			return
 		}
-		s.uiRepo(w, r, name)
+		// /repos/{name} → repo detail; /repos/{name}/{component} → component detail.
+		// strings.Cut splits on the first "/" so scoped names like @scope/pkg are preserved.
+		repoName, component, hasComponent := strings.Cut(rest, "/")
+		if hasComponent && component != "" {
+			s.uiComponent(w, r, repoName, component)
+		} else {
+			s.uiRepo(w, r, repoName)
+		}
 	case p == "/admin" || strings.HasPrefix(p, "/admin/"):
 		s.handleUIAdmin(w, r, strings.TrimPrefix(p, "/admin"))
 	default:
@@ -196,6 +218,51 @@ func (s *Server) uiRepo(w http.ResponseWriter, r *http.Request, name string) {
 	render(w, tmplRepo, "base.html", data)
 }
 
+func (s *Server) uiComponent(w http.ResponseWriter, r *http.Request, repoName, component string) {
+	rp, ok := s.Repos.Get(repoName)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	h, ok := s.Handlers.For(rp.Format)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	b, ok := h.(format.Browsable)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	entries, err := b.BrowseRepo(s.browseCtx(rp))
+	if err != nil {
+		http.Error(w, "browse error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var versions []string
+	for _, e := range entries {
+		if e.Name == component {
+			versions = e.Versions
+			break
+		}
+	}
+	if versions == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	render(w, tmplComponent, "base.html", componentPage{
+		Title:    component + " — " + repoName,
+		Repo:     rp,
+		Name:     component,
+		Versions: versions,
+		RepoURL:  publicBase(r) + "/repository/" + repoName + "/",
+	})
+}
+
 func (s *Server) uiSearch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	filterFormat := r.URL.Query().Get("format")
@@ -236,7 +303,23 @@ func (s *Server) uiSearch(w http.ResponseWriter, r *http.Request) {
 		results = []searchResult{}
 	}
 
-	data := searchPage{Title: "Search", Query: q, Results: results}
+	// Build repo list for the dropdown (all repos that support browsing).
+	var allRepos []string
+	for _, rp := range s.Repos.All() {
+		if _, ok := s.Handlers.For(rp.Format); ok {
+			allRepos = append(allRepos, rp.Name)
+		}
+	}
+
+	data := searchPage{
+		Title:      "Search",
+		Query:      q,
+		Format:     filterFormat,
+		Repo:       filterRepo,
+		AllFormats: allFormats,
+		AllRepos:   allRepos,
+		Results:    results,
+	}
 	if r.Header.Get("HX-Request") == "true" {
 		render(w, tmplSearch, "search-results", data)
 		return
@@ -316,6 +399,18 @@ func sanitizeNext(next string) string {
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+
+// publicBase returns the scheme+host for the current request, respecting
+// X-Forwarded-Proto set by reverse proxies.
+func publicBase(r *http.Request) string {
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+		return proto + "://" + r.Host
+	}
+	if r.TLS != nil {
+		return "https://" + r.Host
+	}
+	return "http://" + r.Host
+}
 
 // browseCtx builds a format.Context suitable for BrowseRepo calls (no Sub/Queue).
 func (s *Server) browseCtx(rp repo.Repository) *format.Context {

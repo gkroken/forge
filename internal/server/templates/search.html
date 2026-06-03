@@ -1,6 +1,6 @@
 {{define "content"}}
 <h1>Search</h1>
-<div class="filter-bar">
+<div class="search-filters">
   <input type="search"
          name="q"
          value="{{.Query}}"
@@ -10,8 +10,28 @@
          hx-get="/ui/search"
          hx-trigger="input changed delay:300ms, search"
          hx-target="#search-results"
-         hx-include="[name='q']">
-  <span class="htmx-indicator" style="font-size:12px;color:#888;margin-left:.5rem">searching…</span>
+         hx-include="[name='q'],[name='format'],[name='repo']">
+  <select name="format"
+          hx-get="/ui/search"
+          hx-trigger="change"
+          hx-target="#search-results"
+          hx-include="[name='q'],[name='format'],[name='repo']">
+    <option value="">All formats</option>
+    {{range .AllFormats}}
+    <option value="{{.}}"{{if eq . $.Format}} selected{{end}}>{{.}}</option>
+    {{end}}
+  </select>
+  <select name="repo"
+          hx-get="/ui/search"
+          hx-trigger="change"
+          hx-target="#search-results"
+          hx-include="[name='q'],[name='format'],[name='repo']">
+    <option value="">All repositories</option>
+    {{range .AllRepos}}
+    <option value="{{.}}"{{if eq . $.Repo}} selected{{end}}>{{.}}</option>
+    {{end}}
+  </select>
+  <span class="htmx-indicator" style="font-size:12px;color:#888">searching…</span>
 </div>
 
 <div id="search-results">

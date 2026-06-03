@@ -42,7 +42,7 @@
     <tbody>
       {{range .Components}}
       <tr>
-        <td class="col-name">{{.Name}}</td>
+        <td class="col-name"><a href="/ui/repos/{{$.Repo.Name}}/{{urlPathEscape .Name}}">{{.Name}}</a></td>
         <td class="col-latest">{{if .Versions}}{{index .Versions 0}}{{end}}</td>
         <td class="col-count">
           {{$n := len .Versions}}

@@ -1,0 +1,55 @@
+{{define "content"}}
+<div class="breadcrumb">
+  <a href="/ui/">Repositories</a><span>/</span>
+  <a href="/ui/repos/{{.Repo.Name}}">{{.Repo.Name}}</a><span>/</span>{{.Name}}
+</div>
+
+<h1>{{.Name}}</h1>
+<div class="repo-meta">
+  <span class="badge fmt-{{.Repo.Format}}">{{.Repo.Format}}</span>
+  <span class="badge kind-{{.Repo.Kind}}">{{.Repo.Kind}}</span>
+  {{if .Repo.Upstream}}<span class="upstream">↑ {{.Repo.Upstream}}</span>{{end}}
+</div>
+
+<div class="component-detail">
+  <section class="detail-section">
+    <h2>Versions</h2>
+    {{if .Versions}}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Version</th></tr>
+        </thead>
+        <tbody>
+          {{range .Versions}}
+          <tr><td class="col-latest">{{.}}</td></tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    <div class="empty">No versions found.</div>
+    {{end}}
+  </section>
+
+  <section class="detail-section">
+    <h2>Registry URL</h2>
+    <p class="form-hint">Use this URL when configuring your package manager.</p>
+    <div class="copy-row">
+      <code class="copy-url" id="registry-url">{{.RepoURL}}</code>
+      <button class="btn btn-sm" onclick="copyURL()">Copy</button>
+    </div>
+  </section>
+</div>
+
+<script>
+function copyURL() {
+  var t = document.getElementById('registry-url').textContent;
+  navigator.clipboard.writeText(t).catch(function() {
+    var s = window.getSelection(), r = document.createRange();
+    r.selectNode(document.getElementById('registry-url'));
+    s.removeAllRanges(); s.addRange(r);
+  });
+}
+</script>
+{{end}}

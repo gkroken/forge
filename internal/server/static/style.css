@@ -265,6 +265,65 @@ td a:hover { text-decoration: underline; }
 .htmx-request .htmx-indicator,
 .htmx-request.htmx-indicator { display: inline; }
 
+/* ── component detail ────────────────────────────────────────────────── */
+.component-detail { display: flex; flex-direction: column; gap: 2rem; }
+.detail-section h2 { margin-bottom: .75rem; }
+.copy-row {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  flex-wrap: wrap;
+  margin-top: .5rem;
+}
+.copy-url {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+  word-break: break-all;
+}
+
+/* ── search filters ──────────────────────────────────────────────────── */
+.search-filters {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+.search-filters input[type=search] {
+  flex: 1;
+  min-width: 180px;
+  max-width: 380px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  outline: none;
+  background: var(--bg);
+  color: var(--text);
+}
+.search-filters input[type=search]:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(13,110,253,.1);
+}
+.search-filters select {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  cursor: pointer;
+}
+.search-filters select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(13,110,253,.1);
+}
+
 /* ── login page ───────────────────────────────────────────────────────── */
 .login-wrap  { max-width: 420px; margin: 3rem auto; }
 .login-form  { margin-top: 1.5rem; }
