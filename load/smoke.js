@@ -92,10 +92,10 @@ export function metadataGet(data) {
 }
 
 // concurrentPublish: each VU publishes one uniquely-named package.
-// vu.idInScenario is 0-indexed and scenario-local, so packages are
+// vu.idInScenario is 1-indexed and scenario-local (k6 v2+), so packages are
 // smoke-concurrent-1 … smoke-concurrent-50 regardless of global VU allocation.
 export function concurrentPublish() {
-  const name = `smoke-concurrent-${vu.idInScenario + 1}`;
+  const name = `smoke-concurrent-${vu.idInScenario}`;
   const res = publishNPM(name, '1.0.0');
   check(res, { 'publish ok': (r) => r.status === 201 || r.status === 200 });
 }

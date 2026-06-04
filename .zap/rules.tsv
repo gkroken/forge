@@ -21,6 +21,13 @@
 #   cacheable. Suppressed as expected behaviour, not a vulnerability.
 10049	IGNORE	artifact registry responses are intentionally cacheable
 #
+# Rule 90004: Cross-Origin-Resource-Policy Header Missing or Invalid
+#   The server middleware already sets CORP: same-site on every response.
+#   ZAP stable (2025-06) updated this rule and now reports a false positive on
+#   the root endpoint. Re-evaluate if the ZAP image is pinned or if the header
+#   value changes.
+90004	IGNORE	CORP same-site is set by server middleware; ZAP stable false positive
+#
 # Rule 90005: Sec-Fetch-Dest Header is Missing
 #   ZAP notes that forge's own HTTP requests lack Sec-Fetch-Dest, which is a
 #   browser-only header. Forge is a server-side service; this is not applicable.
