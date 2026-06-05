@@ -495,6 +495,16 @@ func (h *Handler) deletePkg(w http.ResponseWriter, c *format.Context) {
 
 // serveBinary dispatches requests under /bin/.
 func (h *Handler) serveBinary(w http.ResponseWriter, r *http.Request, c *format.Context) {
+	// Platform enumeration: GET bin/{platform}/contrib/ — no rver or file segment.
+	if r.Method == http.MethodGet {
+		if rest, ok := strings.CutPrefix(c.Sub, "bin/"); ok {
+			if idx := strings.Index(rest, "/contrib/"); idx >= 0 && rest[idx+len("/contrib/"):] == "" {
+				h.servePlatformVersions(w, c, rest[:idx])
+				return
+			}
+		}
+	}
+
 	platform, rver, file, ok := parseBinPath(c.Sub)
 	if !ok {
 		http.Error(w, "invalid binary path", http.StatusNotFound)
@@ -511,6 +521,12 @@ func (h *Handler) serveBinary(w http.ResponseWriter, r *http.Request, c *format.
 		h.publishBin(w, r, c, platform, rver, file)
 	case r.Method == http.MethodGet && (strings.HasSuffix(file, ".zip") || strings.HasSuffix(file, ".tgz")):
 		h.downloadBin(w, c)
+	case r.Method == http.MethodDelete && (strings.HasSuffix(file, ".zip") || strings.HasSuffix(file, ".tgz")):
+		if c.Repo.Kind != repo.Hosted {
+			http.Error(w, "cannot delete from non-hosted repository", http.StatusMethodNotAllowed)
+			return
+		}
+		h.deleteBin(w, c, platform, rver, file)
 	default:
 		http.Error(w, "unsupported binary request", http.StatusNotFound)
 	}
@@ -574,6 +590,47 @@ func (h *Handler) downloadBin(w http.ResponseWriter, c *format.Context) {
 		w.Header().Set("Content-Type", "application/gzip")
 	}
 	io.Copy(w, rc)
+}
+
+// deleteBin removes a binary package blob and its meta record.
+func (h *Handler) deleteBin(w http.ResponseWriter, c *format.Context, platform, rver, file string) {
+	key := c.Key(c.Sub)
+	if _, exists, _ := c.Blob.Stat(key); !exists {
+		http.NotFound(w, nil)
+		return
+	}
+	if err := c.Blob.Delete(key); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if pkg, ver, ok := parsePkgFilename(file); ok {
+		c.Meta.Delete(h.binNS(c, platform, rver), pkg+"_"+ver) //nolint:errcheck
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// servePlatformVersions lists the R versions that have at least one binary
+// package published for the given platform. Returns a newline-delimited plain
+// text list; always 200 (empty body when nothing is published).
+func (h *Handler) servePlatformVersions(w http.ResponseWriter, c *format.Context, platform string) {
+	prefix := c.Repo.Name + "/bin/" + platform + "/contrib/"
+	keys, _ := c.Blob.List(prefix)
+	seen := map[string]bool{}
+	for _, key := range keys {
+		rel := strings.TrimPrefix(key, prefix)
+		if rver, _, ok := strings.Cut(rel, "/"); ok && rver != "" {
+			seen[rver] = true
+		}
+	}
+	versions := make([]string, 0, len(seen))
+	for v := range seen {
+		versions = append(versions, v)
+	}
+	sort.Strings(versions)
+	w.Header().Set("Content-Type", "text/plain")
+	if len(versions) > 0 {
+		w.Write([]byte(strings.Join(versions, "\n") + "\n")) //nolint:errcheck
+	}
 }
 
 // binNS returns the meta namespace for binary packages of a given platform+rver.
@@ -657,15 +714,46 @@ func parseDescriptionFromZip(data []byte) (pkgRecord, error) {
 	return pkgRecord{}, fmt.Errorf("DESCRIPTION not found in zip")
 }
 
-// BrowseRepo implements format.Browsable. allPkgRecords already handles groups.
+// BrowseRepo implements format.Browsable. Source and binary packages are merged
+// by package name; versions are deduplicated so a package published for multiple
+// platforms appears once per version.
 func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
-	recs := h.allPkgRecords(c)
-	byName := map[string][]string{}
-	for _, r := range recs {
-		byName[r.Package] = append(byName[r.Package], r.Version)
+	// Source packages (group-aware via allPkgRecords).
+	byName := map[string]map[string]bool{}
+	for _, r := range h.allPkgRecords(c) {
+		if byName[r.Package] == nil {
+			byName[r.Package] = map[string]bool{}
+		}
+		byName[r.Package][r.Version] = true
 	}
+
+	// Binary packages — scan blobs under bin/. Group repos delegate to members
+	// and hold no own blobs, so this is a no-op for them (B3 adds group binary).
+	if c.Repo.Kind != repo.Group {
+		prefix := c.Repo.Name + "/bin/"
+		for _, key := range func() []string { ks, _ := c.Blob.List(prefix); return ks }() {
+			sub := strings.TrimPrefix(key, c.Repo.Name+"/")
+			_, _, file, ok := parseBinPath(sub)
+			if !ok {
+				continue
+			}
+			pkg, ver, ok := parsePkgFilename(file)
+			if !ok {
+				continue
+			}
+			if byName[pkg] == nil {
+				byName[pkg] = map[string]bool{}
+			}
+			byName[pkg][ver] = true
+		}
+	}
+
 	entries := make([]format.BrowseEntry, 0, len(byName))
-	for name, versions := range byName {
+	for name, versionSet := range byName {
+		versions := make([]string, 0, len(versionSet))
+		for v := range versionSet {
+			versions = append(versions, v)
+		}
 		sort.Sort(sort.Reverse(sort.StringSlice(versions)))
 		entries = append(entries, format.BrowseEntry{Name: name, Versions: versions})
 	}

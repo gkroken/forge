@@ -616,6 +616,162 @@ func makeWindowsBinPkg(t *testing.T, pkg, version string) []byte {
 	return buf.Bytes()
 }
 
+// ── B2a: DELETE for binary packages ──────────────────────────────────────────
+
+func TestBinaryTree_Delete(t *testing.T) {
+	c := newCRANCtx(t)
+	pkg := makeWindowsBinPkg(t, "delpkg", "1.0.0")
+
+	rw := cranServe(c, http.MethodPut, "bin/windows/contrib/4.4/delpkg_1.0.0.zip", bytes.NewReader(pkg))
+	if rw.Code != http.StatusCreated {
+		t.Fatalf("PUT: got %d", rw.Code)
+	}
+
+	// Verify appears in PACKAGES before deletion.
+	rw = cranServe(c, http.MethodGet, "bin/windows/contrib/4.4/PACKAGES", nil)
+	if !strings.Contains(rw.Body.String(), "Package: delpkg") {
+		t.Fatal("package not in PACKAGES before delete")
+	}
+
+	// DELETE → 204.
+	rw = cranServe(c, http.MethodDelete, "bin/windows/contrib/4.4/delpkg_1.0.0.zip", nil)
+	if rw.Code != http.StatusNoContent {
+		t.Fatalf("DELETE: got %d, body: %s", rw.Code, rw.Body)
+	}
+
+	// GET blob after delete → 404.
+	rw = cranServe(c, http.MethodGet, "bin/windows/contrib/4.4/delpkg_1.0.0.zip", nil)
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("GET after delete: got %d, want 404", rw.Code)
+	}
+
+	// PACKAGES no longer lists it.
+	rw = cranServe(c, http.MethodGet, "bin/windows/contrib/4.4/PACKAGES", nil)
+	if strings.Contains(rw.Body.String(), "Package: delpkg") {
+		t.Fatal("deleted package still appears in PACKAGES")
+	}
+}
+
+func TestBinaryTree_Delete_NotFound(t *testing.T) {
+	c := newCRANCtx(t)
+	rw := cranServe(c, http.MethodDelete, "bin/windows/contrib/4.4/absent_1.0.0.zip", nil)
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("DELETE absent: got %d, want 404", rw.Code)
+	}
+}
+
+func TestBinaryTree_Delete_NonHostedRejected(t *testing.T) {
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	c := &format.Context{
+		Repo: repo.Repository{Name: "cran-proxy", Format: "cran", Kind: repo.Proxy},
+		Blob: b, Meta: m,
+	}
+	rw := cranServe(c, http.MethodDelete, "bin/windows/contrib/4.4/pkg_1.0.0.zip", nil)
+	if rw.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rw.Code)
+	}
+}
+
+// ── B2b: BrowseRepo includes binary packages ──────────────────────────────────
+
+func TestBrowseRepo_IncludesBinaryPackages(t *testing.T) {
+	c := newCRANCtx(t)
+
+	// Source package: mypkg 1.0.0.
+	cranServe(c, http.MethodPut, "src/contrib/mypkg_1.0.0.tar.gz", bytes.NewReader(makeCRANPkg(t, "mypkg", "1.0.0")))
+	// Windows binary: mypkg 2.0.0 (different version — should be a separate entry under same name).
+	cranServe(c, http.MethodPut, "bin/windows/contrib/4.4/mypkg_2.0.0.zip", bytes.NewReader(makeWindowsBinPkg(t, "mypkg", "2.0.0")))
+	// macOS binary: separate package.
+	cranServe(c, http.MethodPut, "bin/macosx/x86_64/contrib/4.4/otherpkg_1.0.0.tgz", bytes.NewReader(makeMacOSBinPkg(t, "otherpkg", "1.0.0")))
+
+	entries, err := New().BrowseRepo(c)
+	if err != nil {
+		t.Fatalf("BrowseRepo: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d: %v", len(entries), entries)
+	}
+
+	var mypkg format.BrowseEntry
+	for _, e := range entries {
+		if e.Name == "mypkg" {
+			mypkg = e
+		}
+	}
+	if mypkg.Name == "" {
+		t.Fatal("mypkg missing from BrowseRepo entries")
+	}
+	if len(mypkg.Versions) != 2 {
+		t.Fatalf("mypkg: expected 2 versions (1.0.0 source + 2.0.0 binary), got %v", mypkg.Versions)
+	}
+}
+
+func TestBrowseRepo_BinaryVersionDeduplication(t *testing.T) {
+	c := newCRANCtx(t)
+
+	// Same package+version published for both Windows and macOS.
+	cranServe(c, http.MethodPut, "bin/windows/contrib/4.4/shared_1.0.0.zip", bytes.NewReader(makeWindowsBinPkg(t, "shared", "1.0.0")))
+	cranServe(c, http.MethodPut, "bin/macosx/x86_64/contrib/4.4/shared_1.0.0.tgz", bytes.NewReader(makeMacOSBinPkg(t, "shared", "1.0.0")))
+
+	entries, err := New().BrowseRepo(c)
+	if err != nil {
+		t.Fatalf("BrowseRepo: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry after dedup, got %d: %v", len(entries), entries)
+	}
+	if len(entries[0].Versions) != 1 {
+		t.Fatalf("expected 1 version after dedup, got %v", entries[0].Versions)
+	}
+}
+
+// ── B2c: Platform enumeration ─────────────────────────────────────────────────
+
+func TestBinaryTree_PlatformVersions(t *testing.T) {
+	c := newCRANCtx(t)
+
+	cranServe(c, http.MethodPut, "bin/windows/contrib/4.3/mypkg_1.0.0.zip", bytes.NewReader(makeWindowsBinPkg(t, "mypkg", "1.0.0")))
+	cranServe(c, http.MethodPut, "bin/windows/contrib/4.4/mypkg_1.0.0.zip", bytes.NewReader(makeWindowsBinPkg(t, "mypkg", "1.0.0")))
+
+	rw := cranServe(c, http.MethodGet, "bin/windows/contrib/", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("platform versions: got %d", rw.Code)
+	}
+	if ct := rw.Header().Get("Content-Type"); ct != "text/plain" {
+		t.Fatalf("Content-Type: got %q, want text/plain", ct)
+	}
+	body := rw.Body.String()
+	if !strings.Contains(body, "4.3") || !strings.Contains(body, "4.4") {
+		t.Fatalf("expected both R versions in response, got: %q", body)
+	}
+}
+
+func TestBinaryTree_PlatformVersions_Empty(t *testing.T) {
+	c := newCRANCtx(t)
+	rw := cranServe(c, http.MethodGet, "bin/windows/contrib/", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("empty platform versions: got %d, want 200", rw.Code)
+	}
+	if rw.Body.Len() != 0 {
+		t.Fatalf("expected empty body for no packages, got: %q", rw.Body)
+	}
+}
+
+func TestBinaryTree_PlatformVersions_MultiSegmentPlatform(t *testing.T) {
+	c := newCRANCtx(t)
+	cranServe(c, http.MethodPut, "bin/macosx/x86_64/contrib/4.4/macpkg_1.0.0.tgz", bytes.NewReader(makeMacOSBinPkg(t, "macpkg", "1.0.0")))
+
+	rw := cranServe(c, http.MethodGet, "bin/macosx/x86_64/contrib/", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("multi-segment platform: got %d", rw.Code)
+	}
+	if !strings.Contains(rw.Body.String(), "4.4") {
+		t.Fatalf("expected 4.4 in response, got: %q", rw.Body)
+	}
+}
+
 // makeMacOSBinPkg creates a minimal macOS binary package (.tgz) with a
 // DESCRIPTION file including Built and OS_type for an arm64 macOS target.
 func makeMacOSBinPkg(t *testing.T, pkg, version string) []byte {
