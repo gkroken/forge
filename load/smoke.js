@@ -21,7 +21,7 @@
 import http from 'k6/http';
 import { check } from 'k6';
 import { b64encode } from 'k6/encoding';
-import { vu } from 'k6/execution';
+import { vu, scenario } from 'k6/execution';
 
 const BASE = __ENV.FORGE_BASE || 'http://localhost:8080';
 const NPM = `${BASE}/repository/npm-hosted`;
@@ -92,10 +92,11 @@ export function metadataGet(data) {
 }
 
 // concurrentPublish: each VU publishes one uniquely-named package.
-// vu.idInScenario is 1-indexed and scenario-local (k6 v2+), so packages are
-// smoke-concurrent-1 … smoke-concurrent-50 regardless of global VU allocation.
+// scenario.iterationInInstance is 0-indexed and unique per iteration dispatched
+// from the shared pool — unaffected by global VU ID allocation across scenarios.
+// Adding 1 gives smoke-concurrent-1 … smoke-concurrent-50 matching indexVerify.
 export function concurrentPublish() {
-  const name = `smoke-concurrent-${vu.idInScenario}`;
+  const name = `smoke-concurrent-${scenario.iterationInInstance + 1}`;
   const res = publishNPM(name, '1.0.0');
   check(res, { 'publish ok': (r) => r.status === 201 || r.status === 200 });
 }
