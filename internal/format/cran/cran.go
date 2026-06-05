@@ -534,7 +534,12 @@ func (h *Handler) serveBinary(w http.ResponseWriter, r *http.Request, c *format.
 
 // serveBinIndex generates and serves the PACKAGES index for one platform+rver.
 func (h *Handler) serveBinIndex(w http.ResponseWriter, c *format.Context, platform, rver, file string) {
-	recs := h.binPkgRecords(c, platform, rver)
+	var recs []pkgRecord
+	if c.Repo.Kind == repo.Group {
+		recs = h.groupBinPkgRecords(c, platform, rver)
+	} else {
+		recs = h.binPkgRecords(c, platform, rver)
+	}
 	switch file {
 	case "PACKAGES":
 		w.Header().Set("Content-Type", "text/plain")
@@ -576,10 +581,19 @@ func (h *Handler) publishBin(w http.ResponseWriter, r *http.Request, c *format.C
 	fmt.Fprintf(w, "stored binary %s %s (%s/%s)\n", rec.Package, rec.Version, platform, rver)
 }
 
-// downloadBin serves a stored binary package.
+// downloadBin serves a stored binary package, proxying on cache-miss for proxy
+// repos and fanning out across members for group repos.
 func (h *Handler) downloadBin(w http.ResponseWriter, c *format.Context) {
+	if c.Repo.Kind == repo.Group {
+		h.groupDownloadBin(w, c)
+		return
+	}
 	rc, err := c.Blob.Get(c.Key(c.Sub))
 	if err != nil {
+		if c.Repo.Kind == repo.Proxy {
+			h.proxy(w, c)
+			return
+		}
 		http.NotFound(w, nil)
 		return
 	}
@@ -590,6 +604,63 @@ func (h *Handler) downloadBin(w http.ResponseWriter, c *format.Context) {
 		w.Header().Set("Content-Type", "application/gzip")
 	}
 	io.Copy(w, rc)
+}
+
+// groupDownloadBin fans out a binary download across group members, trying
+// proxy members' upstreams on blob-cache miss (mirrors groupDownload).
+func (h *Handler) groupDownloadBin(w http.ResponseWriter, c *format.Context) {
+	ct := "application/gzip"
+	if strings.HasSuffix(c.Sub, ".zip") {
+		ct = "application/zip"
+	}
+	for _, name := range c.Repo.Members {
+		mc, ok := c.MemberCtx(name)
+		if !ok {
+			continue
+		}
+		if rc, err := mc.Blob.Get(mc.Key(c.Sub)); err == nil {
+			defer rc.Close()
+			w.Header().Set("Content-Type", ct)
+			io.Copy(w, rc)
+			return
+		}
+		if mc.Repo.Kind == repo.Proxy {
+			url := strings.TrimRight(mc.Repo.Upstream, "/") + "/" + c.Sub
+			resp, err := mc.HTTP.Get(url)
+			if err == nil && resp.StatusCode == http.StatusOK {
+				defer resp.Body.Close()
+				var buf bytes.Buffer
+				tee := io.TeeReader(resp.Body, &buf)
+				w.Header().Set("Content-Type", ct)
+				io.Copy(w, tee)
+				mc.Blob.Put(mc.Key(c.Sub), &buf) //nolint:errcheck
+				return
+			}
+		}
+	}
+	http.NotFound(w, nil)
+}
+
+// groupBinPkgRecords merges binary package records from all group members for
+// a given platform+rver, deduplicating by Package_Version (first member wins).
+func (h *Handler) groupBinPkgRecords(c *format.Context, platform, rver string) []pkgRecord {
+	seen := map[string]bool{}
+	var all []pkgRecord
+	for _, name := range c.Repo.Members {
+		mc, ok := c.MemberCtx(name)
+		if !ok {
+			continue
+		}
+		for _, rec := range h.binPkgRecords(mc, platform, rver) {
+			key := rec.Package + "_" + rec.Version
+			if !seen[key] {
+				seen[key] = true
+				all = append(all, rec)
+			}
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].Package < all[j].Package })
+	return all
 }
 
 // deleteBin removes a binary package blob and its meta record.
@@ -727,12 +798,12 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 		byName[r.Package][r.Version] = true
 	}
 
-	// Binary packages — scan blobs under bin/. Group repos delegate to members
-	// and hold no own blobs, so this is a no-op for them (B3 adds group binary).
-	if c.Repo.Kind != repo.Group {
-		prefix := c.Repo.Name + "/bin/"
-		for _, key := range func() []string { ks, _ := c.Blob.List(prefix); return ks }() {
-			sub := strings.TrimPrefix(key, c.Repo.Name+"/")
+	// Binary packages — scan blobs under bin/. For group repos, scan each member.
+	scanBinBlobs := func(repoName string) {
+		prefix := repoName + "/bin/"
+		keys, _ := c.Blob.List(prefix)
+		for _, key := range keys {
+			sub := strings.TrimPrefix(key, repoName+"/")
 			_, _, file, ok := parseBinPath(sub)
 			if !ok {
 				continue
@@ -746,6 +817,15 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 			}
 			byName[pkg][ver] = true
 		}
+	}
+	if c.Repo.Kind == repo.Group {
+		for _, name := range c.Repo.Members {
+			if mc, ok := c.MemberCtx(name); ok {
+				scanBinBlobs(mc.Repo.Name)
+			}
+		}
+	} else {
+		scanBinBlobs(c.Repo.Name)
 	}
 
 	entries := make([]format.BrowseEntry, 0, len(byName))

@@ -8,7 +8,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -450,4 +452,57 @@ func makeBinaryConformanceTgz(t *testing.T, pkg, ver string) []byte {
 	tw.Close()
 	gz.Close()
 	return buf.Bytes()
+}
+
+// TestCRAN_Binary_Proxy verifies that forge proxies a binary package GET from
+// its upstream and caches the result so a second request does not hit upstream.
+// Runs on Linux only (HTTP layer; no R install needed). Uses a local mock
+// upstream rather than live CRAN so the test is hermetic and fast.
+func TestCRAN_Binary_Proxy(t *testing.T) {
+	pkg := makeBinaryConformanceZip(t, "proxypkg", "1.0.0")
+
+	var hits int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "application/zip")
+		w.Write(pkg) //nolint:errcheck
+	}))
+	defer upstream.Close()
+
+	srv := conformance.StartForgeEnv(t, []string{"CRAN_PROXY_UPSTREAM=" + upstream.URL})
+	pkgURL := srv.Repo("cran-proxy") + "bin/windows/contrib/4.4/proxypkg_1.0.0.zip"
+
+	// First GET — cache miss; upstream must be called exactly once.
+	resp, err := http.Get(pkgURL) //nolint:noctx
+	if err != nil {
+		t.Fatalf("first GET: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("first GET: got %d", resp.StatusCode)
+	}
+	if !bytes.Equal(body, pkg) {
+		t.Fatal("first GET: body differs from upstream fixture")
+	}
+	if hits != 1 {
+		t.Fatalf("expected 1 upstream hit after cache miss, got %d", hits)
+	}
+
+	// Second GET — cache hit; upstream must NOT be called again.
+	resp, err = http.Get(pkgURL) //nolint:noctx
+	if err != nil {
+		t.Fatalf("second GET: %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("second GET: got %d", resp.StatusCode)
+	}
+	if !bytes.Equal(body, pkg) {
+		t.Fatal("second GET: body differs")
+	}
+	if hits != 1 {
+		t.Fatalf("expected upstream hit count to remain 1 after cache hit, got %d", hits)
+	}
 }

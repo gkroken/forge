@@ -616,6 +616,174 @@ func makeWindowsBinPkg(t *testing.T, pkg, version string) []byte {
 	return buf.Bytes()
 }
 
+// ── B3a: Proxy binary trees ───────────────────────────────────────────────────
+
+func TestBinaryTree_Proxy_Download(t *testing.T) {
+	pkg := makeWindowsBinPkg(t, "proxypkg", "1.0.0")
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/zip")
+		w.Write(pkg)
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	c := &format.Context{
+		Repo: repo.Repository{
+			Name: "cran-proxy", Format: "cran", Kind: repo.Proxy,
+			Upstream: upstream.URL,
+		},
+		Blob: b, Meta: m,
+		HTTP: upstream.Client(),
+	}
+
+	sub := "bin/windows/contrib/4.4/proxypkg_1.0.0.zip"
+
+	// First GET — cache miss, fetches from upstream.
+	rw := cranServe(c, http.MethodGet, sub, nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("cache miss: got %d, body: %s", rw.Code, rw.Body)
+	}
+	if !bytes.Equal(rw.Body.Bytes(), pkg) {
+		t.Fatal("cache miss: body differs from upstream")
+	}
+
+	// Second GET — served from blob cache (upstream can be taken offline).
+	upstream.Close()
+	rw = cranServe(c, http.MethodGet, sub, nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("cache hit: got %d", rw.Code)
+	}
+	if !bytes.Equal(rw.Body.Bytes(), pkg) {
+		t.Fatal("cache hit: body differs")
+	}
+}
+
+func TestBinaryTree_Proxy_PutRejected(t *testing.T) {
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	c := &format.Context{
+		Repo: repo.Repository{Name: "cran-proxy", Format: "cran", Kind: repo.Proxy},
+		Blob: b, Meta: m,
+	}
+	rw := cranServe(c, http.MethodPut, "bin/windows/contrib/4.4/pkg_1.0.0.zip",
+		bytes.NewReader(makeWindowsBinPkg(t, "pkg", "1.0.0")))
+	if rw.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rw.Code)
+	}
+}
+
+// ── B3b: Group binary fan-out ─────────────────────────────────────────────────
+
+func newGroupBinCtx(t *testing.T) (cA, cB, cGroup *format.Context) {
+	t.Helper()
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+
+	mgr := repo.NewManager()
+	for _, r := range []repo.Repository{
+		{Name: "bin-a", Format: "cran", Kind: repo.Hosted},
+		{Name: "bin-b", Format: "cran", Kind: repo.Hosted},
+		{Name: "bin-group", Format: "cran", Kind: repo.Group, Members: []string{"bin-a", "bin-b"}},
+	} {
+		if err := mgr.Add(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	repoA, _ := mgr.Get("bin-a")
+	repoB, _ := mgr.Get("bin-b")
+	repoGroup, _ := mgr.Get("bin-group")
+	cA = &format.Context{Repo: repoA, Blob: b, Meta: m, Repos: mgr}
+	cB = &format.Context{Repo: repoB, Blob: b, Meta: m, Repos: mgr}
+	cGroup = &format.Context{Repo: repoGroup, Blob: b, Meta: m, Repos: mgr}
+	return
+}
+
+func TestBinaryTree_Group_PackagesMerge(t *testing.T) {
+	cA, cB, cGroup := newGroupBinCtx(t)
+
+	cranServe(cA, http.MethodPut, "bin/windows/contrib/4.4/pkgA_1.0.0.zip", bytes.NewReader(makeWindowsBinPkg(t, "pkgA", "1.0.0")))
+	cranServe(cB, http.MethodPut, "bin/windows/contrib/4.4/pkgB_1.0.0.zip", bytes.NewReader(makeWindowsBinPkg(t, "pkgB", "1.0.0")))
+
+	rw := cranServe(cGroup, http.MethodGet, "bin/windows/contrib/4.4/PACKAGES", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("group PACKAGES: got %d", rw.Code)
+	}
+	body := rw.Body.String()
+	if !strings.Contains(body, "Package: pkgA") || !strings.Contains(body, "Package: pkgB") {
+		t.Fatalf("group PACKAGES missing packages: %s", body)
+	}
+}
+
+func TestBinaryTree_Group_PackagesDeduplication(t *testing.T) {
+	cA, cB, cGroup := newGroupBinCtx(t)
+
+	// Same package+version in both members — should appear once.
+	cranServe(cA, http.MethodPut, "bin/windows/contrib/4.4/shared_1.0.0.zip", bytes.NewReader(makeWindowsBinPkg(t, "shared", "1.0.0")))
+	cranServe(cB, http.MethodPut, "bin/windows/contrib/4.4/shared_1.0.0.zip", bytes.NewReader(makeWindowsBinPkg(t, "shared", "1.0.0")))
+
+	rw := cranServe(cGroup, http.MethodGet, "bin/windows/contrib/4.4/PACKAGES", nil)
+	body := rw.Body.String()
+	if count := strings.Count(body, "Package: shared"); count != 1 {
+		t.Fatalf("expected shared to appear once in group PACKAGES, got %d: %s", count, body)
+	}
+}
+
+func TestBinaryTree_Group_Download(t *testing.T) {
+	cA, cB, cGroup := newGroupBinCtx(t)
+
+	pkgA := makeWindowsBinPkg(t, "pkgA", "1.0.0")
+	pkgB := makeWindowsBinPkg(t, "pkgB", "1.0.0")
+	cranServe(cA, http.MethodPut, "bin/windows/contrib/4.4/pkgA_1.0.0.zip", bytes.NewReader(pkgA))
+	cranServe(cB, http.MethodPut, "bin/windows/contrib/4.4/pkgB_1.0.0.zip", bytes.NewReader(pkgB))
+
+	// Group serves pkgA from member A.
+	rw := cranServe(cGroup, http.MethodGet, "bin/windows/contrib/4.4/pkgA_1.0.0.zip", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("group download pkgA: got %d", rw.Code)
+	}
+	if !bytes.Equal(rw.Body.Bytes(), pkgA) {
+		t.Fatal("group download pkgA: body mismatch")
+	}
+
+	// Group serves pkgB from member B.
+	rw = cranServe(cGroup, http.MethodGet, "bin/windows/contrib/4.4/pkgB_1.0.0.zip", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("group download pkgB: got %d", rw.Code)
+	}
+	if !bytes.Equal(rw.Body.Bytes(), pkgB) {
+		t.Fatal("group download pkgB: body mismatch")
+	}
+
+	// Package absent in all members → 404.
+	rw = cranServe(cGroup, http.MethodGet, "bin/windows/contrib/4.4/absent_1.0.0.zip", nil)
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("group download absent: got %d, want 404", rw.Code)
+	}
+}
+
+func TestBrowseRepo_Group_IncludesBinaryPackages(t *testing.T) {
+	cA, cB, cGroup := newGroupBinCtx(t)
+
+	cranServe(cA, http.MethodPut, "bin/windows/contrib/4.4/pkgA_1.0.0.zip", bytes.NewReader(makeWindowsBinPkg(t, "pkgA", "1.0.0")))
+	cranServe(cB, http.MethodPut, "bin/windows/contrib/4.4/pkgB_1.0.0.zip", bytes.NewReader(makeWindowsBinPkg(t, "pkgB", "1.0.0")))
+
+	entries, err := New().BrowseRepo(cGroup)
+	if err != nil {
+		t.Fatalf("BrowseRepo group: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d: %v", len(entries), entries)
+	}
+	names := entries[0].Name + "," + entries[1].Name
+	if !strings.Contains(names, "pkgA") || !strings.Contains(names, "pkgB") {
+		t.Fatalf("expected pkgA and pkgB, got: %s", names)
+	}
+}
+
 // ── B2a: DELETE for binary packages ──────────────────────────────────────────
 
 func TestBinaryTree_Delete(t *testing.T) {

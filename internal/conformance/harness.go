@@ -57,7 +57,12 @@ func (s *Server) ContainerRepo(name string) string {
 // StartForge builds the forge binary from source, starts it with filesystem
 // backends on a free port, and returns a Server. The process is killed when t
 // finishes.
-func StartForge(t *testing.T) *Server {
+func StartForge(t *testing.T) *Server { return StartForgeEnv(t, nil) }
+
+// StartForgeEnv is like StartForge but appends extraEnv entries (KEY=VALUE) to
+// the forge subprocess environment. Use this to override repo upstreams in tests
+// that need a controllable mock server (e.g. CRAN_PROXY_UPSTREAM=http://...).
+func StartForgeEnv(t *testing.T, extraEnv []string) *Server {
 	t.Helper()
 
 	tmpDir := t.TempDir()
@@ -78,6 +83,9 @@ func StartForge(t *testing.T) *Server {
 		"-addr", fmt.Sprintf(":%d", port),
 		"-data", filepath.Join(tmpDir, "data"),
 	)
+	if len(extraEnv) > 0 {
+		srv.Env = append(os.Environ(), extraEnv...)
+	}
 	if err := srv.Start(); err != nil {
 		t.Fatalf("conformance: start forge: %v", err)
 	}

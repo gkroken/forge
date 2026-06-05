@@ -133,7 +133,7 @@ func main() {
 		{Name: "npm-proxy", Format: "npm", Kind: repo.Proxy,
 			Upstream: "https://registry.npmjs.org", AnonymousRead: true},
 		{Name: "cran-proxy", Format: "cran", Kind: repo.Proxy,
-			Upstream: "https://cran.r-project.org", AnonymousRead: true},
+			Upstream: cranProxyUpstream(), AnonymousRead: true},
 		// OCI / Docker
 		{Name: "docker-hosted", Format: "oci", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
 		// Group: merged read-only views (hosted first so internal artifacts shadow upstream).
@@ -204,6 +204,15 @@ func must(err error) {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
 	}
+}
+
+// cranProxyUpstream returns the upstream URL for cran-proxy. CRAN_PROXY_UPSTREAM
+// overrides the default so conformance tests can point at a local mock server.
+func cranProxyUpstream() string {
+	if u := os.Getenv("CRAN_PROXY_UPSTREAM"); u != "" {
+		return u
+	}
+	return "https://cran.r-project.org"
 }
 
 // redactDSN strips the password from a postgres DSN for safe logging.
