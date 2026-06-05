@@ -1,0 +1,6 @@
+Package: macpkg
+Version: 2.0.0
+License: MIT
+Built: R 4.4.0; aarch64-apple-darwin20; 2024-01-15 00:00:00 UTC; unix
+OS_type: unix
+

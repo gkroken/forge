@@ -1,0 +1,7 @@
+Package: winpkg
+Version: 1.0.0
+License: MIT
+Built: R 4.4.0; x86_64-w64-mingw32; 2024-01-15 00:00:00 UTC; windows
+Archs: x64
+OS_type: windows
+

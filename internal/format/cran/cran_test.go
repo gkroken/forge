@@ -150,9 +150,9 @@ func TestBuildPackagesRDS_StructuralBytes(t *testing.T) {
 	if got := readBEInt32(raw, 14); got != 528 {
 		t.Errorf("type tag at 14: got %d (0x%x), want 528 (STRSXP|HAS_ATTR)", got, got)
 	}
-	// Offset 18: element count = 2 rows * 5 cols = 10
-	if got := readBEInt32(raw, 18); got != 10 {
-		t.Errorf("element count at 18: got %d, want 10", got)
+	// Offset 18: element count = 2 rows * 8 cols = 16
+	if got := readBEInt32(raw, 18); got != 16 {
+		t.Errorf("element count at 18: got %d, want 16 (2 rows * 8 cols)", got)
 	}
 }
 
@@ -203,6 +203,42 @@ func TestBuildPackagesRDS_Golden(t *testing.T) {
 	// Golden-test the decompressed bytes (deterministic, no timestamps).
 	raw := decompressRDS(t, buildPackagesRDS(recs))
 	golden.Assert(t, raw, "packages_two_pkgs.rds")
+}
+
+func TestBuildPackages_Binary_Windows_Golden(t *testing.T) {
+	recs := []pkgRecord{
+		{
+			Package: "winpkg", Version: "1.0.0", License: "MIT",
+			Built:  "R 4.4.0; x86_64-w64-mingw32; 2024-01-15 00:00:00 UTC; windows",
+			Archs:  "x64",
+			OStype: "windows",
+		},
+	}
+	golden.Assert(t, buildPackages(recs), "bin_windows_packages.txt")
+}
+
+func TestBuildPackages_Binary_macOS_Golden(t *testing.T) {
+	recs := []pkgRecord{
+		{
+			Package: "macpkg", Version: "2.0.0", License: "MIT",
+			Built:  "R 4.4.0; aarch64-apple-darwin20; 2024-01-15 00:00:00 UTC; unix",
+			OStype: "unix",
+		},
+	}
+	golden.Assert(t, buildPackages(recs), "bin_macos_packages.txt")
+}
+
+func TestBuildPackagesRDS_Binary_Windows_Golden(t *testing.T) {
+	recs := []pkgRecord{
+		{
+			Package: "winpkg", Version: "1.0.0", License: "MIT",
+			Built:  "R 4.4.0; x86_64-w64-mingw32; 2024-01-15 00:00:00 UTC; windows",
+			Archs:  "x64",
+			OStype: "windows",
+		},
+	}
+	raw := decompressRDS(t, buildPackagesRDS(recs))
+	golden.Assert(t, raw, "bin_windows_packages.rds")
 }
 
 // --- HTTP-level tests -------------------------------------------------------
@@ -446,6 +482,9 @@ func TestParseDescriptionFromZip(t *testing.T) {
 	if rec.Package != "ziptest" || rec.Version != "2.0.0" {
 		t.Fatalf("unexpected record: %+v", rec)
 	}
+	if rec.Built == "" || rec.Archs == "" || rec.OStype == "" {
+		t.Fatalf("binary fields not parsed: Built=%q Archs=%q OStype=%q", rec.Built, rec.Archs, rec.OStype)
+	}
 }
 
 func TestBinaryTree_WindowsPublishAndIndex(t *testing.T) {
@@ -491,8 +530,8 @@ func TestBinaryTree_WindowsPublishAndIndex(t *testing.T) {
 func TestBinaryTree_macOSTgzPublishAndIndex(t *testing.T) {
 	c := newCRANCtx(t)
 
-	// PUT a macOS binary package (.tgz — same format as source but binary content).
-	pkg := makeCRANPkg(t, "macpkg", "1.0.0")
+	// PUT a macOS binary package (.tgz with Built/OS_type in DESCRIPTION).
+	pkg := makeMacOSBinPkg(t, "macpkg", "1.0.0")
 	rw := cranServe(c, http.MethodPut, "bin/macosx/x86_64/contrib/4.4/macpkg_1.0.0.tgz", bytes.NewReader(pkg))
 	if rw.Code != http.StatusCreated {
 		t.Fatalf("PUT macOS binary: got %d, body: %s", rw.Code, rw.Body)
@@ -559,14 +598,40 @@ func TestBinaryTree_InvalidPath(t *testing.T) {
 }
 
 // makeWindowsBinPkg creates a minimal Windows binary package (.zip) with a
-// DESCRIPTION file, matching the structure R expects for binary package installs.
+// DESCRIPTION file including Built, Archs, and OS_type, matching what a real
+// Windows binary package published to CRAN contains.
 func makeWindowsBinPkg(t *testing.T, pkg, version string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
-	desc := fmt.Sprintf("Package: %s\nVersion: %s\nLicense: MIT\n", pkg, version)
+	desc := fmt.Sprintf(
+		"Package: %s\nVersion: %s\nLicense: MIT\n"+
+			"Built: R 4.4.0; x86_64-w64-mingw32; 2024-01-15 00:00:00 UTC; windows\n"+
+			"Archs: x64\nOS_type: windows\n",
+		pkg, version,
+	)
 	f, _ := zw.Create(pkg + "/DESCRIPTION")
 	f.Write([]byte(desc))
 	zw.Close()
+	return buf.Bytes()
+}
+
+// makeMacOSBinPkg creates a minimal macOS binary package (.tgz) with a
+// DESCRIPTION file including Built and OS_type for an arm64 macOS target.
+func makeMacOSBinPkg(t *testing.T, pkg, version string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	desc := fmt.Sprintf(
+		"Package: %s\nVersion: %s\nLicense: MIT\n"+
+			"Built: R 4.4.0; aarch64-apple-darwin20; 2024-01-15 00:00:00 UTC; unix\n"+
+			"OS_type: unix\n",
+		pkg, version,
+	)
+	tw.WriteHeader(&tar.Header{Name: pkg + "/DESCRIPTION", Mode: 0644, Size: int64(len(desc))})
+	tw.Write([]byte(desc))
+	tw.Close()
+	gz.Close()
 	return buf.Bytes()
 }

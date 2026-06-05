@@ -57,6 +57,9 @@ type pkgRecord struct {
 	Depends    string    `json:"depends,omitempty"`
 	Imports    string    `json:"imports,omitempty"`
 	License    string    `json:"license,omitempty"`
+	Built      string    `json:"built,omitempty"`
+	Archs      string    `json:"archs,omitempty"`
+	OStype     string    `json:"ostype,omitempty"`
 	UploadedAt time.Time `json:"uploadedAt,omitempty"`
 }
 
@@ -260,6 +263,15 @@ func buildPackages(recs []pkgRecord) []byte {
 		if rec.License != "" {
 			fmt.Fprintf(&b, "License: %s\n", rec.License)
 		}
+		if rec.Built != "" {
+			fmt.Fprintf(&b, "Built: %s\n", rec.Built)
+		}
+		if rec.Archs != "" {
+			fmt.Fprintf(&b, "Archs: %s\n", rec.Archs)
+		}
+		if rec.OStype != "" {
+			fmt.Fprintf(&b, "OS_type: %s\n", rec.OStype)
+		}
 		b.WriteString("\n")
 	}
 	return []byte(b.String())
@@ -289,7 +301,7 @@ func buildPackages(recs []pkgRecord) []byte {
 //	    NILVALUE_SXP           end of pairlist
 
 func buildPackagesRDS(recs []pkgRecord) []byte {
-	cols := []string{"Package", "Version", "Depends", "Imports", "License"}
+	cols := []string{"Package", "Version", "Depends", "Imports", "License", "Built", "Archs", "OS_type"}
 	nrows, ncols := len(recs), len(cols)
 
 	var w rdsWriter
@@ -362,6 +374,12 @@ func pkgField(rec pkgRecord, col string) string {
 		return rec.Imports
 	case "License":
 		return rec.License
+	case "Built":
+		return rec.Built
+	case "Archs":
+		return rec.Archs
+	case "OS_type":
+		return rec.OStype
 	}
 	return ""
 }
@@ -447,6 +465,9 @@ func scanDescription(data []byte) pkgRecord {
 		Package: fields["Package"], Version: fields["Version"],
 		Depends: fields["Depends"], Imports: fields["Imports"],
 		License: fields["License"],
+		Built:   fields["Built"],
+		Archs:   fields["Archs"],
+		OStype:  fields["OS_type"],
 	}
 }
 
