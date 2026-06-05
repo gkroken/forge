@@ -62,6 +62,10 @@ func StartForge(t *testing.T) *Server {
 
 	tmpDir := t.TempDir()
 	binary := filepath.Join(tmpDir, "forge")
+	// On Windows, go build appends .exe when the output path has no extension.
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
 
 	buildCmd := exec.Command("go", "build", "-o", binary, "./cmd/forge") // #nosec G204 -- test harness only
 	buildCmd.Dir = projectRoot()
@@ -165,6 +169,33 @@ func freePort(t *testing.T) int {
 	port := l.Addr().(*net.TCPAddr).Port
 	l.Close()
 	return port
+}
+
+// RunHostRscript runs an R script using the host Rscript binary. Used for
+// platform-specific binary conformance tests that cannot run inside a Linux
+// Docker container (Windows .zip install, macOS .tgz install). If Rscript is
+// not on PATH the test is skipped rather than failed.
+func RunHostRscript(t *testing.T, script string) {
+	t.Helper()
+	rscript, err := exec.LookPath("Rscript")
+	if err != nil {
+		t.Skip("Rscript not found on PATH")
+	}
+	f, err := os.CreateTemp("", "forge-rscript-*.R")
+	if err != nil {
+		t.Fatalf("RunHostRscript: create temp: %v", err)
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.WriteString(script); err != nil {
+		t.Fatalf("RunHostRscript: write: %v", err)
+	}
+	f.Close()
+	cmd := exec.Command(rscript, "--vanilla", f.Name()) // #nosec G204 -- test harness only
+	out, err := cmd.CombinedOutput()
+	t.Logf("Rscript output:\n%s", out)
+	if err != nil {
+		t.Fatalf("Rscript exited non-zero: %v", err)
+	}
 }
 
 func waitForReady(t *testing.T, url string, timeout time.Duration) {

@@ -3,7 +3,15 @@
 package conformance_test
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
+	"compress/gzip"
 	"fmt"
+	"net/http"
+	"os/exec"
+	"runtime"
+	"strings"
 	"testing"
 
 	"forge/internal/conformance"
@@ -176,4 +184,270 @@ Rscript -e "
   cat('CRAN proxy download OK\n')
 "
 `, repo))
+}
+
+// ── Binary conformance tests ───────────────────────────────────────────────
+
+// TestCRAN_Binary_PACKAGES_Fields publishes a Windows binary package and
+// verifies that Built, Archs, and OS_type appear in all three PACKAGES index
+// formats served by forge. Runs on any OS with Docker.
+func TestCRAN_Binary_PACKAGES_Fields(t *testing.T) {
+	srv := conformance.StartForge(t)
+	repo := srv.ContainerRepo("cran-hosted")
+
+	conformance.RunScript(t, "python:3-slim", fmt.Sprintf(`
+set -e
+python3 - <<'PYEOF'
+import urllib.request, zipfile, io, gzip, struct
+
+REPO = "%s"
+
+pkg, ver = "wintestpkg", "1.0.0"
+desc = (
+    f"Package: {pkg}\nVersion: {ver}\nLicense: MIT\n"
+    "Built: R 4.4.0; x86_64-w64-mingw32; 2024-01-15 00:00:00 UTC; windows\n"
+    "Archs: x64\nOS_type: windows\n"
+).encode()
+ns = b"exportPattern('.')\n"
+
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, "w") as zf:
+    zf.writestr(f"{pkg}/DESCRIPTION", desc)
+    zf.writestr(f"{pkg}/NAMESPACE", ns)
+zip_data = buf.getvalue()
+
+req = urllib.request.Request(
+    REPO + f"bin/windows/contrib/4.4/{pkg}_{ver}.zip",
+    data=zip_data, method="PUT")
+with urllib.request.urlopen(req) as r:
+    assert r.status == 201, f"PUT failed: {r.status}"
+
+# PACKAGES (plain text)
+with urllib.request.urlopen(REPO + "bin/windows/contrib/4.4/PACKAGES") as r:
+    pkgs = r.read().decode()
+assert "Package: wintestpkg" in pkgs, f"Package missing: {pkgs}"
+assert "Built: R 4.4.0" in pkgs, f"Built missing: {pkgs}"
+assert "Archs: x64" in pkgs, f"Archs missing: {pkgs}"
+assert "OS_type: windows" in pkgs, f"OS_type missing: {pkgs}"
+print("PACKAGES: OK")
+
+# PACKAGES.gz
+with urllib.request.urlopen(REPO + "bin/windows/contrib/4.4/PACKAGES.gz") as r:
+    gz = gzip.decompress(r.read()).decode()
+assert "Built: R 4.4.0" in gz, f"Built missing from PACKAGES.gz"
+assert "Archs: x64" in gz, f"Archs missing from PACKAGES.gz"
+print("PACKAGES.gz: OK")
+
+# PACKAGES.rds — XDR header: element count at byte 18 must be 1 pkg × 8 cols = 8
+with urllib.request.urlopen(REPO + "bin/windows/contrib/4.4/PACKAGES.rds") as r:
+    rds = gzip.decompress(r.read())
+assert rds[:2] == b"X\n", f"bad RDS marker: {rds[:2]}"
+count = struct.unpack(">i", rds[18:22])[0]
+assert count == 8, f"expected 8 elements (1 pkg x 8 cols), got {count}"
+print(f"PACKAGES.rds: {count} elements (1x8): OK")
+
+print("All binary PACKAGES field checks passed")
+PYEOF
+`, repo))
+}
+
+// TestCRAN_Binary_PlatformIsolation publishes a Windows binary and a macOS
+// binary to the same hosted repo and verifies neither appears in the other's
+// PACKAGES index. Runs on any OS with Docker.
+func TestCRAN_Binary_PlatformIsolation(t *testing.T) {
+	srv := conformance.StartForge(t)
+	repo := srv.ContainerRepo("cran-hosted")
+
+	conformance.RunScript(t, "python:3-slim", fmt.Sprintf(`
+set -e
+python3 - <<'PYEOF'
+import urllib.request, zipfile, tarfile, io, gzip
+
+REPO = "%s"
+
+def put(url, data):
+    req = urllib.request.Request(url, data=data, method="PUT")
+    with urllib.request.urlopen(req) as r:
+        assert r.status == 201, f"PUT {url} => {r.status}"
+
+def get_text(url):
+    with urllib.request.urlopen(url) as r:
+        return r.read().decode()
+
+def make_zip(pkg, ver):
+    desc = (f"Package: {pkg}\nVersion: {ver}\nLicense: MIT\nOS_type: windows\n"
+            "Built: R 4.4.0; x86_64-w64-mingw32; 2024-01-15 00:00:00 UTC; windows\n"
+            "Archs: x64\n").encode()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(f"{pkg}/DESCRIPTION", desc)
+        zf.writestr(f"{pkg}/NAMESPACE", b"exportPattern('.')\n")
+    return buf.getvalue()
+
+def make_tgz(pkg, ver):
+    desc = (f"Package: {pkg}\nVersion: {ver}\nLicense: MIT\nOS_type: unix\n"
+            "Built: R 4.4.0; aarch64-apple-darwin20; 2024-01-15 00:00:00 UTC; unix\n").encode()
+    buf = io.BytesIO()
+    with gzip.GzipFile(fileobj=buf, mode="wb", mtime=0) as gz:
+        with tarfile.open(fileobj=gz, mode="w") as tf:
+            ti = tarfile.TarInfo(f"{pkg}/DESCRIPTION")
+            ti.size = len(desc)
+            tf.addfile(ti, io.BytesIO(desc))
+    return buf.getvalue()
+
+put(REPO + "bin/windows/contrib/4.4/winonly_1.0.0.zip", make_zip("winonly", "1.0.0"))
+put(REPO + "bin/macosx/big-sur-arm64/contrib/4.4/maconly_1.0.0.tgz", make_tgz("maconly", "1.0.0"))
+
+win = get_text(REPO + "bin/windows/contrib/4.4/PACKAGES")
+mac = get_text(REPO + "bin/macosx/big-sur-arm64/contrib/4.4/PACKAGES")
+
+assert "winonly" in win,     f"winonly missing from Windows PACKAGES"
+assert "maconly" not in win, f"maconly leaked into Windows PACKAGES:\n{win}"
+assert "maconly" in mac,     f"maconly missing from macOS PACKAGES"
+assert "winonly" not in mac, f"winonly leaked into macOS PACKAGES:\n{mac}"
+print("Platform isolation: OK")
+PYEOF
+`, repo))
+}
+
+// TestCRAN_Binary_Windows_PublishInstall publishes a minimal pure-R Windows
+// binary package to forge and installs it with install.packages(type="win.binary").
+// Skipped on non-Windows platforms.
+func TestCRAN_Binary_Windows_PublishInstall(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows-only binary install test")
+	}
+
+	srv := conformance.StartForge(t)
+	repo := srv.Repo("cran-hosted")
+
+	pkg, ver := "wintestpkg", "1.0.0"
+	zipData := makeBinaryConformanceZip(t, pkg, ver)
+
+	req, _ := http.NewRequest(http.MethodPut,
+		repo+"bin/windows/contrib/4.4/"+pkg+"_"+ver+".zip",
+		bytes.NewReader(zipData))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PUT Windows binary: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("PUT Windows binary: got %d", resp.StatusCode)
+	}
+
+	conformance.RunHostRscript(t, fmt.Sprintf(`
+repo <- "%s"
+lib  <- tempfile("rlib")
+dir.create(lib, recursive = TRUE)
+install.packages("wintestpkg",
+  repos = repo, type = "win.binary", lib = lib, quiet = FALSE)
+stopifnot(file.exists(file.path(lib, "wintestpkg", "DESCRIPTION")))
+cat("wintestpkg installed OK\n")
+`, repo))
+}
+
+// TestCRAN_Binary_macOS_PublishInstall publishes a minimal macOS binary package
+// to the platform path that the host R instance expects, then installs it with
+// install.packages(type="binary"). Skipped on non-macOS platforms.
+func TestCRAN_Binary_macOS_PublishInstall(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS-only binary install test")
+	}
+
+	rscript, err := exec.LookPath("Rscript")
+	if err != nil {
+		t.Skip("Rscript not found on PATH")
+	}
+
+	srv := conformance.StartForge(t)
+	repo := srv.Repo("cran-hosted")
+
+	// Ask R which binary contrib URL it would use for this platform/version.
+	// contrib.url is pure string manipulation — no network call is made.
+	out, err := exec.Command(rscript, "--vanilla", "-e", // #nosec G204 -- test harness only
+		fmt.Sprintf(`cat(contrib.url("%s", type="binary"))`, repo)).Output()
+	if err != nil {
+		t.Fatalf("query R contrib.url: %v", err)
+	}
+	// out = "http://localhost:PORT/repository/cran-hosted/bin/macosx/big-sur-arm64/contrib/4.4"
+	contribURL := strings.TrimSpace(string(out))
+	binPath := strings.TrimPrefix(contribURL, repo)
+	// binPath = "bin/macosx/big-sur-arm64/contrib/4.4"
+
+	pkg, ver := "mactestpkg", "1.0.0"
+	tgzData := makeBinaryConformanceTgz(t, pkg, ver)
+
+	req, _ := http.NewRequest(http.MethodPut,
+		repo+binPath+"/"+pkg+"_"+ver+".tgz",
+		bytes.NewReader(tgzData))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PUT macOS binary: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("PUT macOS binary: got %d", resp.StatusCode)
+	}
+
+	conformance.RunHostRscript(t, fmt.Sprintf(`
+repo <- "%s"
+lib  <- tempfile("rlib")
+dir.create(lib, recursive = TRUE)
+install.packages("mactestpkg",
+  repos = repo, type = "binary", lib = lib, quiet = FALSE)
+stopifnot(file.exists(file.path(lib, "mactestpkg", "DESCRIPTION")))
+cat("mactestpkg installed OK\n")
+`, repo))
+}
+
+// makeBinaryConformanceZip builds a minimal pure-R Windows binary .zip with
+// DESCRIPTION, NAMESPACE, and a trivial R file.
+func makeBinaryConformanceZip(t *testing.T, pkg, ver string) []byte {
+	t.Helper()
+	desc := fmt.Sprintf(
+		"Package: %s\nVersion: %s\nLicense: MIT\n"+
+			"Built: R 4.4.0; x86_64-w64-mingw32; 2024-01-15 00:00:00 UTC; windows\n"+
+			"Archs: x64\nOS_type: windows\n",
+		pkg, ver)
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for name, content := range map[string]string{
+		pkg + "/DESCRIPTION":        desc,
+		pkg + "/NAMESPACE":          "exportPattern('.')\n",
+		pkg + "/R/" + pkg + ".R":   fmt.Sprintf("hello <- function() invisible(NULL)\n"),
+	} {
+		f, _ := zw.Create(name)
+		f.Write([]byte(content)) //nolint:errcheck
+	}
+	zw.Close()
+	return buf.Bytes()
+}
+
+// makeBinaryConformanceTgz builds a minimal macOS binary .tgz with DESCRIPTION,
+// NAMESPACE, and a trivial R file. The Built field uses arm64-apple-darwin20
+// which is compatible with any arm64 macOS runner.
+func makeBinaryConformanceTgz(t *testing.T, pkg, ver string) []byte {
+	t.Helper()
+	desc := fmt.Sprintf(
+		"Package: %s\nVersion: %s\nLicense: MIT\n"+
+			"Built: R 4.4.0; aarch64-apple-darwin20; 2024-01-15 00:00:00 UTC; unix\n"+
+			"OS_type: unix\n",
+		pkg, ver)
+	files := map[string]string{
+		pkg + "/DESCRIPTION":      desc,
+		pkg + "/NAMESPACE":        "exportPattern('.')\n",
+		pkg + "/R/" + pkg + ".R": "hello <- function() invisible(NULL)\n",
+	}
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for name, content := range files {
+		b := []byte(content)
+		tw.WriteHeader(&tar.Header{Name: name, Mode: 0644, Size: int64(len(b))}) //nolint:errcheck
+		tw.Write(b)                                                                //nolint:errcheck
+	}
+	tw.Close()
+	gz.Close()
+	return buf.Bytes()
 }
