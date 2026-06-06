@@ -50,15 +50,16 @@ func (h *Handler) Format() string { return "cran" }
 func (h *Handler) ns(c *format.Context) string { return c.Repo.Name + "+cran" }
 
 type pkgRecord struct {
-	Package    string    `json:"package"`
-	Version    string    `json:"version"`
-	Depends    string    `json:"depends,omitempty"`
-	Imports    string    `json:"imports,omitempty"`
-	License    string    `json:"license,omitempty"`
-	Built      string    `json:"built,omitempty"`
-	Archs      string    `json:"archs,omitempty"`
-	OStype     string    `json:"ostype,omitempty"`
-	UploadedAt time.Time `json:"uploadedAt,omitempty"`
+	Package          string    `json:"package"`
+	Version          string    `json:"version"`
+	Depends          string    `json:"depends,omitempty"`
+	Imports          string    `json:"imports,omitempty"`
+	License          string    `json:"license,omitempty"`
+	NeedsCompilation string    `json:"needsCompilation,omitempty"`
+	Built            string    `json:"built,omitempty"`
+	Archs            string    `json:"archs,omitempty"`
+	OStype           string    `json:"ostype,omitempty"`
+	UploadedAt       time.Time `json:"uploadedAt,omitempty"`
 }
 
 func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Context) {
@@ -296,11 +297,12 @@ func parsePackagesFile(data []byte) []pkgRecord {
 	flush := func() {
 		if fields["Package"] != "" {
 			recs = append(recs, pkgRecord{
-				Package: fields["Package"],
-				Version: fields["Version"],
-				Depends: fields["Depends"],
-				Imports: fields["Imports"],
-				License: fields["License"],
+				Package:          fields["Package"],
+				Version:          fields["Version"],
+				Depends:          fields["Depends"],
+				Imports:          fields["Imports"],
+				License:          fields["License"],
+				NeedsCompilation: fields["NeedsCompilation"],
 			})
 		}
 		fields = map[string]string{}
@@ -341,6 +343,9 @@ func buildPackages(recs []pkgRecord) []byte {
 		}
 		if rec.License != "" {
 			fmt.Fprintf(&b, "License: %s\n", rec.License)
+		}
+		if rec.NeedsCompilation != "" {
+			fmt.Fprintf(&b, "NeedsCompilation: %s\n", rec.NeedsCompilation)
 		}
 		if rec.Built != "" {
 			fmt.Fprintf(&b, "Built: %s\n", rec.Built)
@@ -543,10 +548,11 @@ func scanDescription(data []byte) pkgRecord {
 	return pkgRecord{
 		Package: fields["Package"], Version: fields["Version"],
 		Depends: fields["Depends"], Imports: fields["Imports"],
-		License: fields["License"],
-		Built:   fields["Built"],
-		Archs:   fields["Archs"],
-		OStype:  fields["OS_type"],
+		License:          fields["License"],
+		NeedsCompilation: fields["NeedsCompilation"],
+		Built:            fields["Built"],
+		Archs:            fields["Archs"],
+		OStype:           fields["OS_type"],
 	}
 }
 
