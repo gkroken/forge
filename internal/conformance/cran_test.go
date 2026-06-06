@@ -242,13 +242,13 @@ assert "Built: R 4.4.0" in gz, f"Built missing from PACKAGES.gz"
 assert "Archs: x64" in gz, f"Archs missing from PACKAGES.gz"
 print("PACKAGES.gz: OK")
 
-# PACKAGES.rds — XDR header: element count at byte 18 must be 1 pkg × 8 cols = 8
+# PACKAGES.rds — XDR header: element count at byte 18 must be 1 pkg × 9 cols = 9
 with urllib.request.urlopen(REPO + "bin/windows/contrib/4.4/PACKAGES.rds") as r:
     rds = gzip.decompress(r.read())
 assert rds[:2] == b"X\n", f"bad RDS marker: {rds[:2]}"
 count = struct.unpack(">i", rds[18:22])[0]
-assert count == 8, f"expected 8 elements (1 pkg x 8 cols), got {count}"
-print(f"PACKAGES.rds: {count} elements (1x8): OK")
+assert count == 9, f"expected 9 elements (1 pkg x 9 cols), got {count}"
+print(f"PACKAGES.rds: {count} elements (1x9): OK")
 
 print("All binary PACKAGES field checks passed")
 PYEOF
