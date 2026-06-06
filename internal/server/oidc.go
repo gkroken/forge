@@ -44,7 +44,7 @@ func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 	nonce := randomHex(16)
 
 	cookieVal := signOIDCState(s.oidcKey, state, nonce)
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure set via isSecureContext; HttpOnly+SameSiteLax already present
 		Name:     oidcStateCookie,
 		Value:    cookieVal,
 		Path:     "/auth/oidc/",
@@ -87,7 +87,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Clear the state cookie immediately — it's single-use.
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure set via isSecureContext; HttpOnly+SameSiteLax already present
 		Name:     oidcStateCookie,
 		Value:    "",
 		Path:     "/auth/oidc/",
@@ -126,7 +126,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	slog.Info("audit", "audit", true, "event", "oidc.login",
 		"token_id", tok.ID, "subject", info.Subject, "email", info.Email)
 
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure set via isSecureContext; HttpOnly+SameSiteStrict already present
 		Name:     auth.UISessionCookie,
 		Value:    secret,
 		Path:     "/",
