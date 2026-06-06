@@ -231,9 +231,9 @@ func TestBuildPackagesRDS_StructuralBytes(t *testing.T) {
 	if got := readBEInt32(raw, 14); got != 528 {
 		t.Errorf("type tag at 14: got %d (0x%x), want 528 (STRSXP|HAS_ATTR)", got, got)
 	}
-	// Offset 18: element count = 2 rows * 8 cols = 16
-	if got := readBEInt32(raw, 18); got != 16 {
-		t.Errorf("element count at 18: got %d, want 16 (2 rows * 8 cols)", got)
+	// Offset 18: element count = 2 rows * 9 cols = 18
+	if got := readBEInt32(raw, 18); got != 18 {
+		t.Errorf("element count at 18: got %d, want 18 (2 rows * 9 cols)", got)
 	}
 }
 

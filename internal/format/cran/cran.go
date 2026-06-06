@@ -385,7 +385,7 @@ func buildPackages(recs []pkgRecord) []byte {
 //	    NILVALUE_SXP           end of pairlist
 
 func buildPackagesRDS(recs []pkgRecord) []byte {
-	cols := []string{"Package", "Version", "Depends", "Imports", "License", "Built", "Archs", "OS_type"}
+	cols := []string{"Package", "Version", "Depends", "Imports", "License", "NeedsCompilation", "Built", "Archs", "OS_type"}
 	nrows, ncols := len(recs), len(cols)
 
 	var w rdsWriter
@@ -458,6 +458,8 @@ func pkgField(rec pkgRecord, col string) string {
 		return rec.Imports
 	case "License":
 		return rec.License
+	case "NeedsCompilation":
+		return rec.NeedsCompilation
 	case "Built":
 		return rec.Built
 	case "Archs":
