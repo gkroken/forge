@@ -28,6 +28,7 @@ import (
 	"forge/internal/format/oci"
 	"forge/internal/meta"
 	"forge/internal/obs"
+	"forge/internal/oidc"
 	"forge/internal/queue"
 	"forge/internal/repo"
 	"forge/internal/server"
@@ -170,12 +171,26 @@ func main() {
 		slog.Info("queue: in-memory (eval mode)")
 	}
 
+	forgeSrv := server.New(mgr, reg, blobStore, metaStore, authStore).
+		WithMetrics(metrics, promReg).
+		WithQueue(workerCtx, q)
+
+	if oidcCfg, err := oidc.FromEnv(); err != nil {
+		slog.Error("oidc: invalid configuration", "err", err)
+		os.Exit(1)
+	} else if oidcCfg != nil {
+		oidcProvider, err := oidc.New(context.Background(), *oidcCfg)
+		if err != nil {
+			slog.Error("oidc: provider discovery failed", "err", err)
+			os.Exit(1)
+		}
+		forgeSrv = forgeSrv.WithOIDC(oidcProvider)
+		slog.Info("oidc: configured", "issuer", oidcCfg.Issuer)
+	}
+
 	srv := &http.Server{
-		Addr: *addr,
-		Handler: server.New(mgr, reg, blobStore, metaStore, authStore).
-			WithMetrics(metrics, promReg).
-			WithQueue(workerCtx, q).
-			Routes(),
+		Addr:    *addr,
+		Handler: forgeSrv.Routes(),
 	}
 
 	quit := make(chan os.Signal, 1)

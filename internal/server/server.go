@@ -10,6 +10,7 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,6 +28,7 @@ import (
 	"forge/internal/indexer"
 	"forge/internal/meta"
 	"forge/internal/obs"
+	"forge/internal/oidc"
 	"forge/internal/queue"
 	"forge/internal/repo"
 )
@@ -52,11 +54,13 @@ type Server struct {
 	Meta      meta.Store
 	Auth      auth.Store     // nil = auth not enabled (eval mode)
 	Enforcer  *auth.Enforcer // always non-nil; uses AllowAll when Auth is nil
+	OIDC      oidcProvider   // nil = OIDC not configured; *oidc.Provider satisfies this
 	Queue     queue.Queue    // nil = no async index regen (eval / tests)
 	Metrics   *obs.Metrics   // nil = no instrumentation (tests)
 	MaxUpload int64          // per-request body limit; 0 = use defaultMaxUpload
 	reg       prometheus.Gatherer
 	client    *http.Client
+	oidcKey   []byte // HMAC key for signing OIDC state cookies; set by WithOIDC
 }
 
 func New(m *repo.Manager, reg *format.Registry, b blob.Store, mt meta.Store, a auth.Store) *Server {
@@ -73,6 +77,17 @@ func New(m *repo.Manager, reg *format.Registry, b blob.Store, mt meta.Store, a a
 func (s *Server) WithMetrics(metrics *obs.Metrics, gatherer prometheus.Gatherer) *Server {
 	s.Metrics = metrics
 	s.reg = gatherer
+	return s
+}
+
+// WithOIDC attaches an OIDC provider and generates the HMAC signing key used
+// for state cookies.  Call before Routes().
+func (s *Server) WithOIDC(p *oidc.Provider) *Server {
+	s.OIDC = p
+	s.oidcKey = make([]byte, 32)
+	if _, err := rand.Read(s.oidcKey); err != nil {
+		panic("server: crypto/rand unavailable: " + err.Error())
+	}
 	return s
 }
 
@@ -96,6 +111,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/v1/repos", s.handleAdminRepos)
 	mux.HandleFunc("/api/v1/repos/", s.handleAdminRepos)
 	mux.HandleFunc("/api/v1/search", s.handleSearch)
+	if s.OIDC != nil && s.Auth != nil {
+		mux.HandleFunc("/auth/oidc/login", s.handleOIDCLogin)
+		mux.HandleFunc("/auth/oidc/callback", s.handleOIDCCallback)
+	}
 	mux.Handle("/ui/static/", s.serveUIStatic())
 	mux.HandleFunc("/ui/", s.handleUI)
 	// Auth middleware wraps every /repository/ route.

@@ -3,11 +3,13 @@ module forge
 go 1.25.11
 
 require (
+	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/minio/minio-go/v7 v7.2.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
+	golang.org/x/oauth2 v0.36.0
 )
 
 require (
@@ -29,6 +31,7 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/purego v0.10.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect

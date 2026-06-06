@@ -78,9 +78,10 @@ type componentPage struct {
 }
 
 type loginPage struct {
-	Title string
-	Error string
-	Next  string
+	Title       string
+	Error       string
+	Next        string
+	OIDCEnabled bool
 }
 
 type homePage struct {
@@ -383,10 +384,18 @@ func (s *Server) uiLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	errMsg := ""
-	if r.URL.Query().Get("error") == "invalid" {
+	switch r.URL.Query().Get("error") {
+	case "invalid":
 		errMsg = "Invalid token or insufficient permissions."
+	case "oidc":
+		errMsg = "SSO login failed. Please try again or sign in with a token."
 	}
-	render(w, tmplLogin, "base.html", loginPage{Title: "Sign in", Error: errMsg, Next: next})
+	render(w, tmplLogin, "base.html", loginPage{
+		Title:       "Sign in",
+		Error:       errMsg,
+		Next:        next,
+		OIDCEnabled: s.OIDC != nil && s.Auth != nil,
+	})
 }
 
 func (s *Server) uiLogout(w http.ResponseWriter, r *http.Request) {
