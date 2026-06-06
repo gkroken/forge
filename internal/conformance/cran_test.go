@@ -429,6 +429,11 @@ func makeBinaryConformanceZip(t *testing.T, pkg, ver string) []byte {
 // makeBinaryConformanceTgz builds a minimal macOS binary .tgz with DESCRIPTION,
 // NAMESPACE, and a trivial R file. The Built field uses arm64-apple-darwin20
 // which is compatible with any arm64 macOS runner.
+//
+// Directory entries are written explicitly before their contents so that BSD
+// tar's selective extraction (which R uses to validate binary packages via
+// untar(files="pkg/DESCRIPTION")) succeeds on macOS without auto-creating
+// parent directories.
 func makeBinaryConformanceTgz(t *testing.T, pkg, ver string) []byte {
 	t.Helper()
 	desc := fmt.Sprintf(
@@ -436,15 +441,17 @@ func makeBinaryConformanceTgz(t *testing.T, pkg, ver string) []byte {
 			"Built: R 4.4.0; aarch64-apple-darwin20; 2024-01-15 00:00:00 UTC; unix\n"+
 			"OS_type: unix\n",
 		pkg, ver)
-	files := map[string]string{
-		pkg + "/DESCRIPTION":      desc,
-		pkg + "/NAMESPACE":        "exportPattern('.')\n",
-		pkg + "/R/" + pkg + ".R": "hello <- function() invisible(NULL)\n",
-	}
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
-	for name, content := range files {
+	for _, dir := range []string{pkg + "/", pkg + "/R/"} {
+		tw.WriteHeader(&tar.Header{Name: dir, Mode: 0755, Typeflag: tar.TypeDir}) //nolint:errcheck
+	}
+	for name, content := range map[string]string{
+		pkg + "/DESCRIPTION":      desc,
+		pkg + "/NAMESPACE":        "exportPattern('.')\n",
+		pkg + "/R/" + pkg + ".R": "hello <- function() invisible(NULL)\n",
+	} {
 		b := []byte(content)
 		tw.WriteHeader(&tar.Header{Name: name, Mode: 0644, Size: int64(len(b))}) //nolint:errcheck
 		tw.Write(b)                                                                //nolint:errcheck
@@ -452,6 +459,56 @@ func makeBinaryConformanceTgz(t *testing.T, pkg, ver string) []byte {
 	tw.Close()
 	gz.Close()
 	return buf.Bytes()
+}
+
+// TestBinaryTgzStructure verifies that makeBinaryConformanceTgz produces a
+// tarball with explicit directory entries preceding their contents. BSD tar on
+// macOS requires this for selective extraction (untar(files="pkg/DESCRIPTION")),
+// which is how R validates binary packages before installing them. This test
+// runs on all platforms without needing R or Docker.
+func TestBinaryTgzStructure(t *testing.T) {
+	data := makeBinaryConformanceTgz(t, "mypkg", "1.0.0")
+
+	gr, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("not a valid gzip: %v", err)
+	}
+	defer gr.Close()
+	tr := tar.NewReader(gr)
+
+	var dirPos, filePos int
+	dirPos = -1
+	filePos = -1
+	pos := 0
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("tar read error: %v", err)
+		}
+		if hdr.Typeflag == tar.TypeDir && hdr.Name == "mypkg/" {
+			dirPos = pos
+		}
+		if hdr.Name == "mypkg/DESCRIPTION" {
+			filePos = pos
+			content, _ := io.ReadAll(tr)
+			if !strings.Contains(string(content), "Built:") {
+				t.Error("DESCRIPTION missing Built field")
+			}
+		}
+		pos++
+	}
+	if dirPos < 0 {
+		t.Error("tgz missing explicit directory entry mypkg/ — BSD tar selective extraction fails without it")
+	}
+	if filePos < 0 {
+		t.Error("tgz missing mypkg/DESCRIPTION")
+	}
+	if dirPos >= 0 && filePos >= 0 && dirPos > filePos {
+		t.Error("directory entry mypkg/ must appear before mypkg/DESCRIPTION in the tar stream")
+	}
 }
 
 // TestCRAN_Binary_Proxy verifies that forge proxies a binary package GET from

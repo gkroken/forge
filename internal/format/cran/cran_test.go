@@ -53,7 +53,7 @@ func TestGroup_PackagesMerge(t *testing.T) {
 	m, _ := meta.NewFS(filepath.Join(dir, "m"))
 
 	seed := func(repoName, pkg, version string) {
-		ns := repoName + ":cran"
+		ns := repoName + "+cran"
 		rec := pkgRecord{Package: pkg, Version: version, License: "MIT"}
 		if err := m.PutJSON(ns, pkg+"_"+version, rec); err != nil {
 			t.Fatal(err)

@@ -49,7 +49,7 @@ type Handler struct{}
 func New() *Handler            { return &Handler{} }
 func (h *Handler) Format() string { return "cran" }
 
-func (h *Handler) ns(c *format.Context) string { return c.Repo.Name + ":cran" }
+func (h *Handler) ns(c *format.Context) string { return c.Repo.Name + "+cran" }
 
 type pkgRecord struct {
 	Package    string    `json:"package"`
@@ -705,9 +705,12 @@ func (h *Handler) servePlatformVersions(w http.ResponseWriter, c *format.Context
 }
 
 // binNS returns the meta namespace for binary packages of a given platform+rver.
-// e.g. "myrepo:cran:bin:windows:4.4" or "myrepo:cran:bin:macosx/x86_64:4.4".
+// Uses + as separator and replaces any / in multi-segment platform paths so the
+// namespace maps to a single flat directory on every OS (colons are illegal in
+// Windows directory names; slashes would create unexpected subdirectories).
 func (h *Handler) binNS(c *format.Context, platform, rver string) string {
-	return c.Repo.Name + ":cran:bin:" + platform + ":" + rver
+	safePlatform := strings.ReplaceAll(platform, "/", "+")
+	return c.Repo.Name + "+cran+bin+" + safePlatform + "+" + rver
 }
 
 // binPkgRecords loads all binary package records for a given platform+rver.
@@ -732,12 +735,10 @@ func parseBinPath(sub string) (platform, rver, file string, ok bool) {
 	if !found {
 		return "", "", "", false
 	}
-	idx := strings.Index(rest, "/contrib/")
-	if idx < 0 {
+	platform, after, found := strings.Cut(rest, "/contrib/")
+	if !found {
 		return "", "", "", false
 	}
-	platform = rest[:idx]
-	after := rest[idx+len("/contrib/"):]
 	rver, file, found = strings.Cut(after, "/")
 	return platform, rver, file, found && file != ""
 }
