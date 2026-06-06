@@ -176,9 +176,18 @@ func verifyOIDCState(key []byte, cookieVal, expectedState string) (nonce string,
 
 func oidcHMAC(key []byte, state, nonce string) []byte {
 	mac := hmac.New(sha256.New, key)
-	mac.Write([]byte(state))
-	mac.Write([]byte("|"))
-	mac.Write([]byte(nonce))
+	// Length-prefix each field so ("a|b","c") and ("a","b|c") produce
+	// different MACs. Without this, a "|" in either value allows collision.
+	// State and nonce are always randomHex(16) today so the separator can't
+	// appear, but this makes it correct by construction rather than by
+	// accident.
+	writeField := func(s string) {
+		l := len(s)
+		mac.Write([]byte{byte(l >> 24), byte(l >> 16), byte(l >> 8), byte(l)})
+		mac.Write([]byte(s))
+	}
+	writeField(state)
+	writeField(nonce)
 	return mac.Sum(nil)
 }
 
