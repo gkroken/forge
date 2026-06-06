@@ -507,6 +507,96 @@ func TestFormat_CRAN(t *testing.T) {
 	}
 }
 
+// TestBinProxy_PACKAGES verifies that a proxy repo passes the binary PACKAGES
+// index through from upstream rather than generating it from local cache.
+func TestBinProxy_PACKAGES(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/bin/windows/contrib/4.4/PACKAGES" {
+			w.Header().Set("Content-Type", "text/plain")
+			fmt.Fprint(w, "Package: jsonlite\nVersion: 2.0.0\nLicense: MIT\n\n")
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	c := &format.Context{
+		Repo: repo.Repository{
+			Name: "cran-proxy", Format: "cran", Kind: repo.Proxy,
+			Upstream: upstream.URL,
+		},
+		Blob: b, Meta: m,
+		HTTP: upstream.Client(),
+	}
+
+	rw := cranServe(c, http.MethodGet, "bin/windows/contrib/4.4/PACKAGES", nil)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("bin PACKAGES proxy: got %d, body: %s", rw.Code, rw.Body)
+	}
+	if !strings.Contains(rw.Body.String(), "Package: jsonlite") {
+		t.Fatalf("upstream PACKAGES not passed through: %s", rw.Body)
+	}
+}
+
+// TestGroup_BinPackagesMerge_WithProxy verifies that a group repo's binary
+// PACKAGES index merges locally hosted binaries with the upstream proxy catalogue.
+func TestGroup_BinPackagesMerge_WithProxy(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/bin/windows/contrib/4.4/PACKAGES" {
+			w.Header().Set("Content-Type", "text/plain")
+			fmt.Fprint(w, "Package: upstream-win\nVersion: 5.0.0\nLicense: MIT\n\n")
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+
+	// Seed one binary package into the hosted member's meta.
+	hostedBinNS := "cran-hosted+cran+bin+windows+4.4"
+	if err := m.PutJSON(hostedBinNS, "local-win_1.0.0", pkgRecord{Package: "local-win", Version: "1.0.0"}); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := repo.NewManager()
+	for _, r := range []repo.Repository{
+		{Name: "cran-hosted", Format: "cran", Kind: repo.Hosted},
+		{Name: "cran-proxy", Format: "cran", Kind: repo.Proxy, Upstream: upstream.URL},
+		{Name: "cran-group", Format: "cran", Kind: repo.Group, Members: []string{"cran-hosted", "cran-proxy"}},
+	} {
+		if err := mgr.Add(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	groupRepo, _ := mgr.Get("cran-group")
+	c := &format.Context{
+		Repo:  groupRepo,
+		Meta:  m,
+		Blob:  b,
+		Repos: mgr,
+		HTTP:  upstream.Client(),
+	}
+
+	recs := New().groupBinPkgRecords(c, "windows", "4.4")
+	pkgNames := map[string]bool{}
+	for _, rec := range recs {
+		pkgNames[rec.Package] = true
+	}
+	if !pkgNames["local-win"] {
+		t.Error("binary group PACKAGES missing locally hosted package")
+	}
+	if !pkgNames["upstream-win"] {
+		t.Error("binary group PACKAGES missing upstream proxy package")
+	}
+}
+
 // ── Binary tree tests ─────────────────────────────────────────────────────────
 
 func TestParseBinPath(t *testing.T) {

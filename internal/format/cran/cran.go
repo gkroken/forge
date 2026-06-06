@@ -15,9 +15,7 @@
 //	GET /bin/{platform}/contrib/{rver}/{pkg}_{ver}.{zip|tgz}  -> download
 //
 // Platform examples: "windows", "macosx/x86_64", "macosx/big-sur-arm64".
-// Binary trees are hosted-only; proxy and group modes are not yet supported.
-//
-// Group: read-only fan-out for source packages. All index formats merge.
+// Group: read-only fan-out for source and binary packages. All index formats merge.
 //
 // PACKAGES.rds is a gzip-compressed R serialization (XDR v2) of a character
 // matrix: rows are packages, columns are Package/Version/Depends/Imports/License.
@@ -615,6 +613,10 @@ func (h *Handler) serveBinary(w http.ResponseWriter, r *http.Request, c *format.
 
 // serveBinIndex generates and serves the PACKAGES index for one platform+rver.
 func (h *Handler) serveBinIndex(w http.ResponseWriter, c *format.Context, platform, rver, file string) {
+	if c.Repo.Kind == repo.Proxy {
+		h.proxy(w, c)
+		return
+	}
 	var recs []pkgRecord
 	if c.Repo.Kind == repo.Group {
 		recs = h.groupBinPkgRecords(c, platform, rver)
@@ -724,6 +726,7 @@ func (h *Handler) groupDownloadBin(w http.ResponseWriter, c *format.Context) {
 
 // groupBinPkgRecords merges binary package records from all group members for
 // a given platform+rver, deduplicating by Package_Version (first member wins).
+// For proxy members the upstream binary PACKAGES file is fetched and parsed.
 func (h *Handler) groupBinPkgRecords(c *format.Context, platform, rver string) []pkgRecord {
 	seen := map[string]bool{}
 	var all []pkgRecord
@@ -732,7 +735,13 @@ func (h *Handler) groupBinPkgRecords(c *format.Context, platform, rver string) [
 		if !ok {
 			continue
 		}
-		for _, rec := range h.binPkgRecords(mc, platform, rver) {
+		var recs []pkgRecord
+		if mc.Repo.Kind == repo.Proxy {
+			recs = h.upstreamBinPkgRecords(mc, platform, rver)
+		} else {
+			recs = h.binPkgRecords(mc, platform, rver)
+		}
+		for _, rec := range recs {
 			key := rec.Package + "_" + rec.Version
 			if !seen[key] {
 				seen[key] = true
@@ -742,6 +751,26 @@ func (h *Handler) groupBinPkgRecords(c *format.Context, platform, rver string) [
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].Package < all[j].Package })
 	return all
+}
+
+// upstreamBinPkgRecords fetches the upstream binary PACKAGES file for a proxy
+// member at the given platform+rver, caches it, and parses it into pkgRecord slices.
+func (h *Handler) upstreamBinPkgRecords(mc *format.Context, platform, rver string) []pkgRecord {
+	sub := "bin/" + platform + "/contrib/" + rver + "/PACKAGES"
+	key := mc.Key(sub)
+	upURL := strings.TrimRight(mc.Repo.Upstream, "/") + "/" + sub
+	cfg := proxy.Config{TTL: mc.Repo.ProxyTTL, Auth: mc.Repo.ProxyAuth}
+	f := proxy.New(mc.HTTP, cfg)
+	rc, _, err := f.Fetch(key, mc.Repo.Name+":proxy", upURL, mc.Blob, mc.Meta)
+	if err != nil {
+		return nil
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return nil
+	}
+	return parsePackagesFile(data)
 }
 
 // deleteBin removes a binary package blob and its meta record.
