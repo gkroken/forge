@@ -11,7 +11,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -349,9 +351,10 @@ cat("wintestpkg installed OK\n")
 `, repo))
 }
 
-// TestCRAN_Binary_macOS_PublishInstall publishes a minimal macOS binary package
-// to the platform path that the host R instance expects, then installs it with
-// install.packages(type="binary"). Skipped on non-macOS platforms.
+// TestCRAN_Binary_macOS_PublishInstall builds a genuine macOS binary package
+// using R CMD INSTALL --build (so it passes R's binary validation), publishes
+// it to forge, then installs it with install.packages(type="binary").
+// Skipped on non-macOS platforms.
 func TestCRAN_Binary_macOS_PublishInstall(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("macOS-only binary install test")
@@ -366,19 +369,44 @@ func TestCRAN_Binary_macOS_PublishInstall(t *testing.T) {
 	repo := srv.Repo("cran-hosted")
 
 	// Ask R which binary contrib URL it would use for this platform/version.
-	// contrib.url is pure string manipulation — no network call is made.
 	out, err := exec.Command(rscript, "--vanilla", "-e", // #nosec G204 -- test harness only
 		fmt.Sprintf(`cat(contrib.url("%s", type="binary"))`, repo)).Output()
 	if err != nil {
 		t.Fatalf("query R contrib.url: %v", err)
 	}
-	// out = "http://localhost:PORT/repository/cran-hosted/bin/macosx/big-sur-arm64/contrib/4.4"
 	contribURL := strings.TrimSpace(string(out))
 	binPath := strings.TrimPrefix(contribURL, repo)
-	// binPath = "bin/macosx/big-sur-arm64/contrib/4.4"
 
 	pkg, ver := "mactestpkg", "1.0.0"
-	tgzData := makeBinaryConformanceTgz(t, pkg, ver)
+
+	// Build a genuine macOS binary using R CMD INSTALL --build. Hand-crafted
+	// tgz archives are rejected by R's binary validator regardless of their
+	// DESCRIPTION content; R's own toolchain is the only reliable way to
+	// produce a .tgz that install.packages(type="binary") will accept.
+	buildDir := t.TempDir()
+	buildOut, err := exec.Command(rscript, "--vanilla", "-e", // #nosec G204 -- test harness only
+		fmt.Sprintf(`
+pkgdir <- file.path(%q, %q)
+dir.create(file.path(pkgdir, "R"), recursive = TRUE)
+writeLines(c("Package: %s", "Version: %s", "License: MIT"), file.path(pkgdir, "DESCRIPTION"))
+writeLines("exportPattern('.')", file.path(pkgdir, "NAMESPACE"))
+writeLines("hello <- function() invisible(NULL)", file.path(pkgdir, "R", "%s.R"))
+setwd(%q)
+rc <- system2("R", c("CMD", "INSTALL", "--build", "--library", %q, shQuote(pkgdir)))
+if (rc != 0L) stop("R CMD INSTALL --build failed")
+`, buildDir, pkg, pkg, ver, pkg, buildDir, buildDir)).CombinedOutput()
+	if err != nil {
+		t.Fatalf("build macOS binary: %v\n%s", err, buildOut)
+	}
+
+	matches, _ := filepath.Glob(filepath.Join(buildDir, pkg+"_"+ver+"*.tgz"))
+	if len(matches) == 0 {
+		t.Fatalf("R CMD INSTALL --build produced no .tgz in %s\nbuild output:\n%s", buildDir, buildOut)
+	}
+	tgzData, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatalf("read built binary: %v", err)
+	}
 
 	req, _ := http.NewRequest(http.MethodPut,
 		repo+binPath+"/"+pkg+"_"+ver+".tgz",
