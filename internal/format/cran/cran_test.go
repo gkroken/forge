@@ -97,6 +97,87 @@ func TestGroup_PackagesMerge(t *testing.T) {
 	}
 }
 
+func TestParsePackagesFile(t *testing.T) {
+	input := "Package: foo\nVersion: 1.0.0\nLicense: MIT\nImports: bar,\n  baz\n\nPackage: qux\nVersion: 2.1.0\nDepends: R (>= 4.0)\n\n"
+	recs := parsePackagesFile([]byte(input))
+	if len(recs) != 2 {
+		t.Fatalf("expected 2 records, got %d", len(recs))
+	}
+	if recs[0].Package != "foo" || recs[0].Version != "1.0.0" || recs[0].License != "MIT" {
+		t.Errorf("record 0 wrong: %+v", recs[0])
+	}
+	if recs[0].Imports != "bar, baz" {
+		t.Errorf("continuation line not joined: %q", recs[0].Imports)
+	}
+	if recs[1].Package != "qux" || recs[1].Depends != "R (>= 4.0)" {
+		t.Errorf("record 1 wrong: %+v", recs[1])
+	}
+}
+
+func TestParsePackagesFile_Empty(t *testing.T) {
+	if recs := parsePackagesFile(nil); recs != nil {
+		t.Fatalf("expected nil for empty input, got %v", recs)
+	}
+}
+
+// TestGroup_PackagesMerge_WithProxy verifies that a group repo containing a
+// proxy member includes packages from the upstream PACKAGES file in its index.
+func TestGroup_PackagesMerge_WithProxy(t *testing.T) {
+	// Fake upstream CRAN serving a PACKAGES file.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/src/contrib/PACKAGES" {
+			w.Header().Set("Content-Type", "text/plain")
+			fmt.Fprint(w, "Package: upstream-pkg\nVersion: 3.0.0\nLicense: GPL-3\n\n")
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+
+	// Seed one package directly into the hosted member.
+	ns := "cran-hosted+cran"
+	if err := m.PutJSON(ns, "local-pkg_1.0.0", pkgRecord{Package: "local-pkg", Version: "1.0.0", License: "MIT"}); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := repo.NewManager()
+	for _, r := range []repo.Repository{
+		{Name: "cran-hosted", Format: "cran", Kind: repo.Hosted},
+		{Name: "cran-proxy", Format: "cran", Kind: repo.Proxy, Upstream: upstream.URL},
+		{Name: "cran-group", Format: "cran", Kind: repo.Group, Members: []string{"cran-hosted", "cran-proxy"}},
+	} {
+		if err := mgr.Add(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	groupRepo, _ := mgr.Get("cran-group")
+	c := &format.Context{
+		Repo:  groupRepo,
+		Meta:  m,
+		Blob:  b,
+		Repos: mgr,
+		HTTP:  upstream.Client(),
+	}
+
+	recs := New().groupPkgRecords(c)
+
+	pkgNames := map[string]bool{}
+	for _, rec := range recs {
+		pkgNames[rec.Package] = true
+	}
+	if !pkgNames["local-pkg"] {
+		t.Error("group PACKAGES missing local hosted package")
+	}
+	if !pkgNames["upstream-pkg"] {
+		t.Error("group PACKAGES missing upstream proxy package")
+	}
+}
+
 // --- PACKAGES.rds tests ----------------------------------------------------
 
 // decompressRDS decompresses the gzip wrapper and returns raw XDR bytes.

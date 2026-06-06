@@ -66,14 +66,26 @@ type pkgRecord struct {
 func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Context) {
 	switch {
 	case r.Method == http.MethodGet && c.Sub == "src/contrib/PACKAGES":
+		if c.Repo.Kind == repo.Proxy {
+			h.proxy(w, c)
+			return
+		}
 		w.Header().Set("Content-Type", "text/plain")
 		w.Write(h.packages(c))
 	case r.Method == http.MethodGet && c.Sub == "src/contrib/PACKAGES.gz":
+		if c.Repo.Kind == repo.Proxy {
+			h.proxy(w, c)
+			return
+		}
 		w.Header().Set("Content-Type", "application/gzip")
 		gz := gzip.NewWriter(w)
 		gz.Write(h.packages(c))
 		gz.Close()
 	case r.Method == http.MethodGet && c.Sub == "src/contrib/PACKAGES.rds":
+		if c.Repo.Kind == repo.Proxy {
+			h.proxy(w, c)
+			return
+		}
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Write(buildPackagesRDS(h.allPkgRecords(c)))
 	case r.Method == http.MethodPut && strings.HasPrefix(c.Sub, "src/contrib/") && strings.HasSuffix(c.Sub, ".tar.gz"):
@@ -228,6 +240,8 @@ func (h *Handler) pkgRecords(c *format.Context) []pkgRecord {
 
 // groupPkgRecords merges package records from all members, deduplicating by
 // Package_Version key (first member with a given package+version wins).
+// For proxy members the upstream PACKAGES file is fetched and parsed so the
+// group index reflects the full upstream catalogue, not just locally cached tarballs.
 func (h *Handler) groupPkgRecords(c *format.Context) []pkgRecord {
 	seen := map[string]bool{}
 	var all []pkgRecord
@@ -236,7 +250,13 @@ func (h *Handler) groupPkgRecords(c *format.Context) []pkgRecord {
 		if !ok {
 			continue
 		}
-		for _, rec := range h.pkgRecords(mc) {
+		var recs []pkgRecord
+		if mc.Repo.Kind == repo.Proxy {
+			recs = h.upstreamPkgRecords(mc)
+		} else {
+			recs = h.pkgRecords(mc)
+		}
+		for _, rec := range recs {
 			key := rec.Package + "_" + rec.Version
 			if !seen[key] {
 				seen[key] = true
@@ -246,6 +266,67 @@ func (h *Handler) groupPkgRecords(c *format.Context) []pkgRecord {
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].Package < all[j].Package })
 	return all
+}
+
+// upstreamPkgRecords fetches the upstream PACKAGES file for a proxy member,
+// caches it via the proxy store, and parses it into pkgRecord slices.
+// Returns nil on any fetch or parse error (group index degrades gracefully).
+func (h *Handler) upstreamPkgRecords(mc *format.Context) []pkgRecord {
+	key := mc.Key("src/contrib/PACKAGES")
+	upURL := strings.TrimRight(mc.Repo.Upstream, "/") + "/src/contrib/PACKAGES"
+	cfg := proxy.Config{TTL: mc.Repo.ProxyTTL, Auth: mc.Repo.ProxyAuth}
+	f := proxy.New(mc.HTTP, cfg)
+	rc, _, err := f.Fetch(key, mc.Repo.Name+":proxy", upURL, mc.Blob, mc.Meta)
+	if err != nil {
+		return nil
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return nil
+	}
+	return parsePackagesFile(data)
+}
+
+// parsePackagesFile parses a CRAN PACKAGES file (DCF format) into pkgRecord
+// slices. Records are separated by blank lines; continuation lines begin with
+// whitespace.
+func parsePackagesFile(data []byte) []pkgRecord {
+	var recs []pkgRecord
+	fields := map[string]string{}
+	var curKey string
+	flush := func() {
+		if fields["Package"] != "" {
+			recs = append(recs, pkgRecord{
+				Package: fields["Package"],
+				Version: fields["Version"],
+				Depends: fields["Depends"],
+				Imports: fields["Imports"],
+				License: fields["License"],
+			})
+		}
+		fields = map[string]string{}
+		curKey = ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			flush()
+			continue
+		}
+		if len(line) > 0 && (line[0] == ' ' || line[0] == '\t') && curKey != "" {
+			fields[curKey] += " " + strings.TrimSpace(line)
+			continue
+		}
+		k, v, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		curKey = strings.TrimSpace(k)
+		fields[curKey] = strings.TrimSpace(v)
+	}
+	flush()
+	return recs
 }
 
 // buildPackages is the pure generator for the PACKAGES index so tests can
