@@ -546,9 +546,12 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 // Inspect implements format.Inspectable for the component detail page.
 func (h *Handler) Inspect(c *format.Context, baseURL, name string) (format.ComponentDetail, bool) {
 	var allRecs []chartRecord
-	if c.Repo.Kind == repo.Group {
+	switch c.Repo.Kind {
+	case repo.Group:
 		allRecs = h.groupRecords(c)
-	} else {
+	case repo.Proxy:
+		allRecs = h.upstreamRecords(c)
+	default:
 		allRecs = h.records(c)
 	}
 	var matching []chartRecord
