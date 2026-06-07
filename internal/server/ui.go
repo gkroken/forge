@@ -15,6 +15,7 @@ import (
 
 	"forge/internal/auth"
 	"forge/internal/format"
+	"forge/internal/proxy"
 	"forge/internal/repo"
 )
 
@@ -67,6 +68,12 @@ var uiFuncs = template.FuncMap{
 			return "—"
 		}
 		return t.UTC().Format("2006-01-02")
+	},
+	"deref": func(b *bool) bool {
+		if b == nil {
+			return false
+		}
+		return *b
 	},
 	"urlPathEscape": url.PathEscape,
 	"cssVer":        func() string { return cssVer },
@@ -131,10 +138,11 @@ type homePage struct {
 }
 
 type repoRow struct {
-	Name   string
-	Format string
-	Kind   string
-	Count  int // -1 = browse not supported for this format
+	Name       string
+	Format     string
+	Kind       string
+	Count      int  // -1 = browse not supported for this format
+	UpstreamOK *bool // nil = no data yet; true = healthy; false = error
 }
 
 type repoPage struct {
@@ -213,10 +221,18 @@ func (s *Server) uiHome(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		rows = append(rows, repoRow{
+		row := repoRow{
 			Name: rp.Name, Format: rp.Format,
 			Kind: string(rp.Kind), Count: count,
-		})
+		}
+		if rp.Kind == repo.Proxy {
+			var hr proxy.HealthRecord
+			c := s.browseCtx(rp)
+			if ok, _ := c.Meta.GetJSON(rp.Name+":proxy", proxy.HealthKey, &hr); ok {
+				row.UpstreamOK = &hr.OK
+			}
+		}
+		rows = append(rows, row)
 	}
 
 	sortCol := r.URL.Query().Get("sort")

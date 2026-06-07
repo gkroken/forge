@@ -15,7 +15,13 @@
       <tr>
         <td class="col-name"><a href="/ui/repos/{{.Name}}">{{.Name}}</a></td>
         <td><span class="badge fmt-{{.Format}}">{{formatIcon .Format}}{{.Format}}</span></td>
-        <td><span class="badge kind-{{.Kind}}">{{.Kind}}</span></td>
+        <td>
+          <span class="badge kind-{{.Kind}}">{{.Kind}}</span>
+          {{if .UpstreamOK}}
+            {{if deref .UpstreamOK}}<span class="upstream-health health-ok" title="Upstream reachable">●</span>
+            {{else}}<span class="upstream-health health-err" title="Upstream unreachable">●</span>{{end}}
+          {{end}}
+        </td>
         <td class="col-count">{{if lt .Count 0}}—{{else}}{{.Count}}{{end}}</td>
       </tr>
       {{else}}

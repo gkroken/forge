@@ -216,7 +216,7 @@ security headers test green on any new routes.
 | 15 | Dependency list not shown | U2 (component page) | ✅ done |
 | 16 | No per-version direct download links | U2 (component page) | ✅ done |
 | 17 | No last-published timestamp in listing | U2 (repo page) | ✅ done |
-| 18 | No proxy upstream health indicator | U2 (repo list) | ❌ open |
+| 18 | No proxy upstream health indicator | U2 (repo list) | ✅ done |
 | 11 | Static files not cache-busted | U3 | ✅ done |
 | 1 | No dark mode | U3 | ✅ done |
 | 8 | Nav search not htmx (inconsistent) | U3 | ✅ done |

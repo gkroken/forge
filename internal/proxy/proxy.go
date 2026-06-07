@@ -64,6 +64,18 @@ var (
 	ErrUpstreamFailed = errors.New("proxy: upstream unavailable")
 )
 
+// HealthKey is the meta key under which the upstream health record is stored
+// in the cacheNS namespace (alongside individual CacheEntry records).
+const HealthKey = "__health"
+
+// HealthRecord captures the result of the most recent upstream fetch attempt.
+// Stored in meta at (cacheNS, HealthKey).
+type HealthRecord struct {
+	OK        bool      `json:"ok"`
+	CheckedAt time.Time `json:"checkedAt"`
+	ErrMsg    string    `json:"err,omitempty"`
+}
+
 // CacheEntry records the provenance of a cached blob.
 // Stored in meta at (cacheNS, blobKey).
 type CacheEntry struct {
@@ -266,6 +278,12 @@ func (f *Fetcher) Fetch(blobKey, cacheNS, upURL string, blobs blob.Store, metas 
 			if f.cfg.RecordHit != nil {
 				f.cfg.RecordHit()
 			}
+			// Populate health record on first cache hit so the UI can show a
+			// green dot even when no upstream contact has happened this session.
+			var existing HealthRecord
+			if ok, _ := metas.GetJSON(cacheNS, HealthKey, &existing); !ok {
+				metas.PutJSON(cacheNS, HealthKey, HealthRecord{OK: true, CheckedAt: entry.FetchedAt}) //nolint:errcheck
+			}
 			return rc, entry.ContentType, nil
 		}
 	}
@@ -296,6 +314,7 @@ func (f *Fetcher) Fetch(blobKey, cacheNS, upURL string, blobs blob.Store, metas 
 	upResp, fetchErr := f.fetchUpstream(upURL, condHeaders)
 	if fetchErr != nil {
 		cb.failure(now)
+		metas.PutJSON(cacheNS, HealthKey, HealthRecord{OK: false, CheckedAt: now, ErrMsg: fetchErr.Error()}) //nolint:errcheck
 		if !f.cfg.DisableStaleOnError && blobExists {
 			if rc, err := blobs.Get(blobKey); err == nil {
 				return rc, entry.ContentType, nil
@@ -310,6 +329,7 @@ func (f *Fetcher) Fetch(blobKey, cacheNS, upURL string, blobs blob.Store, metas 
 	case http.StatusNotModified:
 		entry.FetchedAt = now
 		metas.PutJSON(cacheNS, blobKey, entry)
+		metas.PutJSON(cacheNS, HealthKey, HealthRecord{OK: true, CheckedAt: now}) //nolint:errcheck
 		if rc, err := blobs.Get(blobKey); err == nil {
 			if f.cfg.RecordHit != nil {
 				f.cfg.RecordHit()
@@ -328,6 +348,7 @@ func (f *Fetcher) Fetch(blobKey, cacheNS, upURL string, blobs blob.Store, metas 
 		}
 		blobs.Put(blobKey, bytes.NewReader(upResp.body))
 		metas.PutJSON(cacheNS, blobKey, newEntry)
+		metas.PutJSON(cacheNS, HealthKey, HealthRecord{OK: true, CheckedAt: now}) //nolint:errcheck
 		if f.cfg.RecordMiss != nil {
 			f.cfg.RecordMiss()
 		}
@@ -335,15 +356,18 @@ func (f *Fetcher) Fetch(blobKey, cacheNS, upURL string, blobs blob.Store, metas 
 
 	case http.StatusNotFound:
 		metas.PutJSON(cacheNS, blobKey, CacheEntry{FetchedAt: now, NotFound: true})
+		metas.PutJSON(cacheNS, HealthKey, HealthRecord{OK: false, CheckedAt: now, ErrMsg: "upstream returned 404"}) //nolint:errcheck
 		return nil, "", ErrNotFound
 
 	default:
+		errMsg := fmt.Sprintf("upstream returned %d", upResp.statusCode)
+		metas.PutJSON(cacheNS, HealthKey, HealthRecord{OK: false, CheckedAt: now, ErrMsg: errMsg}) //nolint:errcheck
 		if !f.cfg.DisableStaleOnError && blobExists {
 			if rc, err := blobs.Get(blobKey); err == nil {
 				return rc, entry.ContentType, nil
 			}
 		}
-		return nil, "", fmt.Errorf("%w: upstream returned %d", ErrUpstreamFailed, upResp.statusCode)
+		return nil, "", fmt.Errorf("%w: %s", ErrUpstreamFailed, errMsg)
 	}
 }
 

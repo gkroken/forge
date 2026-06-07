@@ -197,6 +197,9 @@ h2 { font-size: .9rem; font-weight: 600; margin-bottom: .75rem; color: var(--tex
 .kind-hosted { background: var(--badge-hosted-bg); color: var(--badge-hosted-fg); }
 .kind-proxy  { background: var(--badge-proxy-bg);  color: var(--badge-proxy-fg);  }
 .kind-group  { background: var(--badge-group-bg);  color: var(--badge-group-fg);  }
+.upstream-health { font-size: .6rem; vertical-align: middle; margin-left: .3rem; }
+.health-ok  { color: #22c55e; }
+.health-err { color: #ef4444; }
 .fmt-maven   { background: var(--badge-maven-bg);  color: var(--badge-maven-fg);  }
 .fmt-npm     { background: var(--badge-npm-bg);    color: var(--badge-npm-fg);    }
 .fmt-helm    { background: var(--badge-helm-bg);   color: var(--badge-helm-fg);   }
