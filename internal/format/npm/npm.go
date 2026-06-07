@@ -447,7 +447,8 @@ func (h *Handler) packument(w http.ResponseWriter, r *http.Request, c *format.Co
 // freshness is tracked via a proxy.CacheEntry in the "{repo}:proxy" namespace.
 // Stale packuments trigger a conditional GET (If-None-Match); a 304 refreshes
 // the TTL without re-parsing. On upstream failure the stale packument is served.
-func (h *Handler) fetchPackument(r *http.Request, c *format.Context, pkg string) (map[string]any, bool) {
+// baseURL is used to rewrite tarball URLs (e.g. "http://forge.example.com").
+func (h *Handler) fetchPackument(baseURL string, c *format.Context, pkg string) (map[string]any, bool) {
 	var stored map[string]any
 	hasStored, _ := c.Meta.GetJSON(h.ns(c), pkg, &stored)
 
@@ -530,7 +531,7 @@ func (h *Handler) fetchPackument(r *http.Request, c *format.Context, pkg string)
 	}
 
 	// Rewrite tarball URLs to point at this proxy.
-	base := publicBase(r)
+	base := baseURL
 	if versions, ok := doc["versions"].(map[string]any); ok {
 		for _, v := range versions {
 			vobj, _ := v.(map[string]any)
@@ -558,7 +559,7 @@ func (h *Handler) fetchPackument(r *http.Request, c *format.Context, pkg string)
 func (h *Handler) proxyNS(c *format.Context) string { return c.Repo.Name + ":proxy" }
 
 func (h *Handler) proxyPackument(w http.ResponseWriter, r *http.Request, c *format.Context, pkg string) {
-	doc, ok := h.fetchPackument(r, c, pkg)
+	doc, ok := h.fetchPackument(publicBase(r), c, pkg)
 	if !ok {
 		http.Error(w, "upstream unavailable", http.StatusBadGateway)
 		return
@@ -587,7 +588,7 @@ func (h *Handler) groupPackument(w http.ResponseWriter, r *http.Request, c *form
 		if !ok {
 			continue
 		}
-		doc, ok := h.fetchPackument(r, mc, pkg)
+		doc, ok := h.fetchPackument(publicBase(r), mc, pkg)
 		if !ok {
 			continue
 		}
@@ -789,7 +790,14 @@ func (h *Handler) Inspect(c *format.Context, baseURL, pkg string) (format.Compon
 
 	var packument map[string]any
 	if ok, _ := c.Meta.GetJSON(h.ns(c), pkg, &packument); !ok {
-		return format.ComponentDetail{}, false
+		if c.Repo.Kind != repo.Proxy {
+			return format.ComponentDetail{}, false
+		}
+		var ok2 bool
+		packument, ok2 = h.fetchPackument(baseURL, c, pkg)
+		if !ok2 {
+			return format.ComponentDetail{}, false
+		}
 	}
 
 	description, _ := packument["description"].(string)
@@ -826,16 +834,20 @@ func (h *Handler) Inspect(c *format.Context, baseURL, pkg string) (format.Compon
 
 	var deps []format.Dep
 	var vobj map[string]any
-	if ok, _ := c.Meta.GetJSON(h.versNS(c), pkg+":"+latestVer, &vobj); ok {
-		if d, ok := vobj["dependencies"].(map[string]any); ok {
-			for name, constraint := range d {
-				cs, _ := constraint.(string)
-				deps = append(deps, format.Dep{
-					Name:       name,
-					Constraint: cs,
-					SearchURL:  "/ui/search?q=" + url.QueryEscape(name),
-				})
-			}
+	if ok, _ := c.Meta.GetJSON(h.versNS(c), pkg+":"+latestVer, &vobj); !ok {
+		// Proxy: version data lives inside the packument, not in versNS.
+		if vs, ok := packument["versions"].(map[string]any); ok {
+			vobj, _ = vs[latestVer].(map[string]any)
+		}
+	}
+	if d, ok := vobj["dependencies"].(map[string]any); ok {
+		for name, constraint := range d {
+			cs, _ := constraint.(string)
+			deps = append(deps, format.Dep{
+				Name:       name,
+				Constraint: cs,
+				SearchURL:  "/ui/search?q=" + url.QueryEscape(name),
+			})
 		}
 		sort.Slice(deps, func(i, j int) bool { return deps[i].Name < deps[j].Name })
 	}

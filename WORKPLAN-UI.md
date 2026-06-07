@@ -142,6 +142,32 @@ populated for at least npm and CRAN.
   `lastUpdated`. Parse these when caching the response and store them alongside
   the cached record. OCI has no standard upstream timestamp field — skip or use
   the manifest `created` annotation if present.
+- **Proxy browse empty** (#22): Proxy repos have no per-package meta records
+  (those are only written on hosted PUT). For CRAN: `allPkgRecords` should
+  call `upstreamPkgRecords` for `repo.Proxy` kind, parsing the cached
+  PACKAGES file from the blob store. For npm: no upstream package list exists
+  (would need a full catalog fetch); show only locally-cached packuments.
+- **npm proxy Inspect falls back to upstream packument** (#24): npm proxy
+  `Inspect` currently reads only from the meta store, so packages never fetched
+  through the proxy return empty detail. Fix: if the packument is absent from
+  meta, fetch it from upstream on demand (same path as `Serve` already does for
+  registry GETs) so dep links and direct component-page visits work without
+  requiring a prior `npm install`. Single file change in `npm.go`.
+- **Maven proxy Inspect falls back to upstream POM** (#25): Maven proxy `Inspect`
+  walks blobs, so only cached artifacts appear. Fix: if no blobs are found for a
+  given `groupId:artifactId`, fetch the upstream POM from Maven Central (or
+  configured upstream) to read description and deps. More involved than npm
+  because the URL requires both groupId and artifactId; skip Maven proxy dep links
+  until this is in.
+- **Dependency links go to search instead of the component page** (#23):
+  `format.Dep.SearchURL` currently points at `/ui/search?q={name}`, which is
+  hard to click (search requires the package to be indexed in a browseable
+  repo). Should instead resolve to a direct component URL at Inspect time:
+  find the group or proxy repo for the same format that contains the dep,
+  build `/ui/repos/{resolved-repo}/{dep-name}`. Blocked by #22 — if the dep
+  lives in a proxy repo that shows an empty browse, the direct link still 404s.
+  Resolve #22 first, then update `Dep.SearchURL` (or add a `Dep.DetailURL`)
+  in each handler's `cranParseDeps` / npm deps loop / etc.
 - **Sortable columns** (#19): clicking a column header in any listing (repo
   component table, search results, admin repo list) sorts by that column
   client-side for the current page, or passes a `?sort=` param to the server
@@ -166,22 +192,26 @@ headers test green on any new routes.
 | 5 | Search filters not exposed | U2 | ✅ done |
 | 10 | No upload UI | U2 | ✅ done |
 | 4 | No user/access visibility | U2 | ✅ done |
-| 2 | Component detail page is a stub | U2 | ⚠️ stub |
-| 12 | No format-specific install snippets | U2 (component page) | ❌ open |
-| 13 | Package description & license not surfaced | U2 (component page) | ❌ open |
-| 14 | README/long description not rendered | U2 (component page) | ❌ open |
-| 15 | Dependency list not shown | U2 (component page) | ❌ open |
-| 16 | No per-version direct download links | U2 (component page) | ❌ open |
-| 17 | No last-published timestamp in listing | U2 (repo page) | ❌ open |
+| 2 | Component detail page is a stub | U2 | ✅ done |
+| 12 | No format-specific install snippets | U2 (component page) | ✅ done |
+| 13 | Package description & license not surfaced | U2 (component page) | ✅ done |
+| 14 | README/long description not rendered | U2 (component page) | ✅ done |
+| 15 | Dependency list not shown | U2 (component page) | ✅ done |
+| 16 | No per-version direct download links | U2 (component page) | ✅ done |
+| 17 | No last-published timestamp in listing | U2 (repo page) | ✅ done |
 | 18 | No proxy upstream health indicator | U2 (repo list) | ❌ open |
 | 11 | Static files not cache-busted | U3 | ✅ done |
 | 1 | No dark mode | U3 | ✅ done |
 | 8 | Nav search not htmx (inconsistent) | U3 | ✅ done |
 | 9 | No breadcrumb on admin home | U3 | ✅ done |
 | 7 | `BrowseRepo` full-load, no caching | U3 (triage → perf/index) | ✅ triaged |
-| 19 | Columns in listings are not sortable | U3 | ❌ open |
+| 19 | Columns in listings are not sortable | U3 | ✅ done |
 | 20 | No format/language icons on badges | U3 | ✅ done |
 | 21 | Proxy packages show no last-published timestamp | U3 | ❌ open |
+| 22 | Proxy repos show empty component list in browse | U3 | ✅ done (CRAN only) |
+| 23 | Dependency links navigate to search instead of component page | U3 | ❌ open |
+| 24 | npm proxy Inspect only resolves cached packuments | U3 | ✅ done |
+| 25 | Maven proxy Inspect only resolves cached artifacts | U3 | ✅ done |
 
 ---
 
