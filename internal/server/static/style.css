@@ -242,9 +242,6 @@ td a:hover { text-decoration: underline; }
 .col-count  { color: var(--text-muted); font-size: 12px; }
 .col-date   { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
 .col-actions{ text-align: right; white-space: nowrap; }
-.col-sortable { cursor: pointer; user-select: none; white-space: nowrap; }
-.col-sortable:hover { color: var(--accent); }
-.sort-arrow { font-size: 10px; opacity: .7; }
 
 /* ── filter bar ──────────────────────────────────────────────────────── */
 .filter-bar { margin-bottom: 1rem; }
