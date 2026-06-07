@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"forge/internal/format"
+	"forge/internal/proxy"
 	"forge/internal/repo"
 )
 
@@ -158,6 +159,141 @@ func (h *Handler) records(c *format.Context) []chartRecord {
 	return recs
 }
 
+// upstreamRecords fetches the upstream index.yaml for a proxy repo, caches it,
+// and parses it into chartRecord slices. Returns nil on any error.
+func (h *Handler) upstreamRecords(c *format.Context) []chartRecord {
+	key := c.Key("index.yaml")
+	upURL := strings.TrimRight(c.Repo.Upstream, "/") + "/index.yaml"
+	cfg := proxy.Config{TTL: c.Repo.ProxyTTL, Auth: c.Repo.ProxyAuth}
+	f := proxy.New(c.HTTP, cfg)
+	rc, _, err := f.Fetch(key, c.Repo.Name+":proxy", upURL, c.Blob, c.Meta)
+	if err != nil {
+		return nil
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return nil
+	}
+	return parseIndexYAML(data)
+}
+
+// parseIndexYAML parses a Helm index.yaml into chartRecord slices using a
+// line-by-line state machine. No YAML library is used.
+func parseIndexYAML(data []byte) []chartRecord {
+	type state int
+	const (
+		stateTop   state = iota // top-level keys
+		stateEntries            // inside entries:
+		stateChart              // inside a named chart block
+		stateEntry              // inside a - (version entry)
+		stateURLs               // inside urls: list
+	)
+
+	var recs []chartRecord
+	cur := chartRecord{}
+	st := stateTop
+	inEntries := false
+
+	for _, rawLine := range strings.Split(string(data), "\n") {
+		line := strings.TrimRight(rawLine, "\r")
+		if line == "" {
+			continue
+		}
+		indent := len(line) - len(strings.TrimLeft(line, " "))
+		trimmed := strings.TrimSpace(line)
+
+		switch {
+		case !inEntries && trimmed == "entries:":
+			inEntries = true
+			st = stateEntries
+		case !inEntries:
+			continue
+
+		case st == stateEntries && indent == 2 && !strings.HasPrefix(trimmed, "-"):
+			// New chart name block — flush previous entry if any
+			if cur.Name != "" {
+				recs = append(recs, cur)
+				cur = chartRecord{}
+			}
+			st = stateChart
+
+		case (st == stateChart || st == stateEntry || st == stateURLs) && indent == 4 && strings.HasPrefix(trimmed, "- "):
+			// New version entry — flush previous
+			if cur.Name != "" {
+				recs = append(recs, cur)
+				cur = chartRecord{}
+			}
+			st = stateEntry
+			// Some fields may appear on the same line as the dash
+			kv := strings.TrimPrefix(trimmed, "- ")
+			applyField(&cur, kv)
+
+		case st == stateEntry && indent == 6 && trimmed == "urls:":
+			st = stateURLs
+
+		case st == stateURLs && indent >= 6 && strings.HasPrefix(trimmed, "- "):
+			if cur.Filename == "" {
+				cur.Filename = strings.TrimPrefix(trimmed, "- ")
+			}
+
+		case st == stateURLs && indent == 6 && !strings.HasPrefix(trimmed, "- "):
+			st = stateEntry
+			applyField(&cur, trimmed)
+
+		case st == stateEntry && indent == 6:
+			applyField(&cur, trimmed)
+
+		case indent < 2:
+			// Back to top level (e.g. "generated:")
+			if cur.Name != "" {
+				recs = append(recs, cur)
+				cur = chartRecord{}
+			}
+			inEntries = false
+			st = stateTop
+		}
+	}
+	if cur.Name != "" {
+		recs = append(recs, cur)
+	}
+
+	// Populate UploadedAt from the Created field.
+	for i := range recs {
+		if recs[i].Created != "" {
+			if t, err := time.Parse(time.RFC3339, recs[i].Created); err == nil {
+				recs[i].UploadedAt = t
+			} else if t, err := time.Parse(time.RFC3339Nano, recs[i].Created); err == nil {
+				recs[i].UploadedAt = t
+			}
+		}
+	}
+	return recs
+}
+
+func applyField(rec *chartRecord, kv string) {
+	idx := strings.Index(kv, ": ")
+	if idx < 0 {
+		return
+	}
+	k := strings.TrimSpace(kv[:idx])
+	v := strings.TrimSpace(strings.Trim(strings.TrimSpace(kv[idx+2:]), `"'`))
+	switch strings.TrimSpace(k) {
+	case "name":
+		rec.Name = v
+	case "version":
+		rec.Version = v
+	case "appVersion":
+		rec.AppVersion = v
+	case "description":
+		rec.Description = v
+	case "created":
+		rec.Created = v
+	case "digest":
+		rec.Digest = v
+	}
+}
+
 // groupRecords merges chart records from all members, deduplicating by
 // name+version (first member with a given name+version wins).
 func (h *Handler) groupRecords(c *format.Context) []chartRecord {
@@ -168,7 +304,13 @@ func (h *Handler) groupRecords(c *format.Context) []chartRecord {
 		if !ok {
 			continue
 		}
-		for _, rec := range h.records(mc) {
+		var recs []chartRecord
+		if mc.Repo.Kind == repo.Proxy {
+			recs = h.upstreamRecords(mc)
+		} else {
+			recs = h.records(mc)
+		}
+		for _, rec := range recs {
 			key := rec.Name + "-" + rec.Version
 			if !seen[key] {
 				seen[key] = true
@@ -335,19 +477,27 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 	if c.Repo.Kind == repo.Group {
 		return format.GroupBrowse(h, c)
 	}
-	keys, err := c.Meta.List(h.ns(c))
-	if err != nil {
-		return nil, err
+	var recs []chartRecord
+	if c.Repo.Kind == repo.Proxy {
+		recs = h.upstreamRecords(c)
+	} else {
+		keys, err := c.Meta.List(h.ns(c))
+		if err != nil {
+			return nil, err
+		}
+		for _, k := range keys {
+			var rec chartRecord
+			if ok, _ := c.Meta.GetJSON(h.ns(c), k, &rec); ok {
+				recs = append(recs, rec)
+			}
+		}
 	}
 	byName := map[string][]string{}
 	byNameTime := map[string]time.Time{}
-	for _, k := range keys {
-		var rec chartRecord
-		if ok, _ := c.Meta.GetJSON(h.ns(c), k, &rec); ok {
-			byName[rec.Name] = append(byName[rec.Name], rec.Version)
-			if rec.UploadedAt.After(byNameTime[rec.Name]) {
-				byNameTime[rec.Name] = rec.UploadedAt
-			}
+	for _, rec := range recs {
+		byName[rec.Name] = append(byName[rec.Name], rec.Version)
+		if rec.UploadedAt.After(byNameTime[rec.Name]) {
+			byNameTime[rec.Name] = rec.UploadedAt
 		}
 	}
 	entries := make([]format.BrowseEntry, 0, len(byName))

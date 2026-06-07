@@ -370,3 +370,60 @@ func TestFormat_Helm(t *testing.T) {
 		t.Fatalf("Format() = %q, want helm", got)
 	}
 }
+
+func TestParseIndexYAML(t *testing.T) {
+	yaml := `apiVersion: v1
+entries:
+  mychart:
+    - name: mychart
+      version: 1.2.3
+      description: A test chart
+      created: 2024-03-15T10:00:00Z
+      digest: abc123def456
+      urls:
+        - mychart-1.2.3.tgz
+    - name: mychart
+      version: 1.0.0
+      description: A test chart
+      created: 2023-06-01T08:00:00Z
+      digest: deadbeef0000
+      urls:
+        - mychart-1.0.0.tgz
+  otherchart:
+    - name: otherchart
+      version: 2.0.0
+      description: Another chart
+      created: 2024-01-10T12:00:00+00:00
+      digest: 111222333444
+      urls:
+        - otherchart-2.0.0.tgz
+generated: 2024-03-16T00:00:00Z
+`
+	recs := parseIndexYAML([]byte(yaml))
+	if len(recs) != 3 {
+		t.Fatalf("got %d records, want 3", len(recs))
+	}
+	byKey := map[string]chartRecord{}
+	for _, r := range recs {
+		byKey[r.Name+"-"+r.Version] = r
+	}
+	r := byKey["mychart-1.2.3"]
+	if r.Name != "mychart" {
+		t.Errorf("Name = %q, want mychart", r.Name)
+	}
+	if r.Version != "1.2.3" {
+		t.Errorf("Version = %q, want 1.2.3", r.Version)
+	}
+	if r.Description != "A test chart" {
+		t.Errorf("Description = %q, want 'A test chart'", r.Description)
+	}
+	if r.Filename != "mychart-1.2.3.tgz" {
+		t.Errorf("Filename = %q, want mychart-1.2.3.tgz", r.Filename)
+	}
+	if r.UploadedAt.IsZero() {
+		t.Error("UploadedAt is zero, want 2024-03-15T10:00:00Z")
+	}
+	if _, ok := byKey["otherchart-2.0.0"]; !ok {
+		t.Error("otherchart-2.0.0 not found")
+	}
+}
