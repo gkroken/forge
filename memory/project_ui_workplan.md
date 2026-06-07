@@ -39,7 +39,8 @@ All sourced from `WORKPLAN-UI.md` §4 gap table.
 
 **Polish (U3):**
 - #19 Sortable columns in listings (htmx or minimal inline script; no JS lib)
-- #20 Format/language icons on badges (inline SVG or static files; must fit existing CSP)
+- #20 Format/language icons on badges (inline SVG or static files; must fit existing CSP) ✅ done
+- #21 Proxy packages show no last-published timestamp — fix by forwarding upstream publish time (npm: `time.modified` from packument; CRAN: `Date/Publication` from PACKAGES index; Helm: `created` from index.yaml; Maven: `lastUpdated` from metadata; OCI: skip or use manifest `created` annotation)
 
 ---
 

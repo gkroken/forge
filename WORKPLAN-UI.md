@@ -134,6 +134,14 @@ populated for at least npm and CRAN.
 - **Admin breadcrumb** (#9) ✅ present in `admin_repos.html`
 - **`BrowseRepo` caching** (#7): triaged — belongs with Phase 6 search/index
   service, not the UI layer. Not solved here.
+- **Proxy package timestamps** (#21): proxy packages currently show "—" because
+  `UpdatedAt` is only written on the hosted publish path. Fix by forwarding the
+  upstream publish time rather than generating a local timestamp: npm packuments
+  from upstream already carry `time.modified`; CRAN's PACKAGES index has
+  `Date/Publication`; Helm `index.yaml` has `created`; Maven metadata has
+  `lastUpdated`. Parse these when caching the response and store them alongside
+  the cached record. OCI has no standard upstream timestamp field — skip or use
+  the manifest `created` annotation if present.
 - **Sortable columns** (#19): clicking a column header in any listing (repo
   component table, search results, admin repo list) sorts by that column
   client-side for the current page, or passes a `?sort=` param to the server
@@ -173,6 +181,7 @@ headers test green on any new routes.
 | 7 | `BrowseRepo` full-load, no caching | U3 (triage → perf/index) | ✅ triaged |
 | 19 | Columns in listings are not sortable | U3 | ❌ open |
 | 20 | No format/language icons on badges | U3 | ✅ done |
+| 21 | Proxy packages show no last-published timestamp | U3 | ❌ open |
 
 ---
 
