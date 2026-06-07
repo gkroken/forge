@@ -774,6 +774,19 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 
 // Inspect implements format.Inspectable for the component detail page.
 func (h *Handler) Inspect(c *format.Context, baseURL, pkg string) (format.ComponentDetail, bool) {
+	if c.Repo.Kind == repo.Group {
+		for _, name := range c.Repo.Members {
+			mc, ok := c.MemberCtx(name)
+			if !ok {
+				continue
+			}
+			if detail, found := h.Inspect(mc, baseURL, pkg); found {
+				return detail, true
+			}
+		}
+		return format.ComponentDetail{}, false
+	}
+
 	var packument map[string]any
 	if ok, _ := c.Meta.GetJSON(h.ns(c), pkg, &packument); !ok {
 		return format.ComponentDetail{}, false

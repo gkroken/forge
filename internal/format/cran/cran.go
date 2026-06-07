@@ -972,7 +972,7 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 
 // Inspect implements format.Inspectable for the component detail page.
 func (h *Handler) Inspect(c *format.Context, baseURL, comp string) (format.ComponentDetail, bool) {
-	recs := h.pkgRecords(c)
+	recs := h.allPkgRecords(c)
 	var matching []pkgRecord
 	for _, r := range recs {
 		if r.Package == comp {
