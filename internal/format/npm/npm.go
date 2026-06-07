@@ -266,6 +266,7 @@ func (h *Handler) regenPackument(c *format.Context, pkg string) {
 		"name":      pkg,
 		"versions":  versions,
 		"dist-tags": distTags,
+		"time":      map[string]any{"modified": time.Now().UTC().Format(time.RFC3339)},
 	}
 	c.Meta.PutJSON(h.ns(c), pkg, packument) //nolint:errcheck
 }
@@ -759,7 +760,13 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 			}
 		}
 		sort.Sort(sort.Reverse(sort.StringSlice(versions)))
-		entries = append(entries, format.BrowseEntry{Name: pkg, Versions: versions})
+		var updatedAt time.Time
+		if tm, ok := packument["time"].(map[string]any); ok {
+			if mod, ok := tm["modified"].(string); ok {
+				updatedAt, _ = time.Parse(time.RFC3339, mod)
+			}
+		}
+		entries = append(entries, format.BrowseEntry{Name: pkg, Versions: versions, UpdatedAt: updatedAt})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	return entries, nil

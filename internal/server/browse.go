@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"forge/internal/format"
 )
@@ -76,7 +77,7 @@ func (s *Server) handleComponents(w http.ResponseWriter, r *http.Request, name s
 
 	items := make([]componentItem, len(entries))
 	for i, e := range entries {
-		items[i] = componentItem{Name: e.Name, Versions: e.Versions}
+		items[i] = componentItem{Name: e.Name, Versions: e.Versions, UpdatedAt: e.UpdatedAt}
 	}
 	writeJSON(w, componentsResponse{Components: items, Total: total, Page: page, Limit: limit})
 }
@@ -148,8 +149,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 // ── types ─────────────────────────────────────────────────────────────────────
 
 type componentItem struct {
-	Name     string   `json:"name"`
-	Versions []string `json:"versions"`
+	Name      string    `json:"name"`
+	Versions  []string  `json:"versions"`
+	UpdatedAt time.Time `json:"updated_at,omitempty"`
 }
 
 type componentsResponse struct {

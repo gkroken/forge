@@ -61,6 +61,12 @@ var uiFuncs = template.FuncMap{
 		}
 		return d.String()
 	},
+	"fmtTime": func(t time.Time) string {
+		if t.IsZero() {
+			return "—"
+		}
+		return t.UTC().Format("2006-01-02")
+	},
 	"urlPathEscape": url.PathEscape,
 	"cssVer":        func() string { return cssVer },
 }
@@ -231,7 +237,7 @@ func (s *Server) uiRepo(w http.ResponseWriter, r *http.Request, name string) {
 					}
 					for _, e := range entries[start:end] {
 						components = append(components, componentItem{
-							Name: e.Name, Versions: e.Versions,
+							Name: e.Name, Versions: e.Versions, UpdatedAt: e.UpdatedAt,
 						})
 					}
 				}

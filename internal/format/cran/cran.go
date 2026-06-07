@@ -910,11 +910,15 @@ func parseDescriptionFromZip(data []byte) (pkgRecord, error) {
 func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 	// Source packages (group-aware via allPkgRecords).
 	byName := map[string]map[string]bool{}
+	byNameTime := map[string]time.Time{}
 	for _, r := range h.allPkgRecords(c) {
 		if byName[r.Package] == nil {
 			byName[r.Package] = map[string]bool{}
 		}
 		byName[r.Package][r.Version] = true
+		if r.UploadedAt.After(byNameTime[r.Package]) {
+			byNameTime[r.Package] = r.UploadedAt
+		}
 	}
 
 	// Binary packages — scan blobs under bin/. For group repos, scan each member.
@@ -954,7 +958,7 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 			versions = append(versions, v)
 		}
 		sort.Sort(sort.Reverse(sort.StringSlice(versions)))
-		entries = append(entries, format.BrowseEntry{Name: name, Versions: versions})
+		entries = append(entries, format.BrowseEntry{Name: name, Versions: versions, UpdatedAt: byNameTime[name]})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	return entries, nil

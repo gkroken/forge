@@ -240,6 +240,7 @@ td a:hover { text-decoration: underline; }
 .col-name   { font-weight: 500; }
 .col-latest { font-family: ui-monospace, "Cascadia Code", "SF Mono", monospace; font-size: 12px; color: var(--text-muted); }
 .col-count  { color: var(--text-muted); font-size: 12px; }
+.col-date   { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
 .col-actions{ text-align: right; white-space: nowrap; }
 
 /* ── filter bar ──────────────────────────────────────────────────────── */

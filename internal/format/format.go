@@ -7,6 +7,7 @@ package format
 import (
 	"net/http"
 	"sort"
+	"time"
 
 	"forge/internal/blob"
 	"forge/internal/meta"
@@ -53,8 +54,9 @@ type Handler interface {
 // BrowseEntry represents one component (package, chart, image, …) in a repo's
 // browse view: a name and all known versions, newest-first where deterministic.
 type BrowseEntry struct {
-	Name     string
-	Versions []string
+	Name      string
+	Versions  []string
+	UpdatedAt time.Time // zero if unknown
 }
 
 // Browsable is an optional extension to Handler that powers the web UI browse

@@ -340,16 +340,20 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 		return nil, err
 	}
 	byName := map[string][]string{}
+	byNameTime := map[string]time.Time{}
 	for _, k := range keys {
 		var rec chartRecord
 		if ok, _ := c.Meta.GetJSON(h.ns(c), k, &rec); ok {
 			byName[rec.Name] = append(byName[rec.Name], rec.Version)
+			if rec.UploadedAt.After(byNameTime[rec.Name]) {
+				byNameTime[rec.Name] = rec.UploadedAt
+			}
 		}
 	}
 	entries := make([]format.BrowseEntry, 0, len(byName))
 	for name, versions := range byName {
 		sort.Sort(sort.Reverse(sort.StringSlice(versions)))
-		entries = append(entries, format.BrowseEntry{Name: name, Versions: versions})
+		entries = append(entries, format.BrowseEntry{Name: name, Versions: versions, UpdatedAt: byNameTime[name]})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	return entries, nil

@@ -32,6 +32,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"forge/internal/format"
 	"forge/internal/repo"
@@ -320,9 +321,10 @@ func (h *Handler) putManifest(w http.ResponseWriter, r *http.Request, c *format.
 	}
 	c.Meta.PutJSON(h.ns(c), "manifests/"+dgst, manifestMeta{MediaType: mt, ImageName: image})
 
-	// If reference is a tag, store tag → digest mapping.
+	// If reference is a tag, store tag → digest mapping and push timestamp.
 	if !strings.HasPrefix(ref, "sha256:") {
-		c.Meta.PutJSON(h.ns(c), "tags/"+image+"/"+ref, dgst)
+		c.Meta.PutJSON(h.ns(c), "tags/"+image+"/"+ref, dgst)                                                        //nolint:errcheck
+		c.Meta.PutJSON(h.ns(c), "tag-times/"+image+"/"+ref, time.Now().UTC().Format(time.RFC3339)) //nolint:errcheck
 	}
 
 	w.Header().Set("Location", fmt.Sprintf("/v2/%s/%s/manifests/%s", c.Repo.Name, image, dgst))
@@ -511,22 +513,31 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 		return nil, err
 	}
 	byImage := map[string][]string{}
+	byImageTime := map[string]time.Time{}
 	for _, k := range keys {
-		if !strings.HasPrefix(k, "tags/") {
-			continue
+		if strings.HasPrefix(k, "tags/") {
+			rest := strings.TrimPrefix(k, "tags/")
+			image, tag, ok := strings.Cut(rest, "/")
+			if ok {
+				byImage[image] = append(byImage[image], tag)
+			}
+		} else if strings.HasPrefix(k, "tag-times/") {
+			rest := strings.TrimPrefix(k, "tag-times/")
+			image, _, ok := strings.Cut(rest, "/")
+			if ok {
+				var ts string
+				if ok2, _ := c.Meta.GetJSON(h.ns(c), k, &ts); ok2 {
+					if t, err := time.Parse(time.RFC3339, ts); err == nil && t.After(byImageTime[image]) {
+						byImageTime[image] = t
+					}
+				}
+			}
 		}
-		// "tags/{image}/{tag}"
-		rest := strings.TrimPrefix(k, "tags/")
-		image, tag, ok := strings.Cut(rest, "/")
-		if !ok {
-			continue
-		}
-		byImage[image] = append(byImage[image], tag)
 	}
 	entries := make([]format.BrowseEntry, 0, len(byImage))
 	for image, tags := range byImage {
 		sort.Strings(tags)
-		entries = append(entries, format.BrowseEntry{Name: image, Versions: tags})
+		entries = append(entries, format.BrowseEntry{Name: image, Versions: tags, UpdatedAt: byImageTime[image]})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	return entries, nil

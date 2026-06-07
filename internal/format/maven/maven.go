@@ -88,6 +88,33 @@ type snapArtifact struct {
 
 func (h *Handler) snapNS(c *format.Context) string    { return c.Repo.Name + ":maven:snap" }
 func (h *Handler) snapVersNS(c *format.Context) string { return c.Repo.Name + ":maven:snap:v" }
+func (h *Handler) compNS(c *format.Context) string     { return c.Repo.Name + ":maven:comp" }
+
+// compMeta tracks the last-published timestamp for a maven component.
+type compMeta struct {
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// compKeyFromSub derives the "groupId:artifactId" component key from a blob
+// sub-path (e.g. "com/example/foo/1.0/foo-1.0.jar" → "com.example:foo").
+// Returns ("", false) for paths that don't match maven layout.
+func compKeyFromSub(sub string) (string, bool) {
+	parts := strings.Split(sub, "/")
+	if len(parts) < 4 {
+		return "", false
+	}
+	verIdx := -1
+	for i, p := range parts {
+		if len(p) > 0 && p[0] >= '0' && p[0] <= '9' {
+			verIdx = i
+			break
+		}
+	}
+	if verIdx < 1 {
+		return "", false
+	}
+	return strings.Join(parts[:verIdx-1], ".") + ":" + parts[verIdx-1], true
+}
 
 // --- HTTP handlers ---------------------------------------------------------
 
@@ -120,6 +147,10 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request, c *format.Context)
 	}
 	// Maintain SNAPSHOT version tracking for artifact files.
 	h.maybeUpdateSnapshotMeta(c)
+	// Record last-published timestamp per component for the browse view.
+	if comp, ok := compKeyFromSub(c.Sub); ok {
+		c.Meta.PutJSON(h.compNS(c), comp, compMeta{UpdatedAt: time.Now().UTC()}) //nolint:errcheck
+	}
 	w.WriteHeader(http.StatusCreated)
 	fmt.Fprintf(w, "stored %s (%d bytes, sha1=%s)\n", c.Sub, info.Size, info.SHA1)
 }
@@ -716,7 +747,9 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 			versions = append(versions, v)
 		}
 		sort.Sort(sort.Reverse(sort.StringSlice(versions)))
-		entries = append(entries, format.BrowseEntry{Name: comp, Versions: versions})
+		var cm compMeta
+		c.Meta.GetJSON(h.compNS(c), comp, &cm) //nolint:errcheck
+		entries = append(entries, format.BrowseEntry{Name: comp, Versions: versions, UpdatedAt: cm.UpdatedAt})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	return entries, nil
