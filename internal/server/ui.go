@@ -91,11 +91,9 @@ var (
 // ── page data types ───────────────────────────────────────────────────────────
 
 type componentPage struct {
-	Title    string
-	Repo     repo.Repository
-	Name     string
-	Versions []string
-	RepoURL  string
+	Title  string
+	Repo   repo.Repository
+	Detail format.ComponentDetail
 }
 
 type loginPage struct {
@@ -265,42 +263,59 @@ func (s *Server) uiComponent(w http.ResponseWriter, r *http.Request, repoName, c
 		http.NotFound(w, r)
 		return
 	}
-
 	h, ok := s.Handlers.For(rp.Format)
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
+	c := s.browseCtx(rp)
+	base := publicBase(r)
+
+	// Inspectable provides rich detail; fall back to BrowseRepo for versions only.
+	if insp, ok := h.(format.Inspectable); ok {
+		detail, found := insp.Inspect(c, base, component)
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		render(w, tmplComponent, "base.html", componentPage{
+			Title:  component + " — " + repoName,
+			Repo:   rp,
+			Detail: detail,
+		})
+		return
+	}
+
 	b, ok := h.(format.Browsable)
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
-
-	entries, err := b.BrowseRepo(s.browseCtx(rp))
+	entries, err := b.BrowseRepo(c)
 	if err != nil {
 		http.Error(w, "browse error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	var versions []string
+	var detail format.ComponentDetail
 	for _, e := range entries {
 		if e.Name == component {
-			versions = e.Versions
+			detail.Name = e.Name
+			detail.Versions = make([]format.VersionInfo, len(e.Versions))
+			for i, v := range e.Versions {
+				detail.Versions[i] = format.VersionInfo{Version: v}
+			}
 			break
 		}
 	}
-	if versions == nil {
+	if detail.Name == "" {
 		http.NotFound(w, r)
 		return
 	}
-
+	detail.InstallSnippet = base + "/repository/" + repoName + "/"
 	render(w, tmplComponent, "base.html", componentPage{
-		Title:    component + " — " + repoName,
-		Repo:     rp,
-		Name:     component,
-		Versions: versions,
-		RepoURL:  publicBase(r) + "/repository/" + repoName + "/",
+		Title:  component + " — " + repoName,
+		Repo:   rp,
+		Detail: detail,
 	})
 }
 

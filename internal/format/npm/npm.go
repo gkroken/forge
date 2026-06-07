@@ -771,3 +771,70 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	return entries, nil
 }
+
+// Inspect implements format.Inspectable for the component detail page.
+func (h *Handler) Inspect(c *format.Context, baseURL, pkg string) (format.ComponentDetail, bool) {
+	var packument map[string]any
+	if ok, _ := c.Meta.GetJSON(h.ns(c), pkg, &packument); !ok {
+		return format.ComponentDetail{}, false
+	}
+
+	description, _ := packument["description"].(string)
+	license, _ := packument["license"].(string)
+	readme, _ := packument["readme"].(string)
+
+	var latestVer string
+	if dt, ok := packument["dist-tags"].(map[string]any); ok {
+		latestVer, _ = dt["latest"].(string)
+	}
+
+	var allVersions []string
+	if vs, ok := packument["versions"].(map[string]any); ok {
+		for ver := range vs {
+			allVersions = append(allVersions, ver)
+		}
+	}
+	if len(allVersions) == 0 {
+		return format.ComponentDetail{}, false
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(allVersions)))
+	if latestVer == "" {
+		latestVer = allVersions[0]
+	}
+
+	versions := make([]format.VersionInfo, len(allVersions))
+	for i, ver := range allVersions {
+		tarName := fmt.Sprintf("%s-%s.tgz", lastPathSeg(pkg), ver)
+		versions[i] = format.VersionInfo{
+			Version:     ver,
+			DownloadURL: fmt.Sprintf("%s/repository/%s/%s/-/%s", baseURL, c.Repo.Name, pkg, tarName),
+		}
+	}
+
+	var deps []format.Dep
+	var vobj map[string]any
+	if ok, _ := c.Meta.GetJSON(h.versNS(c), pkg+":"+latestVer, &vobj); ok {
+		if d, ok := vobj["dependencies"].(map[string]any); ok {
+			for name, constraint := range d {
+				cs, _ := constraint.(string)
+				deps = append(deps, format.Dep{
+					Name:       name,
+					Constraint: cs,
+					SearchURL:  "/ui/search?q=" + url.QueryEscape(name),
+				})
+			}
+		}
+		sort.Slice(deps, func(i, j int) bool { return deps[i].Name < deps[j].Name })
+	}
+
+	snippet := fmt.Sprintf("npm install %s --registry %s/repository/%s/", pkg, baseURL, c.Repo.Name)
+	return format.ComponentDetail{
+		Name:           pkg,
+		Versions:       versions,
+		Description:    description,
+		License:        license,
+		Readme:         readme,
+		Deps:           deps,
+		InstallSnippet: snippet,
+	}, true
+}

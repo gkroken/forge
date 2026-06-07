@@ -358,3 +358,34 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	return entries, nil
 }
+
+// Inspect implements format.Inspectable for the component detail page.
+func (h *Handler) Inspect(c *format.Context, baseURL, name string) (format.ComponentDetail, bool) {
+	var matching []chartRecord
+	for _, rec := range h.records(c) {
+		if rec.Name == name {
+			matching = append(matching, rec)
+		}
+	}
+	if len(matching) == 0 {
+		return format.ComponentDetail{}, false
+	}
+	sort.Slice(matching, func(i, j int) bool { return matching[i].Version > matching[j].Version })
+
+	versions := make([]format.VersionInfo, len(matching))
+	for i, rec := range matching {
+		versions[i] = format.VersionInfo{
+			Version:     rec.Version,
+			DownloadURL: fmt.Sprintf("%s/repository/%s/%s", baseURL, c.Repo.Name, rec.Filename),
+		}
+	}
+
+	snippet := fmt.Sprintf("helm repo add forge %s/repository/%s\nhelm install %s forge/%s",
+		baseURL, c.Repo.Name, name, name)
+	return format.ComponentDetail{
+		Name:           name,
+		Versions:       versions,
+		Description:    matching[0].Description,
+		InstallSnippet: snippet,
+	}, true
+}

@@ -754,3 +754,54 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	return entries, nil
 }
+
+// Inspect implements format.Inspectable for the component detail page.
+func (h *Handler) Inspect(c *format.Context, baseURL, comp string) (format.ComponentDetail, bool) {
+	parts := strings.SplitN(comp, ":", 2)
+	if len(parts) != 2 {
+		return format.ComponentDetail{}, false
+	}
+	groupID, artifactID := parts[0], parts[1]
+	groupPath := strings.ReplaceAll(groupID, ".", "/")
+
+	blobPrefix := c.Repo.Name + "/" + groupPath + "/" + artifactID + "/"
+	keys, err := c.Blob.List(blobPrefix)
+	if err != nil || len(keys) == 0 {
+		return format.ComponentDetail{}, false
+	}
+
+	versionSet := map[string]struct{}{}
+	for _, k := range keys {
+		rel := strings.TrimPrefix(k, blobPrefix)
+		ver, _, ok := strings.Cut(rel, "/")
+		if ok && len(ver) > 0 && ver[0] >= '0' && ver[0] <= '9' {
+			versionSet[ver] = struct{}{}
+		}
+	}
+	if len(versionSet) == 0 {
+		return format.ComponentDetail{}, false
+	}
+
+	allVersions := make([]string, 0, len(versionSet))
+	for v := range versionSet {
+		allVersions = append(allVersions, v)
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(allVersions)))
+
+	versions := make([]format.VersionInfo, len(allVersions))
+	for i, ver := range allVersions {
+		versions[i] = format.VersionInfo{
+			Version: ver,
+			DownloadURL: fmt.Sprintf("%s/repository/%s/%s/%s/%s/%s-%s.jar",
+				baseURL, c.Repo.Name, groupPath, artifactID, ver, artifactID, ver),
+		}
+	}
+
+	snippet := fmt.Sprintf("<dependency>\n  <groupId>%s</groupId>\n  <artifactId>%s</artifactId>\n  <version>%s</version>\n</dependency>",
+		groupID, artifactID, allVersions[0])
+	return format.ComponentDetail{
+		Name:           comp,
+		Versions:       versions,
+		InstallSnippet: snippet,
+	}, true
+}

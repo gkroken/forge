@@ -52,6 +52,8 @@ func (h *Handler) ns(c *format.Context) string { return c.Repo.Name + "+cran" }
 type pkgRecord struct {
 	Package          string    `json:"package"`
 	Version          string    `json:"version"`
+	Title            string    `json:"title,omitempty"`
+	Description      string    `json:"description,omitempty"`
 	Depends          string    `json:"depends,omitempty"`
 	Imports          string    `json:"imports,omitempty"`
 	License          string    `json:"license,omitempty"`
@@ -548,8 +550,12 @@ func scanDescription(data []byte) pkgRecord {
 		fields[curKey] = strings.TrimSpace(val)
 	}
 	return pkgRecord{
-		Package: fields["Package"], Version: fields["Version"],
-		Depends: fields["Depends"], Imports: fields["Imports"],
+		Package:          fields["Package"],
+		Version:          fields["Version"],
+		Title:            fields["Title"],
+		Description:      fields["Description"],
+		Depends:          fields["Depends"],
+		Imports:          fields["Imports"],
 		License:          fields["License"],
 		NeedsCompilation: fields["NeedsCompilation"],
 		Built:            fields["Built"],
@@ -962,4 +968,68 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	return entries, nil
+}
+
+// Inspect implements format.Inspectable for the component detail page.
+func (h *Handler) Inspect(c *format.Context, baseURL, comp string) (format.ComponentDetail, bool) {
+	recs := h.pkgRecords(c)
+	var matching []pkgRecord
+	for _, r := range recs {
+		if r.Package == comp {
+			matching = append(matching, r)
+		}
+	}
+	if len(matching) == 0 {
+		return format.ComponentDetail{}, false
+	}
+	sort.Slice(matching, func(i, j int) bool { return matching[i].Version > matching[j].Version })
+	latest := matching[0]
+
+	versions := make([]format.VersionInfo, len(matching))
+	for i, rec := range matching {
+		versions[i] = format.VersionInfo{
+			Version:     rec.Version,
+			DownloadURL: fmt.Sprintf("%s/repository/%s/src/contrib/%s_%s.tar.gz", baseURL, c.Repo.Name, rec.Package, rec.Version),
+		}
+	}
+	deps := cranParseDeps(latest.Depends, latest.Imports)
+	snippet := fmt.Sprintf(`install.packages("%s", repos="%s/repository/%s/")`, comp, baseURL, c.Repo.Name)
+	return format.ComponentDetail{
+		Name:           comp,
+		Versions:       versions,
+		Description:    latest.Title,
+		License:        latest.License,
+		Readme:         latest.Description,
+		Deps:           deps,
+		InstallSnippet: snippet,
+	}, true
+}
+
+// cranParseDeps splits CRAN Depends/Imports fields into Dep entries.
+// Each comma-separated token is a package name with an optional parenthesised
+// version constraint.  The pseudo-dependency "R" is always skipped.
+func cranParseDeps(depends, imports string) []format.Dep {
+	seen := map[string]bool{}
+	var deps []format.Dep
+	for _, field := range []string{depends, imports} {
+		for _, part := range strings.Split(field, ",") {
+			name := strings.TrimSpace(part)
+			constraint := ""
+			if idx := strings.Index(name, "("); idx >= 0 {
+				constraint = strings.TrimSpace(name[idx:])
+				name = strings.TrimSpace(name[:idx])
+			}
+			if name == "" || name == "R" || seen[name] {
+				continue
+			}
+			seen[name] = true
+			deps = append(deps, format.Dep{
+				Name:       name,
+				Constraint: constraint,
+				SearchURL:  "/ui/search?q=" + name,
+			})
+		}
+	}
+	sort.Slice(deps, func(i, j int) bool { return deps[i].Name < deps[j].Name })
+	return deps
 }

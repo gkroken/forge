@@ -542,3 +542,43 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	return entries, nil
 }
+
+// Inspect implements format.Inspectable for the component detail page.
+func (h *Handler) Inspect(c *format.Context, baseURL, image string) (format.ComponentDetail, bool) {
+	keys, err := c.Meta.List(h.ns(c))
+	if err != nil {
+		return format.ComponentDetail{}, false
+	}
+	prefix := "tags/" + image + "/"
+	var tags []string
+	for _, k := range keys {
+		if strings.HasPrefix(k, prefix) {
+			tags = append(tags, strings.TrimPrefix(k, prefix))
+		}
+	}
+	if len(tags) == 0 {
+		return format.ComponentDetail{}, false
+	}
+	sort.Strings(tags)
+
+	versions := make([]format.VersionInfo, len(tags))
+	for i, tag := range tags {
+		versions[i] = format.VersionInfo{Version: tag}
+	}
+
+	// Prefer "latest" for the snippet; fall back to last-sorted tag.
+	pullTag := tags[len(tags)-1]
+	for _, t := range tags {
+		if t == "latest" {
+			pullTag = "latest"
+			break
+		}
+	}
+	host := strings.TrimPrefix(strings.TrimPrefix(baseURL, "https://"), "http://")
+	snippet := fmt.Sprintf("docker pull %s/repository/%s/%s:%s", host, c.Repo.Name, image, pullTag)
+	return format.ComponentDetail{
+		Name:           image,
+		Versions:       versions,
+		InstallSnippet: snippet,
+	}, true
+}

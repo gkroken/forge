@@ -447,6 +447,26 @@ td a:hover { text-decoration: underline; }
   color: var(--text);
 }
 
+/* multi-line install snippet: let the pre grow, don't truncate */
+.snippet-pre { white-space: pre; overflow-x: auto; flex: 1; align-self: stretch; display: flex; align-items: center; }
+.copy-row:has(.snippet-pre) { align-items: flex-start; }
+
+/* description one-liner and readme long text */
+.comp-description { margin: .5rem 0 1rem; color: var(--text); max-width: 720px; }
+.readme-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 16px;
+  max-height: 320px;
+  overflow-y: auto;
+  color: var(--text);
+}
+
 /* ── access view ─────────────────────────────────────────────────────── */
 .grant-list { list-style: none; display: flex; flex-direction: column; gap: .25rem; }
 .grant-list li { font-size: 12px; color: var(--text-muted); }

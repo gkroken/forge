@@ -1,55 +1,92 @@
 {{define "content"}}
 <div class="breadcrumb">
   <a href="/ui/">Repositories</a><span>/</span>
-  <a href="/ui/repos/{{.Repo.Name}}">{{.Repo.Name}}</a><span>/</span>{{.Name}}
+  <a href="/ui/repos/{{.Repo.Name}}">{{.Repo.Name}}</a><span>/</span>{{.Detail.Name}}
 </div>
 
-<h1>{{.Name}}</h1>
-<div class="repo-meta">
-  <span class="badge fmt-{{.Repo.Format}}">{{formatIcon .Repo.Format}}{{.Repo.Format}}</span>
-  <span class="badge kind-{{.Repo.Kind}}">{{.Repo.Kind}}</span>
-  {{if .Repo.Upstream}}<span class="upstream">↑ {{.Repo.Upstream}}</span>{{end}}
+<div class="page-header">
+  <div>
+    <h1 style="margin-bottom:.5rem">{{.Detail.Name}}</h1>
+    <div class="repo-meta">
+      <span class="badge fmt-{{.Repo.Format}}">{{formatIcon .Repo.Format}}{{.Repo.Format}}</span>
+      <span class="badge kind-{{.Repo.Kind}}">{{.Repo.Kind}}</span>
+      {{if .Repo.Upstream}}<span class="upstream">↑ {{.Repo.Upstream}}</span>{{end}}
+      {{if .Detail.License}}<span class="badge">{{.Detail.License}}</span>{{end}}
+    </div>
+  </div>
 </div>
+
+{{if .Detail.Description}}
+<p class="comp-description">{{.Detail.Description}}</p>
+{{end}}
 
 <div class="component-detail">
+
+  {{if .Detail.InstallSnippet}}
+  <section class="detail-section">
+    <h2>Install</h2>
+    <div class="copy-row">
+      <pre class="copy-url snippet-pre" id="install-snippet">{{.Detail.InstallSnippet}}</pre>
+      <button class="btn btn-sm" data-copy-id="install-snippet">Copy</button>
+    </div>
+  </section>
+  {{end}}
+
+  {{if .Detail.Readme}}
+  <section class="detail-section">
+    <h2>Description</h2>
+    <pre class="readme-text">{{.Detail.Readme}}</pre>
+  </section>
+  {{end}}
+
+  {{if .Detail.Versions}}
   <section class="detail-section">
     <h2>Versions</h2>
-    {{if .Versions}}
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>Version</th></tr>
+          <tr>
+            <th>Version</th>
+            <th>Download</th>
+          </tr>
         </thead>
         <tbody>
-          {{range .Versions}}
-          <tr><td class="col-latest">{{.}}</td></tr>
+          {{range .Detail.Versions}}
+          <tr>
+            <td class="col-latest">{{.Version}}</td>
+            <td>{{if .DownloadURL}}<a href="{{.DownloadURL}}" class="btn btn-sm">↓ Download</a>{{else}}—{{end}}</td>
+          </tr>
           {{end}}
         </tbody>
       </table>
     </div>
-    {{else}}
-    <div class="empty">No versions found.</div>
-    {{end}}
   </section>
+  {{end}}
 
+  {{if .Detail.Deps}}
   <section class="detail-section">
-    <h2>Registry URL</h2>
-    <p class="form-hint">Use this URL when configuring your package manager.</p>
-    <div class="copy-row">
-      <code class="copy-url" id="registry-url">{{.RepoURL}}</code>
-      <button class="btn btn-sm" onclick="copyURL()">Copy</button>
+    <h2>Dependencies</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Package</th>
+            <th>Constraint</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Detail.Deps}}
+          <tr>
+            <td><a href="{{.SearchURL}}">{{.Name}}</a></td>
+            <td class="col-date">{{.Constraint}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
     </div>
   </section>
-</div>
+  {{end}}
 
-<script>
-function copyURL() {
-  var t = document.getElementById('registry-url').textContent;
-  navigator.clipboard.writeText(t).catch(function() {
-    var s = window.getSelection(), r = document.createRange();
-    r.selectNode(document.getElementById('registry-url'));
-    s.removeAllRanges(); s.addRange(r);
-  });
-}
-</script>
+</div>
+<script src="/ui/static/copy.js" defer></script>
 {{end}}

@@ -65,6 +65,37 @@ type Browsable interface {
 	BrowseRepo(c *Context) ([]BrowseEntry, error)
 }
 
+// ComponentDetail is the full metadata for one component, used by the detail page.
+type ComponentDetail struct {
+	Name           string
+	Versions       []VersionInfo
+	Description    string
+	License        string
+	Readme         string // plain text; may be empty
+	Deps           []Dep
+	InstallSnippet string // copy-pasteable install command(s)
+}
+
+// VersionInfo pairs a version string with its direct download URL (empty for OCI).
+type VersionInfo struct {
+	Version     string
+	DownloadURL string
+}
+
+// Dep is one entry in a component's dependency list.
+type Dep struct {
+	Name       string
+	Constraint string // e.g. ">= 1.0", may be empty
+	SearchURL  string // /ui/search?q={name}
+}
+
+// Inspectable is an optional extension to Handler that powers the component
+// detail page. baseURL is the scheme+host of the forge server (e.g.
+// "http://localhost:8080"), used to build download URLs and install snippets.
+type Inspectable interface {
+	Inspect(c *Context, baseURL, component string) (ComponentDetail, bool)
+}
+
 // GroupBrowse merges BrowseRepo results from every member of a group context.
 // First member that contains a given Name wins; output is sorted by Name.
 func GroupBrowse(h Browsable, c *Context) ([]BrowseEntry, error) {
