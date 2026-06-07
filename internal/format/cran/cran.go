@@ -306,6 +306,8 @@ func parsePackagesFile(data []byte) []pkgRecord {
 			recs = append(recs, pkgRecord{
 				Package:          fields["Package"],
 				Version:          fields["Version"],
+				Title:            fields["Title"],
+				Description:      fields["Description"],
 				Depends:          fields["Depends"],
 				Imports:          fields["Imports"],
 				License:          fields["License"],
