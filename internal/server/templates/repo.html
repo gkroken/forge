@@ -1,4 +1,5 @@
 {{define "content"}}
+<script src="/ui/static/sort.js" defer></script>
 <div class="breadcrumb">
   <a href="/ui/">Repositories</a><span>/</span>{{.Repo.Name}}
 </div>
@@ -36,13 +37,13 @@
 {{define "components-section"}}
 {{if .Components}}
 <div class="table-wrap">
-  <table>
+  <table data-sortable>
     <thead>
       <tr>
-        <th>Name</th>
-        <th>Latest</th>
+        <th data-sort>Name<span class="sort-arrow"></span></th>
+        <th data-sort>Latest<span class="sort-arrow"></span></th>
         <th>Versions</th>
-        <th>Last published</th>
+        <th data-sort>Last published<span class="sort-arrow"></span></th>
       </tr>
     </thead>
     <tbody>
