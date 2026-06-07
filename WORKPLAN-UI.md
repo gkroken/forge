@@ -225,7 +225,7 @@ security headers test green on any new routes.
 | 19 | Columns in listings are not sortable | U3 | ✅ done |
 | 20 | No format/language icons on badges | U3 | ✅ done |
 | 21 | Proxy packages show no last-published timestamp | U3 | ✅ done (CRAN + Maven) |
-| 22 | Proxy repos show empty component list in browse | U3 | ✅ done (CRAN only) |
+| 22 | Proxy repos show empty component list in browse | U3 | ✅ done (CRAN + Helm) |
 | 23 | Dependency links navigate to search instead of component page | U3 | ✅ done |
 | 26 | Component detail page is version-unaware (always shows latest deps/readme) | U3 | ❌ open |
 | 27 | No per-version publish timestamp on component detail page | U3 | ❌ open |
