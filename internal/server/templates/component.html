@@ -35,31 +35,36 @@
   {{if .Detail.Readme}}
   <section class="detail-section">
     <h2>Description</h2>
-    <pre class="readme-text">{{.Detail.Readme}}</pre>
+    <div class="readme-text" id="pkg-readme">{{.Detail.Readme}}</div>
   </section>
   {{end}}
 
   {{if .Detail.Versions}}
   <section class="detail-section">
     <h2>Versions</h2>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Version</th>
-            <th>Download</th>
-          </tr>
-        </thead>
-        <tbody>
-          {{range .Detail.Versions}}
-          <tr>
-            <td class="col-latest">{{.Version}}</td>
-            <td>{{if .DownloadURL}}<a href="{{.DownloadURL}}" class="btn btn-sm">↓ Download</a>{{else}}—{{end}}</td>
-          </tr>
-          {{end}}
-        </tbody>
-      </table>
+    <div{{if gt (len .Detail.Versions) 5}} class="version-collapse" id="ver-collapse"{{end}}>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Version</th>
+              <th>Download</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{range .Detail.Versions}}
+            <tr>
+              <td class="col-latest">{{.Version}}</td>
+              <td>{{if .DownloadURL}}<a href="{{.DownloadURL}}" class="btn btn-sm">↓ Download</a>{{else}}—{{end}}</td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
     </div>
+    {{if gt (len .Detail.Versions) 5}}
+    <button class="version-toggle" data-target="ver-collapse" data-label="Show all {{len .Detail.Versions}} versions ▾">Show all {{len .Detail.Versions}} versions ▾</button>
+    {{end}}
   </section>
   {{end}}
 
@@ -89,4 +94,8 @@
 
 </div>
 <script src="/ui/static/copy.js" defer></script>
+<script src="/ui/static/versions.js" defer></script>
+<script src="https://unpkg.com/marked@9/marked.min.js" defer></script>
+<script src="https://unpkg.com/dompurify@3/dist/purify.min.js" defer></script>
+<script src="/ui/static/readme.js" defer></script>
 {{end}}
