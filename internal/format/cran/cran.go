@@ -303,7 +303,7 @@ func parsePackagesFile(data []byte) []pkgRecord {
 	var curKey string
 	flush := func() {
 		if fields["Package"] != "" {
-			recs = append(recs, pkgRecord{
+			rec := pkgRecord{
 				Package:          fields["Package"],
 				Version:          fields["Version"],
 				Title:            fields["Title"],
@@ -312,7 +312,14 @@ func parsePackagesFile(data []byte) []pkgRecord {
 				Imports:          fields["Imports"],
 				License:          fields["License"],
 				NeedsCompilation: fields["NeedsCompilation"],
-			})
+			}
+			if pub := fields["Published"]; pub != "" {
+				// Format: "2026-04-22 09:10:03 UTC"
+				if t, err := time.Parse("2006-01-02 15:04:05 UTC", pub); err == nil {
+					rec.UploadedAt = t
+				}
+			}
+			recs = append(recs, rec)
 		}
 		fields = map[string]string{}
 		curKey = ""

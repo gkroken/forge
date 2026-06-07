@@ -749,6 +749,9 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 		sort.Sort(sort.Reverse(sort.StringSlice(versions)))
 		var cm compMeta
 		c.Meta.GetJSON(h.compNS(c), comp, &cm) //nolint:errcheck
+		if cm.UpdatedAt.IsZero() {
+			cm.UpdatedAt = mavenMetaLastUpdated(c, comp)
+		}
 		entries = append(entries, format.BrowseEntry{Name: comp, Versions: versions, UpdatedAt: cm.UpdatedAt})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
@@ -935,4 +938,35 @@ func parsePOMDetail(repoName string, data []byte) (description string, deps []fo
 	}
 	sort.Slice(deps, func(i, j int) bool { return deps[i].Name < deps[j].Name })
 	return
+}
+
+// mavenMetaLastUpdated reads a cached maven-metadata.xml for comp and parses
+// its <lastUpdated> field (yyyyMMddHHmmss). Returns zero time on any error.
+func mavenMetaLastUpdated(c *format.Context, comp string) time.Time {
+	groupID, artifactID, ok := strings.Cut(comp, ":")
+	if !ok {
+		return time.Time{}
+	}
+	groupPath := strings.ReplaceAll(groupID, ".", "/")
+	key := c.Repo.Name + "/" + groupPath + "/" + artifactID + "/maven-metadata.xml"
+	rc, err := c.Blob.Get(key)
+	if err != nil {
+		return time.Time{}
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return time.Time{}
+	}
+	var meta struct {
+		LastUpdated string `xml:"versioning>lastUpdated"`
+	}
+	if err := xml.Unmarshal(data, &meta); err != nil || meta.LastUpdated == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse("20060102150405", meta.LastUpdated)
+	if err != nil {
+		return time.Time{}
+	}
+	return t.UTC()
 }
