@@ -992,6 +992,34 @@ func (h *Handler) Inspect(c *format.Context, baseURL, comp string) (format.Compo
 	sort.Slice(matching, func(i, j int) bool { return matching[i].Version > matching[j].Version })
 	latest := matching[0]
 
+	// For proxy/group repos, supplement with archived versions from upstream.
+	knownVersions := map[string]bool{}
+	for _, r := range matching {
+		knownVersions[r.Version] = true
+	}
+	var proxyCtxs []*format.Context
+	switch c.Repo.Kind {
+	case repo.Proxy:
+		proxyCtxs = []*format.Context{c}
+	case repo.Group:
+		for _, name := range c.Repo.Members {
+			if mc, ok := c.MemberCtx(name); ok && mc.Repo.Kind == repo.Proxy {
+				proxyCtxs = append(proxyCtxs, mc)
+			}
+		}
+	}
+	for _, pc := range proxyCtxs {
+		for _, v := range h.fetchArchiveVersions(pc, comp) {
+			if !knownVersions[v] {
+				matching = append(matching, pkgRecord{Package: comp, Version: v})
+				knownVersions[v] = true
+			}
+		}
+	}
+	if len(proxyCtxs) > 0 {
+		sort.Slice(matching, func(i, j int) bool { return matching[i].Version > matching[j].Version })
+	}
+
 	versions := make([]format.VersionInfo, len(matching))
 	for i, rec := range matching {
 		versions[i] = format.VersionInfo{
@@ -1010,6 +1038,38 @@ func (h *Handler) Inspect(c *format.Context, baseURL, comp string) (format.Compo
 		Deps:           deps,
 		InstallSnippet: snippet,
 	}, true
+}
+
+// fetchArchiveVersions fetches the CRAN Archive directory listing for pkg and
+// returns all version strings found there.  Returns nil on any error.
+func (h *Handler) fetchArchiveVersions(c *format.Context, pkg string) []string {
+	upBase := strings.TrimRight(c.Repo.Upstream, "/")
+	resp, err := c.HTTP.Get(upBase + "/src/contrib/Archive/" + pkg + "/")
+	if err != nil || resp.StatusCode != http.StatusOK {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return nil
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+	// Archive directory is an HTML listing; filenames follow {pkg}_{ver}.tar.gz.
+	prefix := `"` + pkg + "_"
+	suffix := `.tar.gz"`
+	var versions []string
+	for _, part := range strings.Split(string(data), prefix) {
+		end := strings.Index(part, suffix)
+		if end < 0 {
+			continue
+		}
+		if v := part[:end]; v != "" {
+			versions = append(versions, v)
+		}
+	}
+	return versions
 }
 
 // cranParseDeps splits CRAN Depends/Imports fields into Dep entries.

@@ -176,8 +176,17 @@ populated for at least npm and CRAN.
   `formatIcon` template func in `ui.go`; `fill="currentColor"` inherits badge
   text colour in both themes. Applied to all five format badges across home,
   repo, component, search, and admin templates.
+- **Version-specific component pages** (#26): the component detail page
+  (`/ui/repos/{repo}/{pkg}`) currently always shows the latest version's
+  metadata — description, readme, deps, install snippet. Add a
+  `/ui/repos/{repo}/{pkg}/{version}` route that calls `Inspect` for that
+  specific version, so users can see deps and README for older releases.
+  Requires `Inspect` to accept an optional version hint and each format handler
+  to filter/select the matching record instead of always taking `matching[0]`.
+  The version list on the existing page should link each version to its
+  version-specific URL.
 
-**Exit:** #19 and #20 shipped; existing handler tests stay green; security
+**Exit:** #19, #20, and #26 shipped; existing handler tests stay green; security
 headers test green on any new routes.
 
 ---
@@ -210,6 +219,7 @@ headers test green on any new routes.
 | 21 | Proxy packages show no last-published timestamp | U3 | ❌ open |
 | 22 | Proxy repos show empty component list in browse | U3 | ✅ done (CRAN only) |
 | 23 | Dependency links navigate to search instead of component page | U3 | ❌ open |
+| 26 | Component detail page is version-unaware (always shows latest deps/readme) | U3 | ❌ open |
 | 24 | npm proxy Inspect only resolves cached packuments | U3 | ✅ done |
 | 25 | Maven proxy Inspect only resolves cached artifacts | U3 | ✅ done |
 
