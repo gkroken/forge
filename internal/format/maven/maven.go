@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
 	"sort"
 	"strconv"
@@ -780,6 +781,9 @@ func (h *Handler) Inspect(c *format.Context, baseURL, comp string) (format.Compo
 	blobPrefix := c.Repo.Name + "/" + groupPath + "/" + artifactID + "/"
 	keys, err := c.Blob.List(blobPrefix)
 	if err != nil || len(keys) == 0 {
+		if c.Repo.Kind == repo.Proxy {
+			return h.inspectFromUpstream(c, baseURL, groupID, artifactID, groupPath)
+		}
 		return format.ComponentDetail{}, false
 	}
 
@@ -817,4 +821,119 @@ func (h *Handler) Inspect(c *format.Context, baseURL, comp string) (format.Compo
 		Versions:       versions,
 		InstallSnippet: snippet,
 	}, true
+}
+
+// inspectFromUpstream fetches maven-metadata.xml from the upstream to discover
+// versions, then fetches and caches the POM for the latest version so that the
+// component detail page works on a cold proxy cache.  The metadata XML is not
+// cached because it would shadow the locally-generated artifact-level metadata.
+func (h *Handler) inspectFromUpstream(c *format.Context, baseURL, groupID, artifactID, groupPath string) (format.ComponentDetail, bool) {
+	upBase := strings.TrimRight(c.Repo.Upstream, "/")
+
+	// Fetch maven-metadata.xml to discover the version list.
+	metaURL := upBase + "/" + groupPath + "/" + artifactID + "/maven-metadata.xml"
+	metaResp, err := c.HTTP.Get(metaURL)
+	if err != nil || metaResp.StatusCode != http.StatusOK {
+		if metaResp != nil {
+			metaResp.Body.Close()
+		}
+		return format.ComponentDetail{}, false
+	}
+	metaData, err := io.ReadAll(metaResp.Body)
+	metaResp.Body.Close()
+	if err != nil {
+		return format.ComponentDetail{}, false
+	}
+
+	var meta struct {
+		Versioning struct {
+			Release  string   `xml:"release"`
+			Latest   string   `xml:"latest"`
+			Versions []string `xml:"versions>version"`
+		} `xml:"versioning"`
+	}
+	if err := xml.Unmarshal(metaData, &meta); err != nil || len(meta.Versioning.Versions) == 0 {
+		return format.ComponentDetail{}, false
+	}
+
+	allVersions := make([]string, len(meta.Versioning.Versions))
+	copy(allVersions, meta.Versioning.Versions)
+	sort.Sort(sort.Reverse(sort.StringSlice(allVersions)))
+
+	latestVer := meta.Versioning.Release
+	if latestVer == "" {
+		latestVer = meta.Versioning.Latest
+	}
+	if latestVer == "" {
+		latestVer = allVersions[0]
+	}
+
+	// Fetch the POM for the latest version and cache it so subsequent Inspect
+	// calls find a blob and take the normal code path.
+	pomPath := groupPath + "/" + artifactID + "/" + latestVer + "/" + artifactID + "-" + latestVer + ".pom"
+	pomURL := upBase + "/" + pomPath
+	var description string
+	var deps []format.Dep
+	pomResp, err := c.HTTP.Get(pomURL)
+	if err == nil {
+		if pomResp.StatusCode == http.StatusOK {
+			pomData, err := io.ReadAll(pomResp.Body)
+			pomResp.Body.Close()
+			if err == nil {
+				c.Blob.Put(c.Key(pomPath), bytes.NewReader(pomData)) //nolint:errcheck
+				description, deps = parsePOMDetail(pomData)
+			}
+		} else {
+			pomResp.Body.Close()
+		}
+	}
+
+	versions := make([]format.VersionInfo, len(allVersions))
+	for i, ver := range allVersions {
+		versions[i] = format.VersionInfo{
+			Version: ver,
+			DownloadURL: fmt.Sprintf("%s/repository/%s/%s/%s/%s/%s-%s.jar",
+				baseURL, c.Repo.Name, groupPath, artifactID, ver, artifactID, ver),
+		}
+	}
+	snippet := fmt.Sprintf("<dependency>\n  <groupId>%s</groupId>\n  <artifactId>%s</artifactId>\n  <version>%s</version>\n</dependency>",
+		groupID, artifactID, latestVer)
+	return format.ComponentDetail{
+		Name:           groupID + ":" + artifactID,
+		Versions:       versions,
+		Description:    description,
+		Deps:           deps,
+		InstallSnippet: snippet,
+	}, true
+}
+
+// parsePOMDetail extracts description and non-test/provided dependencies from a
+// POM XML blob.
+func parsePOMDetail(data []byte) (description string, deps []format.Dep) {
+	var pom struct {
+		Description  string `xml:"description"`
+		Dependencies []struct {
+			GroupID    string `xml:"groupId"`
+			ArtifactID string `xml:"artifactId"`
+			Version    string `xml:"version"`
+			Scope      string `xml:"scope"`
+		} `xml:"dependencies>dependency"`
+	}
+	if err := xml.Unmarshal(data, &pom); err != nil {
+		return
+	}
+	description = pom.Description
+	for _, d := range pom.Dependencies {
+		if d.Scope == "test" || d.Scope == "provided" {
+			continue
+		}
+		name := d.GroupID + ":" + d.ArtifactID
+		deps = append(deps, format.Dep{
+			Name:       name,
+			Constraint: d.Version,
+			SearchURL:  "/ui/search?q=" + url.QueryEscape(name),
+		})
+	}
+	sort.Slice(deps, func(i, j int) bool { return deps[i].Name < deps[j].Name })
+	return
 }
