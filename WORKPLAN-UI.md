@@ -186,8 +186,16 @@ populated for at least npm and CRAN.
   The version list on the existing page should link each version to its
   version-specific URL.
 
-**Exit:** #19, #20, and #26 shipped; existing handler tests stay green; security
-headers test green on any new routes.
+- **Per-version publish timestamps** (#27): the version list on the component
+  detail page shows no publish date per version. Add `PublishedAt time.Time` to
+  `format.VersionInfo` and populate it in each format's `Inspect`:
+  npm — from the packument `time[version]` map (already in memory);
+  Helm — from `chartRecord.UploadedAt` (already stored per version);
+  CRAN/Maven — leave as zero (no reliable per-version source).
+  Render as a small secondary date next to each version in `component.html`.
+
+**Exit:** #19, #20, #26, and #27 shipped; existing handler tests stay green;
+security headers test green on any new routes.
 
 ---
 
@@ -216,10 +224,11 @@ headers test green on any new routes.
 | 7 | `BrowseRepo` full-load, no caching | U3 (triage → perf/index) | ✅ triaged |
 | 19 | Columns in listings are not sortable | U3 | ✅ done |
 | 20 | No format/language icons on badges | U3 | ✅ done |
-| 21 | Proxy packages show no last-published timestamp | U3 | ❌ open |
+| 21 | Proxy packages show no last-published timestamp | U3 | ✅ done (CRAN + Maven) |
 | 22 | Proxy repos show empty component list in browse | U3 | ✅ done (CRAN only) |
-| 23 | Dependency links navigate to search instead of component page | U3 | ❌ open |
+| 23 | Dependency links navigate to search instead of component page | U3 | ✅ done |
 | 26 | Component detail page is version-unaware (always shows latest deps/readme) | U3 | ❌ open |
+| 27 | No per-version publish timestamp on component detail page | U3 | ❌ open |
 | 24 | npm proxy Inspect only resolves cached packuments | U3 | ✅ done |
 | 25 | Maven proxy Inspect only resolves cached artifacts | U3 | ✅ done |
 
