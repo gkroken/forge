@@ -211,13 +211,18 @@ func (h *Handler) proxy(w http.ResponseWriter, c *format.Context) {
 	io.Copy(w, rc)
 }
 
-// allPkgRecords returns merged records for group repos, or direct records for
-// hosted/proxy repos.
+// allPkgRecords returns records appropriate for the repo kind:
+// group → merged from all members; proxy → parsed from the upstream
+// PACKAGES file (cached locally by the proxy fetcher); hosted → meta store.
 func (h *Handler) allPkgRecords(c *format.Context) []pkgRecord {
-	if c.Repo.Kind == repo.Group {
+	switch c.Repo.Kind {
+	case repo.Group:
 		return h.groupPkgRecords(c)
+	case repo.Proxy:
+		return h.upstreamPkgRecords(c)
+	default:
+		return h.pkgRecords(c)
 	}
-	return h.pkgRecords(c)
 }
 
 // packages returns the PACKAGES index for this repo.
