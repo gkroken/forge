@@ -4,10 +4,10 @@
   <table>
     <thead>
       <tr>
-        <th>Name</th>
-        <th>Format</th>
-        <th>Kind</th>
-        <th>Components</th>
+        <th><a class="sort-th" href="{{sortURL "name" .Sort .Dir}}">Name{{sortIcon "name" .Sort .Dir}}</a></th>
+        <th><a class="sort-th" href="{{sortURL "format" .Sort .Dir}}">Format{{sortIcon "format" .Sort .Dir}}</a></th>
+        <th><a class="sort-th" href="{{sortURL "kind" .Sort .Dir}}">Kind{{sortIcon "kind" .Sort .Dir}}</a></th>
+        <th><a class="sort-th" href="{{sortURL "count" .Sort .Dir}}">Components{{sortIcon "count" .Sort .Dir}}</a></th>
       </tr>
     </thead>
     <tbody>

@@ -242,6 +242,8 @@ td a:hover { text-decoration: underline; }
 .col-count  { color: var(--text-muted); font-size: 12px; }
 .col-date   { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
 .col-actions{ text-align: right; white-space: nowrap; }
+.sort-th { color: inherit; text-decoration: none; white-space: nowrap; }
+.sort-th:hover { color: var(--accent); }
 
 /* ── filter bar ──────────────────────────────────────────────────────── */
 .filter-bar { margin-bottom: 1rem; }

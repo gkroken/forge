@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -69,6 +70,25 @@ var uiFuncs = template.FuncMap{
 	},
 	"urlPathEscape": url.PathEscape,
 	"cssVer":        func() string { return cssVer },
+	// sortURL builds the href for a column sort link.
+	// Clicking the active column flips the direction; a new column sorts asc.
+	"sortURL": func(col, activeCol, activeDir string) string {
+		dir := "asc"
+		if col == activeCol && activeDir == "asc" {
+			dir = "desc"
+		}
+		return "/ui/?sort=" + col + "&dir=" + dir
+	},
+	// sortIcon returns ▲/▼ for the active column, empty for inactive columns.
+	"sortIcon": func(col, activeCol, activeDir string) string {
+		if col != activeCol {
+			return ""
+		}
+		if activeDir == "desc" {
+			return " ▼"
+		}
+		return " ▲"
+	},
 }
 
 func parseUITmpl(files ...string) *template.Template {
@@ -106,6 +126,8 @@ type loginPage struct {
 type homePage struct {
 	Title string
 	Repos []repoRow
+	Sort  string // active sort column: "name"|"format"|"kind"|"count"
+	Dir   string // "asc"|"desc"
 }
 
 type repoRow struct {
@@ -196,7 +218,44 @@ func (s *Server) uiHome(w http.ResponseWriter, r *http.Request) {
 			Kind: string(rp.Kind), Count: count,
 		})
 	}
-	render(w, tmplHome, "base.html", homePage{Title: "Repositories", Repos: rows})
+
+	sortCol := r.URL.Query().Get("sort")
+	sortDir := r.URL.Query().Get("dir")
+	if sortDir != "desc" {
+		sortDir = "asc"
+	}
+	if sortCol != "" {
+		sort.SliceStable(rows, func(i, j int) bool {
+			var less bool
+			switch sortCol {
+			case "format":
+				less = rows[i].Format < rows[j].Format
+			case "kind":
+				less = rows[i].Kind < rows[j].Kind
+			case "count":
+				ci, cj := rows[i].Count, rows[j].Count
+				if ci < 0 {
+					ci = -1
+				}
+				if cj < 0 {
+					cj = -1
+				}
+				less = ci < cj
+			default: // "name"
+				sortCol = "name"
+				less = rows[i].Name < rows[j].Name
+			}
+			if sortDir == "desc" {
+				return !less
+			}
+			return less
+		})
+	}
+
+	render(w, tmplHome, "base.html", homePage{
+		Title: "Repositories", Repos: rows,
+		Sort: sortCol, Dir: sortDir,
+	})
 }
 
 func (s *Server) uiRepo(w http.ResponseWriter, r *http.Request, name string) {
