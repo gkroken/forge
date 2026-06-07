@@ -846,7 +846,7 @@ func (h *Handler) Inspect(c *format.Context, baseURL, pkg string) (format.Compon
 			deps = append(deps, format.Dep{
 				Name:       name,
 				Constraint: cs,
-				SearchURL:  "/ui/search?q=" + url.QueryEscape(name),
+				SearchURL:  "/ui/repos/" + c.Repo.Name + "/" + name,
 			})
 		}
 		sort.Slice(deps, func(i, j int) bool { return deps[i].Name < deps[j].Name })

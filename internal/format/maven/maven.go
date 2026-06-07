@@ -28,7 +28,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"path"
 	"sort"
 	"strconv"
@@ -881,7 +880,7 @@ func (h *Handler) inspectFromUpstream(c *format.Context, baseURL, groupID, artif
 			pomResp.Body.Close()
 			if err == nil {
 				c.Blob.Put(c.Key(pomPath), bytes.NewReader(pomData)) //nolint:errcheck
-				description, deps = parsePOMDetail(pomData)
+				description, deps = parsePOMDetail(c.Repo.Name, pomData)
 			}
 		} else {
 			pomResp.Body.Close()
@@ -909,7 +908,7 @@ func (h *Handler) inspectFromUpstream(c *format.Context, baseURL, groupID, artif
 
 // parsePOMDetail extracts description and non-test/provided dependencies from a
 // POM XML blob.
-func parsePOMDetail(data []byte) (description string, deps []format.Dep) {
+func parsePOMDetail(repoName string, data []byte) (description string, deps []format.Dep) {
 	var pom struct {
 		Description  string `xml:"description"`
 		Dependencies []struct {
@@ -931,7 +930,7 @@ func parsePOMDetail(data []byte) (description string, deps []format.Dep) {
 		deps = append(deps, format.Dep{
 			Name:       name,
 			Constraint: d.Version,
-			SearchURL:  "/ui/search?q=" + url.QueryEscape(name),
+			SearchURL:  "/ui/repos/" + repoName + "/" + name,
 		})
 	}
 	sort.Slice(deps, func(i, j int) bool { return deps[i].Name < deps[j].Name })

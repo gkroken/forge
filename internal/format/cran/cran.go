@@ -1027,7 +1027,7 @@ func (h *Handler) Inspect(c *format.Context, baseURL, comp string) (format.Compo
 			DownloadURL: fmt.Sprintf("%s/repository/%s/src/contrib/%s_%s.tar.gz", baseURL, c.Repo.Name, rec.Package, rec.Version),
 		}
 	}
-	deps := cranParseDeps(latest.Depends, latest.Imports)
+	deps := cranParseDeps(c.Repo.Name, latest.Depends, latest.Imports)
 	snippet := fmt.Sprintf(`install.packages("%s", repos="%s/repository/%s/")`, comp, baseURL, c.Repo.Name)
 	return format.ComponentDetail{
 		Name:           comp,
@@ -1072,10 +1072,18 @@ func (h *Handler) fetchArchiveVersions(c *format.Context, pkg string) []string {
 	return versions
 }
 
+// baseRPkgs are packages that ship with R itself and are never on CRAN.
+var baseRPkgs = map[string]bool{
+	"R": true, "base": true, "compiler": true, "datasets": true,
+	"graphics": true, "grDevices": true, "grid": true, "methods": true,
+	"parallel": true, "splines": true, "stats": true, "stats4": true,
+	"tcltk": true, "tools": true, "translations": true, "utils": true,
+}
+
 // cranParseDeps splits CRAN Depends/Imports fields into Dep entries.
 // Each comma-separated token is a package name with an optional parenthesised
-// version constraint.  The pseudo-dependency "R" is always skipped.
-func cranParseDeps(depends, imports string) []format.Dep {
+// version constraint. R itself and base packages are skipped.
+func cranParseDeps(repoName, depends, imports string) []format.Dep {
 	seen := map[string]bool{}
 	var deps []format.Dep
 	for _, field := range []string{depends, imports} {
@@ -1086,14 +1094,14 @@ func cranParseDeps(depends, imports string) []format.Dep {
 				constraint = strings.TrimSpace(name[idx:])
 				name = strings.TrimSpace(name[:idx])
 			}
-			if name == "" || name == "R" || seen[name] {
+			if name == "" || baseRPkgs[name] || seen[name] {
 				continue
 			}
 			seen[name] = true
 			deps = append(deps, format.Dep{
 				Name:       name,
 				Constraint: constraint,
-				SearchURL:  "/ui/search?q=" + name,
+				SearchURL:  "/ui/repos/" + repoName + "/" + name,
 			})
 		}
 	}
