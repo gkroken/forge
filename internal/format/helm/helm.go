@@ -180,81 +180,115 @@ func (h *Handler) upstreamRecords(c *format.Context) []chartRecord {
 
 // parseIndexYAML parses a Helm index.yaml into chartRecord slices using a
 // line-by-line state machine. No YAML library is used.
+//
+// Two common indentation styles are supported:
+//   - Helm CLI: entry dash at indent 4, fields at indent 6
+//   - Bitnami/ChartMuseum: entry dash at indent 2, fields at indent 4
+//
+// The parser discovers entryDashIndent from the first dash encountered and
+// derives fieldIndent = entryDashIndent + 2.
 func parseIndexYAML(data []byte) []chartRecord {
-	type state int
-	const (
-		stateTop   state = iota // top-level keys
-		stateEntries            // inside entries:
-		stateChart              // inside a named chart block
-		stateEntry              // inside a - (version entry)
-		stateURLs               // inside urls: list
-	)
-
 	var recs []chartRecord
 	cur := chartRecord{}
-	st := stateTop
+	hasCur := false
+
 	inEntries := false
+	entryDashIndent := -1 // set when first entry dash is found
+	inURLs := false
 
 	for _, rawLine := range strings.Split(string(data), "\n") {
 		line := strings.TrimRight(rawLine, "\r")
-		if line == "" {
+		if strings.TrimSpace(line) == "" {
 			continue
 		}
 		indent := len(line) - len(strings.TrimLeft(line, " "))
 		trimmed := strings.TrimSpace(line)
 
-		switch {
-		case !inEntries && trimmed == "entries:":
-			inEntries = true
-			st = stateEntries
-		case !inEntries:
+		if !inEntries {
+			if trimmed == "entries:" {
+				inEntries = true
+			}
 			continue
+		}
 
-		case st == stateEntries && indent == 2 && !strings.HasPrefix(trimmed, "-"):
-			// New chart name block — flush previous entry if any
-			if cur.Name != "" {
+		// Back to top level (e.g. "generated:")
+		if indent == 0 {
+			if hasCur {
 				recs = append(recs, cur)
 				cur = chartRecord{}
+				hasCur = false
 			}
-			st = stateChart
+			inEntries = false
+			continue
+		}
 
-		case (st == stateChart || st == stateEntry || st == stateURLs) && indent == 4 && strings.HasPrefix(trimmed, "- "):
-			// New version entry — flush previous
-			if cur.Name != "" {
+		// Chart name key at indent 2 (no dash, ends with ":")
+		if indent == 2 && !strings.HasPrefix(trimmed, "-") {
+			if hasCur {
 				recs = append(recs, cur)
 				cur = chartRecord{}
+				hasCur = false
 			}
-			st = stateEntry
-			// Some fields may appear on the same line as the dash
-			kv := strings.TrimPrefix(trimmed, "- ")
-			applyField(&cur, kv)
+			entryDashIndent = -1
+			inURLs = false
+			continue
+		}
 
-		case st == stateEntry && indent == 6 && trimmed == "urls:":
-			st = stateURLs
+		// New version entry: a "- " at the entry-dash indent level
+		if strings.HasPrefix(trimmed, "- ") && (entryDashIndent == -1 || indent == entryDashIndent) {
+			if hasCur {
+				recs = append(recs, cur)
+			}
+			cur = chartRecord{}
+			hasCur = true
+			entryDashIndent = indent
+			inURLs = false
+			// Apply any inline key-value (e.g. "- name: foo")
+			applyField(&cur, strings.TrimPrefix(trimmed, "- "))
+			continue
+		}
 
-		case st == stateURLs && indent >= 6 && strings.HasPrefix(trimmed, "- "):
+		if !hasCur || entryDashIndent < 0 {
+			continue
+		}
+		fieldIndent := entryDashIndent + 2
+
+		// Lines at the field level
+		if indent == fieldIndent {
+			if strings.HasPrefix(trimmed, "- ") {
+				// List item at field level (deps, maintainers, keywords, etc. or urls item)
+				if inURLs && cur.Filename == "" {
+					cur.Filename = strings.TrimPrefix(trimmed, "- ")
+				}
+					continue
+			}
+			// Plain key at field level — check if it starts a nested block to skip
+			key, _, hasVal := strings.Cut(trimmed, ": ")
+			if !hasVal {
+				key = strings.TrimSuffix(trimmed, ":")
+			}
+			switch key {
+			case "urls":
+				inURLs = true
+			case "annotations", "dependencies", "maintainers", "keywords", "sources":
+				inURLs = false
+			default:
+				inURLs = false
+				if !strings.HasSuffix(trimmed, ":") { // skip block-only keys with no inline value
+					applyField(&cur, trimmed)
+				}
+			}
+			continue
+		}
+
+		// Deeper lines: only care about url items
+		if indent > fieldIndent && inURLs && strings.HasPrefix(trimmed, "- ") {
 			if cur.Filename == "" {
 				cur.Filename = strings.TrimPrefix(trimmed, "- ")
 			}
-
-		case st == stateURLs && indent == 6 && !strings.HasPrefix(trimmed, "- "):
-			st = stateEntry
-			applyField(&cur, trimmed)
-
-		case st == stateEntry && indent == 6:
-			applyField(&cur, trimmed)
-
-		case indent < 2:
-			// Back to top level (e.g. "generated:")
-			if cur.Name != "" {
-				recs = append(recs, cur)
-				cur = chartRecord{}
-			}
-			inEntries = false
-			st = stateTop
 		}
 	}
-	if cur.Name != "" {
+	if hasCur {
 		recs = append(recs, cur)
 	}
 

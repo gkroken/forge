@@ -135,6 +135,8 @@ func main() {
 			Upstream: "https://registry.npmjs.org", AnonymousRead: true},
 		{Name: "cran-proxy", Format: "cran", Kind: repo.Proxy,
 			Upstream: cranProxyUpstream(), AnonymousRead: true},
+		{Name: "helm-proxy", Format: "helm", Kind: repo.Proxy,
+			Upstream: "https://charts.bitnami.com/bitnami", AnonymousRead: true},
 		// OCI / Docker
 		{Name: "docker-hosted", Format: "oci", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
 		// Group: merged read-only views (hosted first so internal artifacts shadow upstream).
@@ -143,7 +145,7 @@ func main() {
 		{Name: "npm-public", Format: "npm", Kind: repo.Group,
 			Members: []string{"npm-hosted", "npm-proxy"}, AnonymousRead: true},
 		{Name: "helm-public", Format: "helm", Kind: repo.Group,
-			Members: []string{"helm-hosted"}, AnonymousRead: true},
+			Members: []string{"helm-hosted", "helm-proxy"}, AnonymousRead: true},
 		{Name: "cran-public", Format: "cran", Kind: repo.Group,
 			Members: []string{"cran-hosted", "cran-proxy"}, AnonymousRead: true},
 	} {

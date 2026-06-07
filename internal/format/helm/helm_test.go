@@ -427,3 +427,67 @@ generated: 2024-03-16T00:00:00Z
 		t.Error("otherchart-2.0.0 not found")
 	}
 }
+
+// TestParseIndexYAML_Bitnami tests the Bitnami/ChartMuseum-style index.yaml
+// where entry dashes are at indent 2 (same as chart name) and fields at indent 4.
+func TestParseIndexYAML_Bitnami(t *testing.T) {
+	yaml := `apiVersion: v1
+entries:
+  nginx:
+  - annotations:
+      category: Infrastructure
+    apiVersion: v2
+    appVersion: "1.27.0"
+    created: "2024-06-01T12:00:00.123456789Z"
+    dependencies:
+    - condition: common.enabled
+      name: common
+      version: 2.x.x
+    description: NGINX web server
+    digest: aabbccdd1122
+    maintainers:
+    - name: Broadcom, Inc.
+    name: nginx
+    urls:
+    - oci://registry-1.docker.io/bitnamicharts/nginx:18.1.0
+    version: 18.1.0
+  - annotations:
+      category: Infrastructure
+    apiVersion: v2
+    created: "2023-01-10T08:00:00Z"
+    description: NGINX web server
+    digest: 0011223344
+    name: nginx
+    urls:
+    - oci://registry-1.docker.io/bitnamicharts/nginx:15.0.0
+    version: 15.0.0
+generated: "2024-06-02T00:00:00Z"
+`
+	recs := parseIndexYAML([]byte(yaml))
+	if len(recs) != 2 {
+		t.Fatalf("got %d records, want 2", len(recs))
+	}
+	byKey := map[string]chartRecord{}
+	for _, r := range recs {
+		byKey[r.Name+"-"+r.Version] = r
+	}
+	r := byKey["nginx-18.1.0"]
+	if r.Name != "nginx" {
+		t.Errorf("Name = %q, want nginx", r.Name)
+	}
+	if r.Version != "18.1.0" {
+		t.Errorf("Version = %q, want 18.1.0", r.Version)
+	}
+	if r.Description != "NGINX web server" {
+		t.Errorf("Description = %q, want 'NGINX web server'", r.Description)
+	}
+	if r.Filename != "oci://registry-1.docker.io/bitnamicharts/nginx:18.1.0" {
+		t.Errorf("Filename = %q", r.Filename)
+	}
+	if r.UploadedAt.IsZero() {
+		t.Error("UploadedAt is zero for nginx-18.1.0")
+	}
+	if _, ok := byKey["nginx-15.0.0"]; !ok {
+		t.Error("nginx-15.0.0 not found")
+	}
+}
