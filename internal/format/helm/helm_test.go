@@ -491,3 +491,28 @@ generated: "2024-06-02T00:00:00Z"
 		t.Error("nginx-15.0.0 not found")
 	}
 }
+
+func TestParseIndexYAML_WrappedDescription(t *testing.T) {
+	yaml := `apiVersion: v1
+entries:
+  appsmith:
+  - apiVersion: v2
+    created: "2024-06-01T00:00:00Z"
+    description: Appsmith is an open source platform for building and maintaining
+      internal tools, such as custom dashboards, admin panels or CRUD apps.
+    digest: abc123
+    name: appsmith
+    urls:
+    - appsmith-4.0.0.tgz
+    version: 4.0.0
+generated: "2024-06-02T00:00:00Z"
+`
+	recs := parseIndexYAML([]byte(yaml))
+	if len(recs) != 1 {
+		t.Fatalf("got %d records, want 1", len(recs))
+	}
+	want := "Appsmith is an open source platform for building and maintaining internal tools, such as custom dashboards, admin panels or CRUD apps."
+	if recs[0].Description != want {
+		t.Errorf("Description = %q\nwant         %q", recs[0].Description, want)
+	}
+}

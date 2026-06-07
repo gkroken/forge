@@ -195,6 +195,15 @@ func parseIndexYAML(data []byte) []chartRecord {
 	inEntries := false
 	entryDashIndent := -1 // set when first entry dash is found
 	inURLs := false
+	contKey := ""  // field key whose value continues on wrapped lines
+	contVal := ""  // accumulated value for contKey
+
+	flushCont := func() {
+		if contKey != "" {
+			applyField(&cur, contKey+": "+contVal)
+			contKey, contVal = "", ""
+		}
+	}
 
 	for _, rawLine := range strings.Split(string(data), "\n") {
 		line := strings.TrimRight(rawLine, "\r")
@@ -213,6 +222,7 @@ func parseIndexYAML(data []byte) []chartRecord {
 
 		// Back to top level (e.g. "generated:")
 		if indent == 0 {
+			flushCont()
 			if hasCur {
 				recs = append(recs, cur)
 				cur = chartRecord{}
@@ -224,6 +234,7 @@ func parseIndexYAML(data []byte) []chartRecord {
 
 		// Chart name key at indent 2 (no dash, ends with ":")
 		if indent == 2 && !strings.HasPrefix(trimmed, "-") {
+			flushCont()
 			if hasCur {
 				recs = append(recs, cur)
 				cur = chartRecord{}
@@ -236,6 +247,7 @@ func parseIndexYAML(data []byte) []chartRecord {
 
 		// New version entry: a "- " at the entry-dash indent level
 		if strings.HasPrefix(trimmed, "- ") && (entryDashIndent == -1 || indent == entryDashIndent) {
+			flushCont()
 			if hasCur {
 				recs = append(recs, cur)
 			}
@@ -253,17 +265,24 @@ func parseIndexYAML(data []byte) []chartRecord {
 		}
 		fieldIndent := entryDashIndent + 2
 
+		// Continuation line: deeper indent, no dash, while a field is pending
+		if indent > fieldIndent && contKey != "" && !strings.HasPrefix(trimmed, "-") {
+			contVal += " " + trimmed
+			continue
+		}
+
 		// Lines at the field level
 		if indent == fieldIndent {
+			flushCont()
 			if strings.HasPrefix(trimmed, "- ") {
 				// List item at field level (deps, maintainers, keywords, etc. or urls item)
 				if inURLs && cur.Filename == "" {
 					cur.Filename = strings.TrimPrefix(trimmed, "- ")
 				}
-					continue
+				continue
 			}
 			// Plain key at field level — check if it starts a nested block to skip
-			key, _, hasVal := strings.Cut(trimmed, ": ")
+			key, val, hasVal := strings.Cut(trimmed, ": ")
 			if !hasVal {
 				key = strings.TrimSuffix(trimmed, ":")
 			}
@@ -274,8 +293,10 @@ func parseIndexYAML(data []byte) []chartRecord {
 				inURLs = false
 			default:
 				inURLs = false
-				if !strings.HasSuffix(trimmed, ":") { // skip block-only keys with no inline value
-					applyField(&cur, trimmed)
+				if hasVal {
+					// Stash as potentially-continued field
+					contKey = key
+					contVal = strings.TrimSpace(strings.Trim(val, `"'`))
 				}
 			}
 			continue
@@ -288,6 +309,7 @@ func parseIndexYAML(data []byte) []chartRecord {
 			}
 		}
 	}
+	flushCont()
 	if hasCur {
 		recs = append(recs, cur)
 	}
