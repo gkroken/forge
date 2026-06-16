@@ -1,0 +1,109 @@
+package cleanup_test
+
+import (
+	"context"
+	"encoding/json"
+	"testing"
+	"time"
+
+	"forge/internal/cleanup"
+	"forge/internal/repo"
+)
+
+func TestCleanupPolicy_IntervalJSON(t *testing.T) {
+	p := repo.CleanupPolicy{KeepVersions: 5, Interval: 24 * time.Hour}
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"keepVersions":5,"interval":"24h0m0s"}`
+	if string(data) != want {
+		t.Fatalf("got %s, want %s", data, want)
+	}
+	var got repo.CleanupPolicy
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Interval != 24*time.Hour {
+		t.Fatalf("interval: got %v, want 24h", got.Interval)
+	}
+	if got.KeepVersions != 5 {
+		t.Fatalf("keepVersions: got %d, want 5", got.KeepVersions)
+	}
+}
+
+func TestCleanupPolicy_IntervalJSON_Zero(t *testing.T) {
+	p := repo.CleanupPolicy{KeepVersions: 3}
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got repo.CleanupPolicy
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Interval != 0 {
+		t.Fatalf("expected zero interval, got %v", got.Interval)
+	}
+}
+
+func TestCleanupPolicy_IntervalJSON_Invalid(t *testing.T) {
+	var p repo.CleanupPolicy
+	if err := json.Unmarshal([]byte(`{"interval":"notaduration"}`), &p); err == nil {
+		t.Fatal("expected error for invalid duration")
+	}
+}
+
+func TestScheduler_StartsAndStops(t *testing.T) {
+	b, m := stores(t)
+	mgr := repo.NewManager()
+	ctx, cancel := context.WithCancel(context.Background())
+	cleanup.NewScheduler(mgr, b, m).Start(ctx)
+	cancel()
+}
+
+func TestScheduler_RunDue_SkipsNoPolicy(t *testing.T) {
+	b, m := stores(t)
+	mgr := repo.NewManager()
+	if err := mgr.Add(repo.Repository{Name: "r", Format: "helm", Kind: repo.Hosted}); err != nil {
+		t.Fatal(err)
+	}
+	// No policy set — RunDue should be a no-op (no panic, no error).
+	cleanup.NewScheduler(mgr, b, m).RunDue(time.Now(), map[string]time.Time{})
+}
+
+func TestScheduler_RunDue_SkipsBeforeInterval(t *testing.T) {
+	b, m := stores(t)
+	mgr := repo.NewManager()
+	if err := mgr.Add(repo.Repository{
+		Name: "r", Format: "helm", Kind: repo.Hosted,
+		CleanupPolicy: &repo.CleanupPolicy{KeepVersions: 1, Interval: time.Hour},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	lastRun := map[string]time.Time{"r": now.Add(-30 * time.Minute)} // not yet due
+	cleanup.NewScheduler(mgr, b, m).RunDue(now, lastRun)
+	// lastRun should be unchanged since we didn't fire.
+	if !lastRun["r"].Equal(now.Add(-30 * time.Minute)) {
+		t.Fatal("lastRun should not have been updated")
+	}
+}
+
+func TestScheduler_RunDue_FiresWhenDue(t *testing.T) {
+	b, m := stores(t)
+	mgr := repo.NewManager()
+	if err := mgr.Add(repo.Repository{
+		Name: "r", Format: "helm", Kind: repo.Hosted,
+		CleanupPolicy: &repo.CleanupPolicy{KeepVersions: 1, Interval: time.Hour},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	lastRun := map[string]time.Time{"r": now.Add(-2 * time.Hour)} // overdue
+	cleanup.NewScheduler(mgr, b, m).RunDue(now, lastRun)
+	// lastRun should be updated to now.
+	if !lastRun["r"].Equal(now) {
+		t.Fatalf("lastRun not updated: got %v, want %v", lastRun["r"], now)
+	}
+}

@@ -20,6 +20,7 @@ import (
 
 	"forge/internal/auth"
 	"forge/internal/blob"
+	"forge/internal/cleanup"
 	"forge/internal/format"
 	"forge/internal/format/cran"
 	"forge/internal/format/helm"
@@ -172,6 +173,8 @@ func main() {
 		q = queue.NewMem(256)
 		slog.Info("queue: in-memory (eval mode)")
 	}
+
+	cleanup.NewScheduler(mgr, blobStore, metaStore).Start(workerCtx)
 
 	forgeSrv := server.New(mgr, reg, blobStore, metaStore, authStore).
 		WithMetrics(metrics, promReg).

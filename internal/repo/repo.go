@@ -54,6 +54,43 @@ type CleanupPolicy struct {
 	// Requires upload timestamps — only applies to artifacts published after
 	// this field was introduced.
 	DeleteOlderThanDays int `json:"deleteOlderThanDays,omitempty"`
+
+	// Interval is how often the cleanup policy runs automatically. When set
+	// (e.g. "24h", "168h"), the background scheduler fires cleanup.Run on
+	// this cadence. Zero means manual-only (POST /api/v1/repos/{name}/cleanup).
+	Interval time.Duration `json:"-"`
+}
+
+// MarshalJSON serialises Interval as a human-readable string (e.g. "24h").
+func (p CleanupPolicy) MarshalJSON() ([]byte, error) {
+	type Alias CleanupPolicy
+	return json.Marshal(&struct {
+		Alias
+		Interval string `json:"interval,omitempty"`
+	}{
+		Alias:    Alias(p),
+		Interval: durationString(p.Interval),
+	})
+}
+
+// UnmarshalJSON parses Interval back from a string.
+func (p *CleanupPolicy) UnmarshalJSON(data []byte) error {
+	type Alias CleanupPolicy
+	aux := &struct {
+		*Alias
+		Interval string `json:"interval,omitempty"`
+	}{Alias: (*Alias)(p)}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	if aux.Interval != "" {
+		d, err := time.ParseDuration(aux.Interval)
+		if err != nil {
+			return fmt.Errorf("invalid cleanup interval %q: %w", aux.Interval, err)
+		}
+		p.Interval = d
+	}
+	return nil
 }
 
 type Repository struct {
