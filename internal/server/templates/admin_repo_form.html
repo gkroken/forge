@@ -71,6 +71,51 @@
     </label>
   </div>
 
+  <fieldset id="g-cleanup">
+    <legend>Cleanup policy <span class="form-hint-inline">(hosted only)</span></legend>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="f-keep-versions">Keep versions</label>
+        <input id="f-keep-versions" type="number" min="0" name="cleanupKeepVersions"
+               value="{{if .Repo.CleanupPolicy}}{{.Repo.CleanupPolicy.KeepVersions}}{{end}}"
+               placeholder="0 = unlimited">
+      </div>
+      <div class="form-group">
+        <label for="f-del-older">Delete older than (days)</label>
+        <input id="f-del-older" type="number" min="0" name="cleanupDeleteOlderThanDays"
+               value="{{if .Repo.CleanupPolicy}}{{.Repo.CleanupPolicy.DeleteOlderThanDays}}{{end}}"
+               placeholder="0 = disabled">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="f-del-snap">Delete snapshots older than (days)</label>
+        <input id="f-del-snap" type="number" min="0" name="cleanupDeleteSnapshotsDays"
+               value="{{if .Repo.CleanupPolicy}}{{.Repo.CleanupPolicy.DeleteSnapshotsDays}}{{end}}"
+               placeholder="0 = disabled">
+      </div>
+      <div class="form-group">
+        <label for="f-cleanup-interval">Run interval</label>
+        <input id="f-cleanup-interval" type="text" name="cleanupInterval"
+               value="{{if .Repo.CleanupPolicy}}{{durStr .Repo.CleanupPolicy.Interval}}{{end}}"
+               placeholder="e.g. 24h (empty = manual only)">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="checkbox-label">
+        <input type="checkbox" name="cleanupKeepReleasesOnly"{{if .Repo.CleanupPolicy}}{{if .Repo.CleanupPolicy.KeepReleasesOnly}} checked{{end}}{{end}}>
+        Keep releases only (delete all snapshots / pre-releases)
+      </label>
+    </div>
+    {{if .IsEdit}}
+    <div class="form-group">
+      <button type="button" class="btn"
+              onclick="runCleanup('{{.Repo.Name}}', this)">Run now</button>
+      <span id="cleanup-result" style="margin-left:.75rem;font-size:.85em"></span>
+    </div>
+    {{end}}
+  </fieldset>
+
   <div class="form-actions">
     <button type="submit" class="btn btn-primary">
       {{if .IsEdit}}Save changes{{else}}Create repository{{end}}
@@ -85,7 +130,19 @@ function syncKind() {
   document.getElementById('g-upstream').style.display    = k === 'proxy' ? '' : 'none';
   document.getElementById('g-proxy-extra').style.display = k === 'proxy' ? '' : 'none';
   document.getElementById('g-members').style.display     = k === 'group' ? '' : 'none';
+  document.getElementById('g-cleanup').style.display     = k === 'hosted' ? '' : 'none';
 }
 syncKind();
+
+function runCleanup(name, btn) {
+  btn.disabled = true;
+  var el = document.getElementById('cleanup-result');
+  el.textContent = 'Running…';
+  fetch('/api/v1/repos/' + name + '/cleanup', {method: 'POST'})
+    .then(function(r) { return r.json(); })
+    .then(function(d) { el.textContent = 'Done: ' + d.deleted + ' artifact(s) deleted, ' + (d.freed_bytes / 1048576).toFixed(2) + ' MB freed'; })
+    .catch(function(e) { el.textContent = 'Error: ' + e; })
+    .finally(function() { btn.disabled = false; });
+}
 </script>
 {{end}}

@@ -187,6 +187,114 @@ populated for at least npm and CRAN.
 **Exit:** #19, #20, and #27 shipped; existing handler tests stay green;
 security headers test green on any new routes.
 
+### Phase U4 — Cleanup policy management (#28)
+
+The current cleanup policy UI is a minimal fieldset bolted onto the repo edit
+form. Industry practice (Nexus, Artifactory) treats cleanup policies as
+**first-class named objects** created centrally and assigned to repos — not
+inline form fields. The inline approach also fails two correctness requirements:
+the policy section is shown for proxy and group repos (the backend silently
+ignores them), and there is no dry-run, no run history, and no feedback beyond
+a raw JSON blob from the API.
+
+#### Backend changes required first
+
+- **Named policy store**: add a `CleanupPolicy` manager (analogous to
+  `repo.Manager`) that persists named policies to `meta.Store` under a
+  `cleanup-policies` namespace. Each policy has a `Name` (slug), optional
+  `Description`, and the existing rule fields (`KeepVersions`,
+  `KeepReleasesOnly`, `DeleteSnapshotsDays`, `DeleteOlderThanDays`,
+  `Interval`). Add a `LastDownloadedDays int` rule: delete artifacts not
+  downloaded in N days (requires download-time tracking on blob reads — wire
+  this in the blob middleware and store it in meta alongside upload timestamps).
+- **Repo → policy assignment**: replace `Repository.CleanupPolicy *CleanupPolicy`
+  with `Repository.CleanupPolicyName string` (the slug). The scheduler resolves
+  the named policy at run time.
+- **Dry-run mode**: add `cleanup.DryRun(r, b, m) (Result, error)` that walks
+  the same logic as `Run` but deletes nothing. `Result` gains a `Components
+  []CleanupCandidate` field listing what would be removed (name, version,
+  size, age).
+- **Run history**: after each `Run` (scheduler or manual), append a
+  `CleanupRun` record to meta (`{repoName}:cleanup:history`): timestamp,
+  policy name, deleted count, freed bytes. Keep last 20 entries per repo.
+- **API**: `GET/POST/DELETE /api/v1/cleanup-policies` and
+  `GET /api/v1/cleanup-policies/{name}`; `POST
+  /api/v1/repos/{name}/cleanup?dry=true` for dry-run.
+
+#### UI
+
+**`/ui/admin/cleanup-policies`** — policy list page (link from admin home):
+
+- Table: Name | Description | Rules summary | Assigned to (repo count) | Actions
+- "New policy" button → `/ui/admin/cleanup-policies/new`
+- Per-row Edit / Delete (delete blocked if policy is assigned to any repo,
+  with a helpful message listing them).
+
+**`/ui/admin/cleanup-policies/new` and `.../edit/{name}`** — policy form:
+
+- Name (slug, immutable after create) + Description (free text).
+- Rules section — each rule is a labelled card that can be toggled on/off:
+  - **Keep last N versions** — number input; hint "0 = no limit".
+  - **Delete older than N days** — number input; hint "0 = disabled".
+  - **Delete snapshots older than N days** — number input; applies to
+    Maven SNAPSHOTs and npm pre-releases.
+  - **Delete not downloaded in N days** — number input; skipped for
+    artifacts without a recorded last-download timestamp.
+  - **Keep releases only** — checkbox; deletes all snapshot/pre-release
+    versions regardless of age.
+- Schedule: simple interval input ("24h", "168h") or a cron expression
+  (`0 2 * * *`); empty = manual-only. Display the next scheduled run time
+  as a hint once saved.
+- Save / Cancel buttons.
+
+**Repo edit form** (`/ui/admin/repos/{name}/edit`) — replace the inline
+cleanup fieldset with:
+
+- A single "Cleanup policy" dropdown (only shown for `hosted` repos;
+  hidden for `proxy` and `group`): lists all named policies + a "— none —"
+  option.
+- A "Manage policies" link opening `/ui/admin/cleanup-policies` in the same
+  tab.
+
+**`/ui/admin/repos/{name}/cleanup`** — per-repo cleanup panel (linked from
+the repo edit page via an "Inspect / run" button; admin-only):
+
+- **Assigned policy** summary card: rules in plain English
+  ("Keep last 5 versions · Delete snapshots older than 30 days").
+- **Dry-run** button: calls `POST /api/v1/repos/{name}/cleanup?dry=true`,
+  renders a table of candidates — Component | Version | Size | Age | Reason —
+  paginated (max 200 rows shown; full list downloadable as CSV). Confirm
+  button below the table executes the real run.
+- **Run history** table: Timestamp | Policy | Deleted | Freed | Duration —
+  last 20 runs, sourced from the history meta records. Empty state: "No
+  cleanup runs recorded yet."
+- **Run now** button (bypasses dry-run for trusted admins who just want to
+  trigger immediately); confirmation dialog: "This will permanently delete
+  artifacts. Continue?"
+
+#### Interaction and display requirements
+
+- Policy section on repo form only appears when `kind === hosted`; JS
+  `syncKind()` already handles this — extend it.
+- Dry-run table renders via an htmx swap (`hx-post`, target
+  `#dryrun-results`) so the page does not reload.
+- Run history auto-refreshes after a manual run completes (htmx poll or
+  swap the history block in the response).
+- All mutations (create/edit/delete policy, trigger run) require admin auth;
+  `RequireAdminUI` on every handler.
+- Security headers test must stay green; add new routes to the route table
+  in `security_headers_test.go`.
+
+#### Exit criteria
+
+- Named cleanup policies are CRUD-able at `/ui/admin/cleanup-policies`.
+- Repo edit form shows a policy dropdown for hosted repos only; proxy and
+  group repos show nothing.
+- Dry-run renders a candidate table before any deletion occurs.
+- Run history shows last 20 runs per repo.
+- All new routes have handler tests; `internal/server` coverage stays ≥80%.
+- Security headers test green.
+
 ---
 
 ## 4. Known-gap → phase map
@@ -219,6 +327,7 @@ security headers test green on any new routes.
 | 23 | Dependency links navigate to search instead of component page | U3 | ✅ done |
 | 26 | Component detail page is version-unaware (always shows latest deps/readme) | U3 | 🚫 dropped |
 | 27 | No per-version publish timestamp on component detail page | U3 | ❌ open |
+| 28 | Cleanup policy UI is minimal and inline; no named policies, dry-run, or history | U4 | ❌ open |
 | 24 | npm proxy Inspect only resolves cached packuments | U3 | ✅ done |
 | 25 | Maven proxy Inspect only resolves cached artifacts | U3 | ✅ done |
 
