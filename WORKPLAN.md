@@ -5,8 +5,8 @@ pluggable `format.Handler` spine) to a production artifact repository. Testing i
 treated as a first-class workstream, not a phase at the end: **the test harness
 is built before the features it guards.**
 
-**Current status (2026-06-16): all major phases are complete. Remaining open items
-are listed at the bottom of each phase and consolidated in §9.**
+**Current status (2026-06-16): all major phases are complete. Coverage gate passing
+at 76.1%. Scheduled cleanup shipped. Remaining open items consolidated in §9.**
 
 ---
 
@@ -104,7 +104,7 @@ Everything needed to run forge is declarative and version-controlled:
   `renv`, `pak`).
 - ✅ Golden-file framework + `-update` flag convention.
 - ✅ Load-test rig (k6) wired into nightly CI.
-- ✅ Coverage gates: overall ≥75%, core packages ≥85%; ratchet enforced.
+- ✅ Coverage gates: overall ≥75%, core packages ≥85%; ratchet enforced. Currently at 76.1%.
 - ✅ Multi-arch container image (distroless, non-root) built + published in CI.
 - ✅ `docker compose up` eval stack (zero external deps).
 
@@ -180,6 +180,10 @@ Everything needed to run forge is declarative and version-controlled:
   counters; Grafana dashboard + `ServiceMonitor` in Helm chart.
 - ✅ Audit log for security-relevant events.
 - ✅ Operational runbooks documented.
+- ✅ **Scheduled cleanup** (`internal/cleanup`): Nexus-style retention policies
+  (`CleanupPolicy`: keepVersions, keepReleasesOnly, deleteSnapshotsDays,
+  deleteOlderThanDays, interval). Background scheduler fires per-repo cleanup
+  on a configurable cadence. Interval serialised as human-readable string ("24h").
 
 ### Phase 7 — Security & GA hardening ✅
 - ✅ SAST: `gosec` in CI on every PR.
