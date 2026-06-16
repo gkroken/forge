@@ -1111,6 +1111,91 @@ func TestBinaryTree_PlatformVersions_MultiSegmentPlatform(t *testing.T) {
 	}
 }
 
+// --- Inspect -----------------------------------------------------------------
+
+func TestInspect_Hosted(t *testing.T) {
+	dir := t.TempDir()
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	ns := "cran-hosted+cran"
+	m.PutJSON(ns, "mathutils_0.1.0", pkgRecord{Package: "mathutils", Version: "0.1.0", License: "MIT", Title: "Math Utilities"})                                 //nolint:errcheck
+	m.PutJSON(ns, "mathutils_0.2.0", pkgRecord{Package: "mathutils", Version: "0.2.0", License: "MIT", Title: "Math Utilities", Imports: "stats", Depends: "R (>= 4.0)"}) //nolint:errcheck
+
+	c := &format.Context{
+		Repo: repo.Repository{Name: "cran-hosted", Format: "cran", Kind: repo.Hosted},
+		Meta: m,
+	}
+	detail, ok := New().Inspect(c, "http://forge.local", "mathutils")
+	if !ok {
+		t.Fatal("Inspect returned false")
+	}
+	if detail.Name != "mathutils" {
+		t.Errorf("Name = %q, want mathutils", detail.Name)
+	}
+	if len(detail.Versions) != 2 {
+		t.Errorf("Versions count = %d, want 2", len(detail.Versions))
+	}
+	if detail.Versions[0].Version != "0.2.0" {
+		t.Errorf("first version = %q, want 0.2.0 (newest-first)", detail.Versions[0].Version)
+	}
+	if detail.License != "MIT" {
+		t.Errorf("License = %q, want MIT", detail.License)
+	}
+	if detail.InstallSnippet == "" {
+		t.Error("InstallSnippet must not be empty")
+	}
+	if detail.Versions[0].DownloadURL == "" {
+		t.Error("DownloadURL must not be empty")
+	}
+}
+
+func TestInspect_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	c := &format.Context{
+		Repo: repo.Repository{Name: "cran-hosted", Format: "cran", Kind: repo.Hosted},
+		Meta: m,
+	}
+	if _, ok := New().Inspect(c, "http://forge.local", "nosuchpkg"); ok {
+		t.Fatal("expected false for absent package")
+	}
+}
+
+func TestCranParseDeps_Basic(t *testing.T) {
+	deps := cranParseDeps("cran-hosted", "Rcpp, Matrix (>= 1.5)", "ggplot2")
+	names := make([]string, len(deps))
+	for i, d := range deps {
+		names[i] = d.Name
+	}
+	// Sorted alphabetically; R base packages (R itself) filtered out.
+	want := []string{"Matrix", "Rcpp", "ggplot2"}
+	if len(deps) != len(want) {
+		t.Fatalf("deps = %v, want %v", names, want)
+	}
+	for i, d := range deps {
+		if d.Name != want[i] {
+			t.Errorf("deps[%d].Name = %q, want %q", i, d.Name, want[i])
+		}
+	}
+	// Constraint preserved for Matrix.
+	var matrixDep format.Dep
+	for _, d := range deps {
+		if d.Name == "Matrix" {
+			matrixDep = d
+		}
+	}
+	if matrixDep.Constraint == "" {
+		t.Error("expected constraint for Matrix")
+	}
+}
+
+func TestCranParseDeps_BasePackagesFiltered(t *testing.T) {
+	// "R", "stats", "base" are base R packages and must be filtered.
+	deps := cranParseDeps("cran-hosted", "R (>= 4.0), stats", "base")
+	if len(deps) != 0 {
+		t.Errorf("expected 0 deps after filtering base pkgs, got %d: %v", len(deps), deps)
+	}
+}
+
 // makeMacOSBinPkg creates a minimal macOS binary package (.tgz) with a
 // DESCRIPTION file including Built and OS_type for an arm64 macOS target.
 func makeMacOSBinPkg(t *testing.T, pkg, version string) []byte {

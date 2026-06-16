@@ -550,3 +550,151 @@ func TestServe_GroupTarball_NotFound(t *testing.T) {
 		t.Fatalf("expected 404, got %d", rw.Code)
 	}
 }
+
+// ── Inspect ───────────────────────────────────────────────────────────────────
+
+func TestInspect_Hosted(t *testing.T) {
+	c, _, m := hostedCtx(t)
+	seedPackument(t, m, "npm-hosted", "mylib", []string{"1.0.0", "2.0.0"},
+		map[string]string{"latest": "2.0.0"})
+	// Seed a per-version record with a dependency so deps parsing is exercised.
+	m.PutJSON("npm-hosted:npm:v", "mylib:2.0.0", map[string]any{ //nolint:errcheck
+		"name": "mylib", "version": "2.0.0",
+		"dependencies": map[string]any{"lodash": "^4.17.0"},
+	})
+
+	detail, ok := New().Inspect(c, "http://localhost:8080", "mylib")
+	if !ok {
+		t.Fatal("expected Inspect to succeed")
+	}
+	if detail.Name != "mylib" {
+		t.Errorf("name: got %q", detail.Name)
+	}
+	if len(detail.Versions) != 2 {
+		t.Errorf("versions: got %d, want 2", len(detail.Versions))
+	}
+	if len(detail.Deps) != 1 || detail.Deps[0].Name != "lodash" {
+		t.Errorf("deps: %+v", detail.Deps)
+	}
+	if !strings.Contains(detail.InstallSnippet, "mylib") {
+		t.Errorf("snippet: %s", detail.InstallSnippet)
+	}
+}
+
+func TestInspect_NoPackument(t *testing.T) {
+	c, _, _ := hostedCtx(t)
+	if _, ok := New().Inspect(c, "http://localhost:8080", "ghost"); ok {
+		t.Fatal("expected false for missing packument")
+	}
+}
+
+func TestInspect_EmptyVersions(t *testing.T) {
+	c, _, m := hostedCtx(t)
+	// Packument with no versions field.
+	m.PutJSON("npm-hosted:npm", "empty-pkg", map[string]any{"name": "empty-pkg"}) //nolint:errcheck
+	if _, ok := New().Inspect(c, "http://localhost:8080", "empty-pkg"); ok {
+		t.Fatal("expected false when packument has no versions")
+	}
+}
+
+func TestInspect_Group(t *testing.T) {
+	b, m := func() (blob.Store, meta.Store) {
+		dir := t.TempDir()
+		b, _ := blob.NewFS(filepath.Join(dir, "b"))
+		m, _ := meta.NewFS(filepath.Join(dir, "m"))
+		return b, m
+	}()
+	seedPackument(t, m, "npm-member", "mylib", []string{"1.0.0"},
+		map[string]string{"latest": "1.0.0"})
+
+	mgr := repo.NewManager()
+	mgr.Add(repo.Repository{Name: "npm-member", Format: "npm", Kind: repo.Hosted}) //nolint:errcheck
+	mgr.Add(repo.Repository{Name: "npm-group", Format: "npm", Kind: repo.Group, Members: []string{"npm-member"}}) //nolint:errcheck
+
+	groupRepo, _ := mgr.Get("npm-group")
+	c := &format.Context{Repo: groupRepo, Blob: b, Meta: m, Repos: mgr}
+
+	detail, ok := New().Inspect(c, "http://localhost:8080", "mylib")
+	if !ok {
+		t.Fatal("expected group Inspect to succeed")
+	}
+	if detail.Name != "mylib" {
+		t.Errorf("name: got %q", detail.Name)
+	}
+}
+
+// ── groupTarball ──────────────────────────────────────────────────────────────
+
+func TestGroupTarball_FromHostedMember(t *testing.T) {
+	b, m := func() (blob.Store, meta.Store) {
+		dir := t.TempDir()
+		b, _ := blob.NewFS(filepath.Join(dir, "b"))
+		m, _ := meta.NewFS(filepath.Join(dir, "m"))
+		return b, m
+	}()
+	b.Put("npm-member/mylib/-/mylib-1.0.0.tgz", strings.NewReader("tarbytes")) //nolint:errcheck
+
+	mgr := repo.NewManager()
+	mgr.Add(repo.Repository{Name: "npm-member", Format: "npm", Kind: repo.Hosted}) //nolint:errcheck
+	mgr.Add(repo.Repository{Name: "npm-group", Format: "npm", Kind: repo.Group, Members: []string{"npm-member"}}) //nolint:errcheck
+
+	groupRepo, _ := mgr.Get("npm-group")
+	c := &format.Context{Repo: groupRepo, Blob: b, Meta: m, Repos: mgr}
+
+	c.Sub = "mylib/-/mylib-1.0.0.tgz"
+	rw := httptest.NewRecorder()
+	New().Serve(rw, httptest.NewRequest(http.MethodGet, "/", nil), c)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("group tarball from hosted member: got %d", rw.Code)
+	}
+	if rw.Body.String() != "tarbytes" {
+		t.Errorf("body: got %q", rw.Body.String())
+	}
+}
+
+func TestGroupTarball_NotFound(t *testing.T) {
+	b, m := func() (blob.Store, meta.Store) {
+		dir := t.TempDir()
+		b, _ := blob.NewFS(filepath.Join(dir, "b"))
+		m, _ := meta.NewFS(filepath.Join(dir, "m"))
+		return b, m
+	}()
+	mgr := repo.NewManager()
+	mgr.Add(repo.Repository{Name: "npm-member", Format: "npm", Kind: repo.Hosted}) //nolint:errcheck
+	mgr.Add(repo.Repository{Name: "npm-group", Format: "npm", Kind: repo.Group, Members: []string{"npm-member"}}) //nolint:errcheck
+
+	groupRepo, _ := mgr.Get("npm-group")
+	c := &format.Context{Repo: groupRepo, Blob: b, Meta: m, Repos: mgr}
+
+	c.Sub = "ghost/-/ghost-9.9.9.tgz"
+	rw := httptest.NewRecorder()
+	New().Serve(rw, httptest.NewRequest(http.MethodGet, "/", nil), c)
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rw.Code)
+	}
+}
+
+// ── publish error paths ───────────────────────────────────────────────────────
+
+func TestPublish_BadJSON(t *testing.T) {
+	c, _, _ := hostedCtx(t)
+	c.Sub = "mylib"
+	req := httptest.NewRequest(http.MethodPut, "/", strings.NewReader("not json"))
+	rw := httptest.NewRecorder()
+	New().Serve(rw, req, c)
+	if rw.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for bad JSON, got %d", rw.Code)
+	}
+}
+
+func TestPublish_BadAttachmentEncoding(t *testing.T) {
+	c, _, _ := hostedCtx(t)
+	c.Sub = "mylib"
+	payload := `{"name":"mylib","versions":{},"_attachments":{"mylib-1.0.0.tgz":{"data":"!!!not-base64!!!"}}}`
+	req := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(payload))
+	rw := httptest.NewRecorder()
+	New().Serve(rw, req, c)
+	if rw.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for bad attachment, got %d", rw.Code)
+	}
+}

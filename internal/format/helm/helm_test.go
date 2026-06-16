@@ -492,6 +492,44 @@ generated: "2024-06-02T00:00:00Z"
 	}
 }
 
+// --- Inspect -----------------------------------------------------------------
+
+func TestInspect_Hosted(t *testing.T) {
+	c := newHostedCtx(t)
+	for _, ver := range []string{"1.0.0", "2.0.0"} {
+		rw := serve(c, http.MethodPost, "api/charts", bytes.NewReader(makeChart(t, "myapp", ver)))
+		if rw.Code != http.StatusCreated {
+			t.Fatalf("upload %s: %d %s", ver, rw.Code, rw.Body)
+		}
+	}
+	detail, ok := New().Inspect(c, "http://forge.local", "myapp")
+	if !ok {
+		t.Fatal("Inspect returned false for existing chart")
+	}
+	if detail.Name != "myapp" {
+		t.Errorf("Name = %q, want myapp", detail.Name)
+	}
+	if len(detail.Versions) != 2 {
+		t.Errorf("Versions count = %d, want 2", len(detail.Versions))
+	}
+	if detail.Versions[0].Version != "2.0.0" {
+		t.Errorf("first version = %q, want 2.0.0 (newest-first)", detail.Versions[0].Version)
+	}
+	if detail.InstallSnippet == "" {
+		t.Error("InstallSnippet must not be empty")
+	}
+	if detail.Versions[0].DownloadURL == "" {
+		t.Error("DownloadURL must not be empty")
+	}
+}
+
+func TestInspect_NotFound(t *testing.T) {
+	c := newHostedCtx(t)
+	if _, ok := New().Inspect(c, "http://forge.local", "nosuchchart"); ok {
+		t.Fatal("expected false for absent chart")
+	}
+}
+
 func TestParseIndexYAML_WrappedDescription(t *testing.T) {
 	yaml := `apiVersion: v1
 entries:

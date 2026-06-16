@@ -406,6 +406,52 @@ func TestBrowseRepo_OCI(t *testing.T) {
 	}
 }
 
+// --- Inspect -----------------------------------------------------------------
+
+func TestInspect_Hosted(t *testing.T) {
+	c := newCtx(t)
+	ns := "docker-hosted:oci"
+	c.Meta.PutJSON(ns, "tags/nginx/latest", "sha256:aaa") //nolint:errcheck
+	c.Meta.PutJSON(ns, "tags/nginx/1.25", "sha256:bbb")   //nolint:errcheck
+
+	detail, ok := New().Inspect(c, "http://forge.local", "nginx")
+	if !ok {
+		t.Fatal("Inspect returned false")
+	}
+	if detail.Name != "nginx" {
+		t.Errorf("Name = %q, want nginx", detail.Name)
+	}
+	if len(detail.Versions) != 2 {
+		t.Errorf("Versions count = %d, want 2", len(detail.Versions))
+	}
+	if !strings.Contains(detail.InstallSnippet, ":latest") {
+		t.Errorf("snippet should use latest tag: %q", detail.InstallSnippet)
+	}
+}
+
+func TestInspect_FallbackTag(t *testing.T) {
+	c := newCtx(t)
+	ns := "docker-hosted:oci"
+	// No "latest" tag — snippet should fall back to last sorted tag.
+	c.Meta.PutJSON(ns, "tags/busybox/1.36", "sha256:ccc") //nolint:errcheck
+	c.Meta.PutJSON(ns, "tags/busybox/1.35", "sha256:ddd") //nolint:errcheck
+
+	detail, ok := New().Inspect(c, "http://forge.local", "busybox")
+	if !ok {
+		t.Fatal("Inspect returned false")
+	}
+	if !strings.Contains(detail.InstallSnippet, ":1.36") {
+		t.Errorf("snippet should fall back to last-sorted tag: %q", detail.InstallSnippet)
+	}
+}
+
+func TestInspect_NoTags(t *testing.T) {
+	c := newCtx(t)
+	if _, ok := New().Inspect(c, "http://forge.local", "nginx"); ok {
+		t.Fatal("expected false when no tags exist")
+	}
+}
+
 func TestProxy_RejectsWrites(t *testing.T) {
 	dir := t.TempDir()
 	b, _ := blob.NewFS(filepath.Join(dir, "b"))

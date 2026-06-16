@@ -673,3 +673,224 @@ func TestServe_Proxy_PomAlreadyCached(t *testing.T) {
 		t.Fatalf("proxy POM cached: got %d\n%s", rw.Code, rw.Body)
 	}
 }
+
+// ── Inspect ───────────────────────────────────────────────────────────────────
+
+func TestInspect_Hosted(t *testing.T) {
+	c := ctxWith(t, "",
+		"maven-hosted/com/acme/lib/1.0.0/lib-1.0.0.jar",
+		"maven-hosted/com/acme/lib/2.0.0/lib-2.0.0.jar",
+	)
+	detail, ok := New().Inspect(c, "http://localhost:8080", "com.acme:lib")
+	if !ok {
+		t.Fatal("expected Inspect to succeed")
+	}
+	if detail.Name != "com.acme:lib" {
+		t.Errorf("name: got %q", detail.Name)
+	}
+	if len(detail.Versions) != 2 {
+		t.Errorf("versions: got %d, want 2", len(detail.Versions))
+	}
+	if !strings.Contains(detail.InstallSnippet, "<artifactId>lib</artifactId>") {
+		t.Errorf("snippet missing artifactId: %s", detail.InstallSnippet)
+	}
+}
+
+func TestInspect_InvalidComp(t *testing.T) {
+	c := ctxWith(t, "")
+	if _, ok := New().Inspect(c, "http://localhost:8080", "nocoion"); ok {
+		t.Fatal("expected false for comp without colon")
+	}
+}
+
+func TestInspect_NoBlobs(t *testing.T) {
+	c := ctxWith(t, "")
+	if _, ok := New().Inspect(c, "http://localhost:8080", "com.acme:absent"); ok {
+		t.Fatal("expected false when no blobs exist")
+	}
+}
+
+func TestInspect_NonNumericVersionDirIgnored(t *testing.T) {
+	// Blobs exist under the path but no version directory starting with a digit
+	// → version set is empty → false.
+	c := ctxWith(t, "",
+		"maven-hosted/com/acme/lib/maven-metadata.xml",
+	)
+	if _, ok := New().Inspect(c, "http://localhost:8080", "com.acme:lib"); ok {
+		t.Fatal("expected false when only non-version blobs exist")
+	}
+}
+
+func TestInspect_Group(t *testing.T) {
+	b, m := sharedStores(t)
+	b.Put("maven-a/com/acme/lib/1.0.0/lib-1.0.0.jar", strings.NewReader("bytes")) //nolint:errcheck
+
+	mgr := repo.NewManager()
+	for _, r := range []repo.Repository{
+		{Name: "maven-a", Format: "maven", Kind: repo.Hosted},
+		{Name: "maven-group", Format: "maven", Kind: repo.Group, Members: []string{"maven-a"}},
+	} {
+		mgr.Add(r) //nolint:errcheck
+	}
+	groupRepo, _ := mgr.Get("maven-group")
+	c := &format.Context{Repo: groupRepo, Blob: b, Meta: m, Repos: mgr}
+
+	detail, ok := New().Inspect(c, "http://localhost:8080", "com.acme:lib")
+	if !ok {
+		t.Fatal("expected group Inspect to find artifact in member")
+	}
+	if detail.Name != "com.acme:lib" {
+		t.Errorf("name: got %q", detail.Name)
+	}
+}
+
+func TestInspect_Group_NotFound(t *testing.T) {
+	b, m := sharedStores(t)
+	mgr := repo.NewManager()
+	for _, r := range []repo.Repository{
+		{Name: "maven-a", Format: "maven", Kind: repo.Hosted},
+		{Name: "maven-group", Format: "maven", Kind: repo.Group, Members: []string{"maven-a"}},
+	} {
+		mgr.Add(r) //nolint:errcheck
+	}
+	groupRepo, _ := mgr.Get("maven-group")
+	c := &format.Context{Repo: groupRepo, Blob: b, Meta: m, Repos: mgr}
+
+	if _, ok := New().Inspect(c, "http://localhost:8080", "com.acme:absent"); ok {
+		t.Fatal("expected false when no member has the artifact")
+	}
+}
+
+// ── deleteArtifact ────────────────────────────────────────────────────────────
+
+func TestDeleteArtifact_Present(t *testing.T) {
+	c := ctxWith(t, "", "maven-hosted/com/acme/lib/1.0.0/lib-1.0.0.jar")
+	rw := serveReq(c, http.MethodDelete, "com/acme/lib/1.0.0/lib-1.0.0.jar", nil)
+	if rw.Code != http.StatusNoContent {
+		t.Fatalf("delete present artifact: got %d", rw.Code)
+	}
+	if _, exists, _ := c.Blob.Stat(c.Key("com/acme/lib/1.0.0/lib-1.0.0.jar")); exists {
+		t.Error("expected blob to be removed after DELETE")
+	}
+}
+
+func TestDeleteArtifact_Missing(t *testing.T) {
+	c := ctxWith(t, "")
+	rw := serveReq(c, http.MethodDelete, "com/acme/lib/1.0.0/lib-1.0.0.jar", nil)
+	if rw.Code != http.StatusNotFound {
+		t.Fatalf("delete absent artifact: got %d", rw.Code)
+	}
+}
+
+func TestDeleteArtifact_SnapshotCleansUpMeta(t *testing.T) {
+	c := ctxWith(t, "")
+	putArtifact(t, c, "com/acme/lib/1.0-SNAPSHOT/lib-1.0-20240115.123456-1.jar")
+	keys, _ := c.Meta.List(New().snapVersNS(c))
+	if len(keys) == 0 {
+		t.Fatal("expected snapshot meta record after PUT")
+	}
+	rw := serveReq(c, http.MethodDelete, "com/acme/lib/1.0-SNAPSHOT/lib-1.0-20240115.123456-1.jar", nil)
+	if rw.Code != http.StatusNoContent {
+		t.Fatalf("delete snapshot: got %d", rw.Code)
+	}
+	keys, _ = c.Meta.List(New().snapVersNS(c))
+	if len(keys) != 0 {
+		t.Errorf("expected snapshot meta to be cleaned up, got %v", keys)
+	}
+}
+
+// ── parsePOMDetail ────────────────────────────────────────────────────────────
+
+func TestParsePOMDetail_WithDeps(t *testing.T) {
+	pom := []byte(`<?xml version="1.0"?>
+<project>
+  <description>A useful library</description>
+  <dependencies>
+    <dependency>
+      <groupId>org.slf4j</groupId><artifactId>slf4j-api</artifactId><version>1.7.36</version>
+    </dependency>
+    <dependency>
+      <groupId>junit</groupId><artifactId>junit</artifactId><version>4.13</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>javax.servlet</groupId><artifactId>servlet-api</artifactId><version>2.5</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+</project>`)
+
+	desc, deps := parsePOMDetail("my-repo", pom)
+	if desc != "A useful library" {
+		t.Errorf("description: got %q", desc)
+	}
+	// test and provided scopes must be filtered out.
+	if len(deps) != 1 {
+		t.Fatalf("deps: got %d, want 1", len(deps))
+	}
+	if deps[0].Name != "org.slf4j:slf4j-api" {
+		t.Errorf("dep name: got %q", deps[0].Name)
+	}
+	if deps[0].Constraint != "1.7.36" {
+		t.Errorf("dep version: got %q", deps[0].Constraint)
+	}
+	if !strings.Contains(deps[0].SearchURL, "my-repo") {
+		t.Errorf("dep URL missing repo: %s", deps[0].SearchURL)
+	}
+}
+
+func TestParsePOMDetail_InvalidXML(t *testing.T) {
+	desc, deps := parsePOMDetail("r", []byte("not xml"))
+	if desc != "" || len(deps) != 0 {
+		t.Error("expected empty result for invalid POM")
+	}
+}
+
+func TestParsePOMDetail_NoDeps(t *testing.T) {
+	pom := []byte(`<project><description>simple</description></project>`)
+	desc, deps := parsePOMDetail("r", pom)
+	if desc != "simple" {
+		t.Errorf("description: got %q", desc)
+	}
+	if len(deps) != 0 {
+		t.Errorf("expected no deps, got %d", len(deps))
+	}
+}
+
+// ── mavenMetaLastUpdated ──────────────────────────────────────────────────────
+
+func TestMavenMetaLastUpdated_Valid(t *testing.T) {
+	c := ctxWith(t, "")
+	xml := `<?xml version="1.0"?><metadata><versioning><lastUpdated>20240115143000</lastUpdated></versioning></metadata>`
+	c.Blob.Put(c.Key("com/acme/lib/maven-metadata.xml"), strings.NewReader(xml)) //nolint:errcheck
+
+	got := mavenMetaLastUpdated(c, "com.acme:lib")
+	if got.IsZero() {
+		t.Fatal("expected non-zero time from valid metadata")
+	}
+	if got.Year() != 2024 || got.Month() != 1 || got.Day() != 15 {
+		t.Errorf("parsed time wrong: %v", got)
+	}
+}
+
+func TestMavenMetaLastUpdated_NoBlob(t *testing.T) {
+	c := ctxWith(t, "")
+	if got := mavenMetaLastUpdated(c, "com.acme:absent"); !got.IsZero() {
+		t.Errorf("expected zero time when blob missing, got %v", got)
+	}
+}
+
+func TestMavenMetaLastUpdated_NoColon(t *testing.T) {
+	c := ctxWith(t, "")
+	if got := mavenMetaLastUpdated(c, "nocoion"); !got.IsZero() {
+		t.Errorf("expected zero time for comp without colon, got %v", got)
+	}
+}
+
+func TestMavenMetaLastUpdated_InvalidXML(t *testing.T) {
+	c := ctxWith(t, "")
+	c.Blob.Put(c.Key("com/acme/lib/maven-metadata.xml"), strings.NewReader("not xml")) //nolint:errcheck
+	if got := mavenMetaLastUpdated(c, "com.acme:lib"); !got.IsZero() {
+		t.Errorf("expected zero time for invalid XML, got %v", got)
+	}
+}
