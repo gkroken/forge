@@ -104,7 +104,7 @@ func (s *Server) handleUIAdmin(w http.ResponseWriter, r *http.Request, sub strin
 		s.uiAdminHome(w, r)
 	case sub == "/repos/new":
 		s.uiAdminNewRepo(w, r)
-	case strings.HasSuffix(sub, "/edit"):
+	case strings.HasPrefix(sub, "/repos/") && strings.HasSuffix(sub, "/edit"):
 		name := strings.TrimSuffix(strings.TrimPrefix(sub, "/repos/"), "/edit")
 		s.uiAdminEditRepo(w, r, name)
 	case strings.HasPrefix(sub, "/repos/") && r.Method == http.MethodDelete:
