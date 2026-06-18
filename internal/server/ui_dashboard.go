@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 )
 
 // ── page types ────────────────────────────────────────────────────────────────
@@ -144,15 +145,44 @@ func (s *Server) uiDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = cacheMisses
 
+	var recentActivity []activityRow
+	if s.AuditLog != nil {
+		methodVerb := map[string]string{
+			"POST": "Published", "PUT": "Uploaded",
+			"DELETE": "Deleted", "PATCH": "Updated",
+		}
+		for _, e := range s.AuditLog.Recent(5) {
+			dot := "dot-ok"
+			if e.Status >= 400 {
+				dot = "dot-err"
+			}
+			path := e.Path
+			if len(path) > 42 {
+				path = path[:39] + "…"
+			}
+			verb, ok := methodVerb[e.Method]
+			if !ok {
+				verb = e.Method
+			}
+			recentActivity = append(recentActivity, activityRow{
+				DotClass: dot,
+				Text:     verb + " " + path,
+				Who:      e.Actor,
+				When:     e.Timestamp.UTC().Format("15:04"),
+			})
+		}
+	}
+
 	render(w, tmplDashboard, "admin_shell.html", dashboardPage{
-		Title:         "Dashboard",
-		ActiveNav:     "dashboard",
-		RepoCount:     total,
-		FormatCount:   len(fmtCounts),
-		TotalRequests: totalReqs,
-		CacheHitPct:   hitPct,
-		ReposByFormat: fmtStats,
-		ReqBars:       buildRepresentativeBars(24),
+		Title:          "Dashboard",
+		ActiveNav:      "dashboard",
+		RepoCount:      total,
+		FormatCount:    len(fmtCounts),
+		TotalRequests:  totalReqs,
+		CacheHitPct:    hitPct,
+		ReposByFormat:  fmtStats,
+		ReqBars:        buildRepresentativeBars(24),
+		RecentActivity: recentActivity,
 	})
 }
 
@@ -195,6 +225,29 @@ func (s *Server) uiObservability(w http.ResponseWriter, r *http.Request) {
 		add("5", "5xx", "Server error", "#c0503f")
 	}
 
+	methodColors := map[string]string{
+		"POST": "var(--dot-ok)", "PUT": "#c08a2d",
+		"DELETE": "#c0503f", "PATCH": "#c08a2d",
+	}
+	var auditEntries []auditRow
+	if s.AuditLog != nil {
+		for _, e := range s.AuditLog.Recent(100) {
+			color := methodColors[e.Method]
+			if color == "" {
+				color = "var(--text-muted)"
+			}
+			auditEntries = append(auditEntries, auditRow{
+				Time:        e.Timestamp.UTC().Format("15:04:05"),
+				Actor:       e.Actor,
+				Method:      e.Method,
+				MethodColor: color,
+				Path:        e.Path,
+				Status:      strconv.Itoa(e.Status),
+				OK:          e.Status < 400,
+			})
+		}
+	}
+
 	render(w, tmplObservability, "admin_shell.html", observabilityPage{
 		Title:           "Observability",
 		ActiveNav:       "observability",
@@ -204,6 +257,7 @@ func (s *Server) uiObservability(w http.ResponseWriter, r *http.Request) {
 		ErrorPct:        errPct,
 		RateBars:        buildRepresentativeBars32(),
 		StatusBreakdown: breakdown,
+		AuditLog:        auditEntries,
 	})
 }
 

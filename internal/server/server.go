@@ -59,6 +59,7 @@ type Server struct {
 	Queue     queue.Queue          // nil = no async index regen (eval / tests)
 	Metrics   *obs.Metrics         // nil = no instrumentation (tests)
 	Cleanup   *cleanup.PolicyManager // nil = cleanup-policies API returns 503
+	AuditLog  *obs.AuditLog          // nil = no in-memory audit log
 	MaxUpload int64                // per-request body limit; 0 = use defaultMaxUpload
 	reg       prometheus.Gatherer
 	client    *http.Client
@@ -103,6 +104,11 @@ func (s *Server) WithQueue(ctx context.Context, q queue.Queue) *Server {
 
 func (s *Server) WithCleanup(pm *cleanup.PolicyManager) *Server {
 	s.Cleanup = pm
+	return s
+}
+
+func (s *Server) WithAuditLog(al *obs.AuditLog) *Server {
+	s.AuditLog = al
 	return s
 }
 
@@ -256,6 +262,29 @@ func auditEvent(method, path string, status int) bool {
 	return false
 }
 
+// actorLabel extracts the authenticated actor name from a request for audit
+// logging. It re-validates the token (Bearer header or forge_token cookie) so
+// the caller doesn't need auth in the request context. Falls back to "anonymous".
+func actorLabel(r *http.Request, a auth.Store) string {
+	if a == nil {
+		return "anonymous"
+	}
+	var secret string
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+		secret = strings.TrimPrefix(h, "Bearer ")
+	} else if c, err := r.Cookie(auth.UISessionCookie); err == nil {
+		secret = c.Value
+	}
+	if secret == "" {
+		return "anonymous"
+	}
+	tok, err := a.Verify(secret)
+	if err != nil || tok == nil {
+		return "anonymous"
+	}
+	return tok.Description
+}
+
 // routeLabel returns a low-cardinality route label for Prometheus.
 // Repo/artifact sub-paths are collapsed to avoid label explosion.
 func routeLabel(path string) string {
@@ -341,6 +370,15 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 				"status", status,
 				"remote", r.RemoteAddr,
 			)
+			if s.AuditLog != nil {
+				s.AuditLog.Append(obs.AuditEntry{
+					Timestamp: start,
+					Actor:     actorLabel(r, s.Auth),
+					Method:    r.Method,
+					Path:      r.URL.Path,
+					Status:    status,
+				})
+			}
 		}
 
 		if s.Metrics != nil {

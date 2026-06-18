@@ -177,10 +177,13 @@ func main() {
 	cleanupPolicies := cleanup.NewPolicyManager(metaStore)
 	cleanup.NewScheduler(mgr, cleanupPolicies, blobStore, metaStore).Start(workerCtx)
 
+	auditLog := obs.NewAuditLog(500)
+
 	forgeSrv := server.New(mgr, reg, blobStore, metaStore, authStore).
 		WithMetrics(metrics, promReg).
 		WithQueue(workerCtx, q).
-		WithCleanup(cleanupPolicies)
+		WithCleanup(cleanupPolicies).
+		WithAuditLog(auditLog)
 
 	if oidcCfg, err := oidc.FromEnv(); err != nil {
 		slog.Error("oidc: invalid configuration", "err", err)
