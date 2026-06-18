@@ -256,9 +256,22 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request, name stri
 		http.Error(w, "repository not found: "+name, http.StatusNotFound)
 		return
 	}
+
+	var p *repo.CleanupPolicy
+	if rp.CleanupPolicyName != "" && s.Cleanup != nil {
+		np, found, err := s.Cleanup.Get(rp.CleanupPolicyName)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if found {
+			p = np.ToCleanupPolicy()
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	if r.URL.Query().Get("dry") == "true" {
-		result, err := cleanup.DryRun(rp, s.Blob, s.Meta)
+		result, err := cleanup.DryRun(rp.Name, rp.Format, p, s.Blob, s.Meta)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -269,7 +282,7 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request, name stri
 		json.NewEncoder(w).Encode(result)
 		return
 	}
-	result, err := cleanup.Run(rp, s.Blob, s.Meta)
+	result, err := cleanup.Run(rp.Name, rp.Format, p, s.Blob, s.Meta)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

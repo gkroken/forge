@@ -174,12 +174,13 @@ func main() {
 		slog.Info("queue: in-memory (eval mode)")
 	}
 
-	cleanup.NewScheduler(mgr, blobStore, metaStore).Start(workerCtx)
+	cleanupPolicies := cleanup.NewPolicyManager(metaStore)
+	cleanup.NewScheduler(mgr, cleanupPolicies, blobStore, metaStore).Start(workerCtx)
 
 	forgeSrv := server.New(mgr, reg, blobStore, metaStore, authStore).
 		WithMetrics(metrics, promReg).
 		WithQueue(workerCtx, q).
-		WithCleanup(cleanup.NewPolicyManager(metaStore))
+		WithCleanup(cleanupPolicies)
 
 	if oidcCfg, err := oidc.FromEnv(); err != nil {
 		slog.Error("oidc: invalid configuration", "err", err)

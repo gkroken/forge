@@ -13,13 +13,14 @@ import (
 // Scheduler runs cleanup policies on a per-repo cadence. Start it once at
 // startup; it stops when ctx is cancelled (e.g. on SIGTERM).
 type Scheduler struct {
-	repos *repo.Manager
-	blob  blob.Store
-	meta  meta.Store
+	repos    *repo.Manager
+	policies *PolicyManager
+	blob     blob.Store
+	meta     meta.Store
 }
 
-func NewScheduler(repos *repo.Manager, b blob.Store, m meta.Store) *Scheduler {
-	return &Scheduler{repos: repos, blob: b, meta: m}
+func NewScheduler(repos *repo.Manager, policies *PolicyManager, b blob.Store, m meta.Store) *Scheduler {
+	return &Scheduler{repos: repos, policies: policies, blob: b, meta: m}
 }
 
 // Start runs the scheduler in a background goroutine. It checks every minute
@@ -46,15 +47,18 @@ func (s *Scheduler) loop(ctx context.Context) {
 // lastRun is updated in-place. Exported for testing.
 func (s *Scheduler) RunDue(now time.Time, lastRun map[string]time.Time) {
 	for _, r := range s.repos.All() {
-		p := r.CleanupPolicy
-		if p == nil || p.Interval == 0 {
+		if r.CleanupPolicyName == "" || r.Kind != repo.Hosted {
 			continue
 		}
-		if now.Sub(lastRun[r.Name]) < p.Interval {
+		np, ok, err := s.policies.Get(r.CleanupPolicyName)
+		if err != nil || !ok || np.Interval == 0 {
+			continue
+		}
+		if now.Sub(lastRun[r.Name]) < np.Interval {
 			continue
 		}
 		lastRun[r.Name] = now
-		result, err := Run(r, s.blob, s.meta)
+		result, err := Run(r.Name, r.Format, np.ToCleanupPolicy(), s.blob, s.meta)
 		if err != nil {
 			slog.Error("cleanup: scheduled run failed", "repo", r.Name, "err", err)
 			continue

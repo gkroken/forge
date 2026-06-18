@@ -2,7 +2,6 @@ package server
 
 import (
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -233,8 +232,8 @@ func (s *Server) processRepoForm(w http.ResponseWriter, r *http.Request, existin
 		Members:       members,
 		AnonymousRead: r.FormValue("anonymousRead") == "on",
 		ProxyAuth:     strings.TrimSpace(r.FormValue("proxyAuth")),
-		ProxyTTL:      ttl,
-		CleanupPolicy: parseCleanupPolicy(r),
+		ProxyTTL:          ttl,
+		CleanupPolicyName: strings.TrimSpace(r.FormValue("cleanupPolicyName")),
 	}
 
 	if msg := validateRepo(rp); msg != "" {
@@ -279,7 +278,7 @@ func (s *Server) reRenderForm(w http.ResponseWriter, r *http.Request, name strin
 	rp.Upstream = r.FormValue("upstream")
 	rp.ProxyAuth = r.FormValue("proxyAuth")
 	rp.AnonymousRead = r.FormValue("anonymousRead") == "on"
-	rp.CleanupPolicy = parseCleanupPolicy(r)
+	rp.CleanupPolicyName = strings.TrimSpace(r.FormValue("cleanupPolicyName"))
 
 	title := "Admin — New repository"
 	if isEdit {
@@ -477,29 +476,6 @@ func formatGrants(grants []auth.Grant) string {
 		parts = append(parts, g.Role.String()+" on "+g.Repo)
 	}
 	return strings.Join(parts, ", ")
-}
-
-// parseCleanupPolicy builds a CleanupPolicy from cleanup form fields.
-// Returns nil if no cleanup fields are set (policy disabled).
-func parseCleanupPolicy(r *http.Request) *repo.CleanupPolicy {
-	keepVersions, _ := strconv.Atoi(strings.TrimSpace(r.FormValue("cleanupKeepVersions")))
-	deleteOlderThanDays, _ := strconv.Atoi(strings.TrimSpace(r.FormValue("cleanupDeleteOlderThanDays")))
-	deleteSnapshotsDays, _ := strconv.Atoi(strings.TrimSpace(r.FormValue("cleanupDeleteSnapshotsDays")))
-	keepReleasesOnly := r.FormValue("cleanupKeepReleasesOnly") == "on"
-	var interval time.Duration
-	if raw := strings.TrimSpace(r.FormValue("cleanupInterval")); raw != "" {
-		interval, _ = time.ParseDuration(raw)
-	}
-	if keepVersions == 0 && deleteOlderThanDays == 0 && deleteSnapshotsDays == 0 && !keepReleasesOnly && interval == 0 {
-		return nil
-	}
-	return &repo.CleanupPolicy{
-		KeepVersions:        keepVersions,
-		DeleteOlderThanDays: deleteOlderThanDays,
-		DeleteSnapshotsDays: deleteSnapshotsDays,
-		KeepReleasesOnly:    keepReleasesOnly,
-		Interval:            interval,
-	}
 }
 
 func formatExpiry(t *time.Time) string {

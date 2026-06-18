@@ -73,39 +73,12 @@
 
   <fieldset id="g-cleanup">
     <legend>Cleanup policy <span class="form-hint-inline">(hosted only)</span></legend>
-    <div class="form-row">
-      <div class="form-group">
-        <label for="f-keep-versions">Keep versions</label>
-        <input id="f-keep-versions" type="number" min="0" name="cleanupKeepVersions"
-               value="{{if .Repo.CleanupPolicy}}{{.Repo.CleanupPolicy.KeepVersions}}{{end}}"
-               placeholder="0 = unlimited">
-      </div>
-      <div class="form-group">
-        <label for="f-del-older">Delete older than (days)</label>
-        <input id="f-del-older" type="number" min="0" name="cleanupDeleteOlderThanDays"
-               value="{{if .Repo.CleanupPolicy}}{{.Repo.CleanupPolicy.DeleteOlderThanDays}}{{end}}"
-               placeholder="0 = disabled">
-      </div>
-    </div>
-    <div class="form-row">
-      <div class="form-group">
-        <label for="f-del-snap">Delete snapshots older than (days)</label>
-        <input id="f-del-snap" type="number" min="0" name="cleanupDeleteSnapshotsDays"
-               value="{{if .Repo.CleanupPolicy}}{{.Repo.CleanupPolicy.DeleteSnapshotsDays}}{{end}}"
-               placeholder="0 = disabled">
-      </div>
-      <div class="form-group">
-        <label for="f-cleanup-interval">Run interval</label>
-        <input id="f-cleanup-interval" type="text" name="cleanupInterval"
-               value="{{if .Repo.CleanupPolicy}}{{durStr .Repo.CleanupPolicy.Interval}}{{end}}"
-               placeholder="e.g. 24h (empty = manual only)">
-      </div>
-    </div>
     <div class="form-group">
-      <label class="checkbox-label">
-        <input type="checkbox" name="cleanupKeepReleasesOnly"{{if .Repo.CleanupPolicy}}{{if .Repo.CleanupPolicy.KeepReleasesOnly}} checked{{end}}{{end}}>
-        Keep releases only (delete all snapshots / pre-releases)
-      </label>
+      <label for="f-cleanup-policy-name">Policy name</label>
+      <input id="f-cleanup-policy-name" type="text" name="cleanupPolicyName"
+             value="{{.Repo.CleanupPolicyName}}"
+             placeholder="e.g. keep-5-versions (leave blank for none)">
+      <span class="form-hint">Named policies are managed on the <a href="/ui/admin/cleanup-policies">Cleanup</a> page.</span>
     </div>
     {{if .IsEdit}}
     <div class="form-group">

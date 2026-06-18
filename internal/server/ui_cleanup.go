@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"forge/internal/repo"
+	"forge/internal/cleanup"
 )
 
 // ── page types ────────────────────────────────────────────────────────────────
@@ -19,11 +19,10 @@ type cleanupPoliciesPage struct {
 }
 
 type cleanupPolicyRow struct {
-	RepoName string
-	Format   string
-	Kind     string
-	Criteria string
-	Interval string
+	Name        string
+	Description string
+	Criteria    string
+	Interval    string
 }
 
 type schedTask struct {
@@ -43,17 +42,18 @@ func (s *Server) uiCleanupPolicies(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var rows []cleanupPolicyRow
-	for _, rp := range s.Repos.All() {
-		if rp.CleanupPolicy == nil {
-			continue
+	if s.Cleanup != nil {
+		policies, err := s.Cleanup.List()
+		if err == nil {
+			for _, p := range policies {
+				rows = append(rows, cleanupPolicyRow{
+					Name:        p.Name,
+					Description: p.Description,
+					Criteria:    summarizeNamedPolicy(p),
+					Interval:    namedPolicyInterval(p),
+				})
+			}
 		}
-		rows = append(rows, cleanupPolicyRow{
-			RepoName: rp.Name,
-			Format:   rp.Format,
-			Kind:     string(rp.Kind),
-			Criteria: summarizeCleanupPolicy(rp),
-			Interval: fmtInterval(rp),
-		})
 	}
 
 	tasks := []schedTask{
@@ -73,8 +73,7 @@ func (s *Server) uiCleanupPolicies(w http.ResponseWriter, r *http.Request) {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func summarizeCleanupPolicy(rp repo.Repository) string {
-	p := rp.CleanupPolicy
+func summarizeNamedPolicy(p cleanup.NamedPolicy) string {
 	var parts []string
 	if p.KeepVersions > 0 {
 		parts = append(parts, fmt.Sprintf("Keep last %d versions", p.KeepVersions))
@@ -88,15 +87,18 @@ func summarizeCleanupPolicy(rp repo.Repository) string {
 	if p.KeepReleasesOnly {
 		parts = append(parts, "Keep releases only")
 	}
+	if p.LastDownloadedDays > 0 {
+		parts = append(parts, fmt.Sprintf("Delete not downloaded in %d days", p.LastDownloadedDays))
+	}
 	if len(parts) == 0 {
 		return "No rules"
 	}
 	return strings.Join(parts, " · ")
 }
 
-func fmtInterval(rp repo.Repository) string {
-	if rp.CleanupPolicy == nil || rp.CleanupPolicy.Interval == 0 {
-		return ""
+func namedPolicyInterval(p cleanup.NamedPolicy) string {
+	if p.Interval == 0 {
+		return "Manual only"
 	}
-	return rp.CleanupPolicy.Interval.String()
+	return p.Interval.String()
 }

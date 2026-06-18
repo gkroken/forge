@@ -55,35 +55,42 @@ func TestCleanupPolicy_IntervalJSON_Invalid(t *testing.T) {
 }
 
 func TestScheduler_StartsAndStops(t *testing.T) {
-	b, m := stores(t)
+	_, m := stores(t)
 	mgr := repo.NewManager()
+	pm := cleanup.NewPolicyManager(m)
+	b, _ := stores(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	cleanup.NewScheduler(mgr, b, m).Start(ctx)
+	cleanup.NewScheduler(mgr, pm, b, m).Start(ctx)
 	cancel()
 }
 
 func TestScheduler_RunDue_SkipsNoPolicy(t *testing.T) {
 	b, m := stores(t)
 	mgr := repo.NewManager()
+	pm := cleanup.NewPolicyManager(m)
 	if err := mgr.Add(repo.Repository{Name: "r", Format: "helm", Kind: repo.Hosted}); err != nil {
 		t.Fatal(err)
 	}
-	// No policy set — RunDue should be a no-op (no panic, no error).
-	cleanup.NewScheduler(mgr, b, m).RunDue(time.Now(), map[string]time.Time{})
+	// No CleanupPolicyName set — RunDue should be a no-op (no panic, no error).
+	cleanup.NewScheduler(mgr, pm, b, m).RunDue(time.Now(), map[string]time.Time{})
 }
 
 func TestScheduler_RunDue_SkipsBeforeInterval(t *testing.T) {
 	b, m := stores(t)
 	mgr := repo.NewManager()
+	pm := cleanup.NewPolicyManager(m)
+	if err := pm.Put(cleanup.NamedPolicy{Name: "keep-1", KeepVersions: 1, Interval: time.Hour}); err != nil {
+		t.Fatal(err)
+	}
 	if err := mgr.Add(repo.Repository{
 		Name: "r", Format: "helm", Kind: repo.Hosted,
-		CleanupPolicy: &repo.CleanupPolicy{KeepVersions: 1, Interval: time.Hour},
+		CleanupPolicyName: "keep-1",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
 	lastRun := map[string]time.Time{"r": now.Add(-30 * time.Minute)} // not yet due
-	cleanup.NewScheduler(mgr, b, m).RunDue(now, lastRun)
+	cleanup.NewScheduler(mgr, pm, b, m).RunDue(now, lastRun)
 	// lastRun should be unchanged since we didn't fire.
 	if !lastRun["r"].Equal(now.Add(-30 * time.Minute)) {
 		t.Fatal("lastRun should not have been updated")
@@ -93,17 +100,44 @@ func TestScheduler_RunDue_SkipsBeforeInterval(t *testing.T) {
 func TestScheduler_RunDue_FiresWhenDue(t *testing.T) {
 	b, m := stores(t)
 	mgr := repo.NewManager()
+	pm := cleanup.NewPolicyManager(m)
+	if err := pm.Put(cleanup.NamedPolicy{Name: "keep-1", KeepVersions: 1, Interval: time.Hour}); err != nil {
+		t.Fatal(err)
+	}
 	if err := mgr.Add(repo.Repository{
 		Name: "r", Format: "helm", Kind: repo.Hosted,
-		CleanupPolicy: &repo.CleanupPolicy{KeepVersions: 1, Interval: time.Hour},
+		CleanupPolicyName: "keep-1",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
 	lastRun := map[string]time.Time{"r": now.Add(-2 * time.Hour)} // overdue
-	cleanup.NewScheduler(mgr, b, m).RunDue(now, lastRun)
+	cleanup.NewScheduler(mgr, pm, b, m).RunDue(now, lastRun)
 	// lastRun should be updated to now.
 	if !lastRun["r"].Equal(now) {
 		t.Fatalf("lastRun not updated: got %v, want %v", lastRun["r"], now)
+	}
+}
+
+func TestScheduler_RunDue_SkipsProxyRepo(t *testing.T) {
+	b, m := stores(t)
+	mgr := repo.NewManager()
+	pm := cleanup.NewPolicyManager(m)
+	if err := pm.Put(cleanup.NamedPolicy{Name: "keep-1", KeepVersions: 1, Interval: time.Hour}); err != nil {
+		t.Fatal(err)
+	}
+	// Proxy repo with a policy name should be skipped.
+	if err := mgr.Add(repo.Repository{
+		Name: "r", Format: "cran", Kind: repo.Proxy,
+		CleanupPolicyName: "keep-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	lastRun := map[string]time.Time{"r": now.Add(-2 * time.Hour)}
+	cleanup.NewScheduler(mgr, pm, b, m).RunDue(now, lastRun)
+	// lastRun should NOT be updated since proxy repos are skipped.
+	if lastRun["r"].Equal(now) {
+		t.Fatal("lastRun was updated for a proxy repo — should have been skipped")
 	}
 }

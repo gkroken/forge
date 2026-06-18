@@ -15,6 +15,7 @@ import (
 
 	"forge/internal/auth"
 	"forge/internal/blob"
+	"forge/internal/cleanup"
 	"forge/internal/format"
 	"forge/internal/format/cran"
 	"forge/internal/format/helm"
@@ -1204,18 +1205,22 @@ func TestUICleanupPolicies_OK(t *testing.T) {
 
 func TestUICleanupPolicies_ShowsConfiguredPolicies(t *testing.T) {
 	srv := newUIServer(t)
-	// Add a repo with a cleanup policy.
-	srv.Repos.Add(repo.Repository{ //nolint:errcheck
-		Name: "maven-releases", Format: "maven", Kind: repo.Hosted,
-		CleanupPolicy: &repo.CleanupPolicy{KeepVersions: 5, DeleteOlderThanDays: 30},
+	// Wire a PolicyManager and add a named policy.
+	pm := cleanup.NewPolicyManager(srv.Meta)
+	pm.Put(cleanup.NamedPolicy{ //nolint:errcheck
+		Name:                "keep-5-30d",
+		Description:         "Keep 5 versions, delete older than 30 days",
+		KeepVersions:        5,
+		DeleteOlderThanDays: 30,
 	})
+	srv.Cleanup = pm
 	h := srv.Routes()
 	rw := uiGet(t, h, "/ui/admin/cleanup-policies")
 	if rw.Code != http.StatusOK {
 		t.Fatalf("status %d", rw.Code)
 	}
 	body := rw.Body.String()
-	assertContains(t, body, "maven-releases")
+	assertContains(t, body, "keep-5-30d")
 	assertContains(t, body, "Keep last 5 versions")
 }
 

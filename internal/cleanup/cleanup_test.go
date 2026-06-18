@@ -54,12 +54,11 @@ func seedCRAN(t *testing.T, b blob.Store, m meta.Store, repoName string, recs []
 
 func TestCRAN_NoPolicy(t *testing.T) {
 	b, m := stores(t)
-	r := repo.Repository{Name: "cran", Format: "cran", Kind: repo.Hosted}
 	seedCRAN(t, b, m, "cran", []cranRec{
 		{Package: "ggplot2", Version: "3.0.0"},
 		{Package: "ggplot2", Version: "3.1.0"},
 	})
-	res, err := cleanup.Run(r, b, m)
+	res, err := cleanup.Run("cran", "cran", nil, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,16 +69,12 @@ func TestCRAN_NoPolicy(t *testing.T) {
 
 func TestCRAN_KeepVersions(t *testing.T) {
 	b, m := stores(t)
-	r := repo.Repository{
-		Name: "cran", Format: "cran", Kind: repo.Hosted,
-		CleanupPolicy: &repo.CleanupPolicy{KeepVersions: 2},
-	}
 	seedCRAN(t, b, m, "cran", []cranRec{
 		{Package: "ggplot2", Version: "1.0.0"},
 		{Package: "ggplot2", Version: "2.0.0"},
 		{Package: "ggplot2", Version: "3.0.0"},
 	})
-	res, err := cleanup.Run(r, b, m)
+	res, err := cleanup.Run("cran", "cran", &repo.CleanupPolicy{KeepVersions: 2}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,17 +97,13 @@ func TestCRAN_KeepVersions(t *testing.T) {
 
 func TestCRAN_DeleteOlderThanDays(t *testing.T) {
 	b, m := stores(t)
-	r := repo.Repository{
-		Name: "cran", Format: "cran", Kind: repo.Hosted,
-		CleanupPolicy: &repo.CleanupPolicy{DeleteOlderThanDays: 30},
-	}
 	old := time.Now().UTC().AddDate(0, 0, -60)
 	seedCRAN(t, b, m, "cran", []cranRec{
 		{Package: "dplyr", Version: "1.0.0", UploadedAt: old},
 		{Package: "dplyr", Version: "2.0.0"}, // no timestamp → skipped
 		{Package: "dplyr", Version: "3.0.0", UploadedAt: time.Now().UTC()},
 	})
-	res, err := cleanup.Run(r, b, m)
+	res, err := cleanup.Run("cran", "cran", &repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,25 +113,6 @@ func TestCRAN_DeleteOlderThanDays(t *testing.T) {
 	_, exists, _ := b.Stat("cran/src/contrib/dplyr_1.0.0.tar.gz")
 	if exists {
 		t.Fatal("expected dplyr_1.0.0 to be deleted")
-	}
-}
-
-func TestCRAN_ProxyRepoSkipped(t *testing.T) {
-	b, m := stores(t)
-	r := repo.Repository{
-		Name: "cran", Format: "cran", Kind: repo.Proxy,
-		CleanupPolicy: &repo.CleanupPolicy{KeepVersions: 1},
-	}
-	seedCRAN(t, b, m, "cran", []cranRec{
-		{Package: "ggplot2", Version: "1.0.0"},
-		{Package: "ggplot2", Version: "2.0.0"},
-	})
-	res, err := cleanup.Run(r, b, m)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Deleted != 0 {
-		t.Fatalf("cleanup should be a no-op for proxy repos, got %d deletions", res.Deleted)
 	}
 }
 
@@ -168,16 +140,12 @@ func seedHelm(t *testing.T, b blob.Store, m meta.Store, repoName string, recs []
 
 func TestHelm_KeepVersions(t *testing.T) {
 	b, m := stores(t)
-	r := repo.Repository{
-		Name: "helm", Format: "helm", Kind: repo.Hosted,
-		CleanupPolicy: &repo.CleanupPolicy{KeepVersions: 1},
-	}
 	seedHelm(t, b, m, "helm", []helmRec{
 		{Name: "myapp", Version: "0.1.0"},
 		{Name: "myapp", Version: "0.2.0"},
 		{Name: "myapp", Version: "0.3.0"},
 	})
-	res, err := cleanup.Run(r, b, m)
+	res, err := cleanup.Run("helm", "helm", &repo.CleanupPolicy{KeepVersions: 1}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,15 +163,11 @@ func TestHelm_KeepVersions(t *testing.T) {
 
 func TestMaven_KeepReleasesOnly(t *testing.T) {
 	b, m := stores(t)
-	r := repo.Repository{
-		Name: "mvn", Format: "maven", Kind: repo.Hosted,
-		CleanupPolicy: &repo.CleanupPolicy{KeepReleasesOnly: true},
-	}
 	// Seed two versions: one release, one SNAPSHOT.
 	putBlob(t, b, "mvn/com/acme/lib/1.0.0/lib-1.0.0.jar")
 	putBlob(t, b, "mvn/com/acme/lib/2.0.0-SNAPSHOT/lib-2.0.0-SNAPSHOT.jar")
 
-	res, err := cleanup.Run(r, b, m)
+	res, err := cleanup.Run("mvn", "maven", &repo.CleanupPolicy{KeepReleasesOnly: true}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,16 +215,12 @@ func seedNPM(t *testing.T, b blob.Store, m meta.Store, repoName string, pkg stri
 
 func TestNPM_KeepVersions(t *testing.T) {
 	b, m := stores(t)
-	r := repo.Repository{
-		Name: "npm", Format: "npm", Kind: repo.Hosted,
-		CleanupPolicy: &repo.CleanupPolicy{KeepVersions: 2},
-	}
 	seedNPM(t, b, m, "npm", "lodash", []npmVerRec{
 		{Package: "lodash", Version: "1.0.0"},
 		{Package: "lodash", Version: "2.0.0"},
 		{Package: "lodash", Version: "3.0.0"},
 	})
-	res, err := cleanup.Run(r, b, m)
+	res, err := cleanup.Run("npm", "npm", &repo.CleanupPolicy{KeepVersions: 2}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,16 +235,12 @@ func TestNPM_KeepVersions(t *testing.T) {
 
 func TestNPM_KeepReleasesOnly(t *testing.T) {
 	b, m := stores(t)
-	r := repo.Repository{
-		Name: "npm", Format: "npm", Kind: repo.Hosted,
-		CleanupPolicy: &repo.CleanupPolicy{KeepReleasesOnly: true},
-	}
 	seedNPM(t, b, m, "npm", "react", []npmVerRec{
 		{Package: "react", Version: "18.0.0"},
 		{Package: "react", Version: "19.0.0-beta"},
 		{Package: "react", Version: "19.0.0-rc"},
 	})
-	res, err := cleanup.Run(r, b, m)
+	res, err := cleanup.Run("npm", "npm", &repo.CleanupPolicy{KeepReleasesOnly: true}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}

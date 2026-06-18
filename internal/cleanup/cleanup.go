@@ -1,18 +1,16 @@
 // Package cleanup implements artifact retention policies for hosted repositories.
 //
-// Policies are stored on repo.Repository.CleanupPolicy and applied by calling
-// Run. The four supported policy types are:
+// Named policies are managed via PolicyManager and stored in meta.Store.
+// Call Run to apply a policy; call DryRun to preview what would be deleted.
+// The four rule types are:
 //
 //   - KeepVersions       — retain only the N most recent versions per artifact
 //   - KeepReleasesOnly   — delete all SNAPSHOT / pre-release versions
 //   - DeleteSnapshotsDays — delete SNAPSHOT/pre-release versions older than N days
 //   - DeleteOlderThanDays — delete any artifact older than N days
 //
-// Timestamp-based policies (DeleteSnapshotsDays, DeleteOlderThanDays) only
-// apply to artifacts published after UploadedAt tracking was introduced.
-// Artifacts without a stored timestamp are skipped by those policies.
-//
-// Trigger via POST /api/v1/repos/{name}/cleanup.
+// Timestamp-based rules only apply to artifacts published after UploadedAt
+// tracking was introduced; artifacts without a stored timestamp are skipped.
 package cleanup
 
 import (
@@ -30,23 +28,21 @@ type Result struct {
 	FreedBytes int64 `json:"freed_bytes"`
 }
 
-// Run applies the repository's CleanupPolicy against its blob and meta stores.
-// Returns immediately with an empty result if no policy is configured or the
-// repository is not a hosted repository.
-func Run(r repo.Repository, b blob.Store, m meta.Store) (Result, error) {
-	if r.CleanupPolicy == nil || r.Kind != repo.Hosted {
+// Run applies p against repoName's blob and meta stores. Returns an empty
+// result immediately if p is nil.
+func Run(repoName, format string, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (Result, error) {
+	if p == nil {
 		return Result{}, nil
 	}
-	p := r.CleanupPolicy
-	switch r.Format {
+	switch format {
 	case "maven":
-		return runMaven(r.Name, p, b, m)
+		return runMaven(repoName, p, b, m)
 	case "cran":
-		return runCRAN(r.Name, p, b, m)
+		return runCRAN(repoName, p, b, m)
 	case "helm":
-		return runHelm(r.Name, p, b, m)
+		return runHelm(repoName, p, b, m)
 	case "npm":
-		return runNPM(r.Name, p, b, m)
+		return runNPM(repoName, p, b, m)
 	}
 	return Result{}, nil
 }

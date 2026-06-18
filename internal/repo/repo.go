@@ -102,7 +102,7 @@ type Repository struct {
 	AnonymousRead bool           `json:"anonymousRead"`
 	ProxyTTL      time.Duration  `json:"proxyTTL,omitempty"`
 	ProxyAuth     string         `json:"proxyAuth,omitempty"`
-	CleanupPolicy *CleanupPolicy `json:"cleanupPolicy,omitempty"`
+	CleanupPolicyName string `json:"cleanupPolicyName,omitempty"`
 }
 
 // metaStore is the minimal interface Manager needs for persistence.

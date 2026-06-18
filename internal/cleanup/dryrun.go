@@ -23,25 +23,23 @@ type DryRunResult struct {
 	Candidates []Candidate `json:"candidates"`
 }
 
-// DryRun applies the repository's CleanupPolicy and returns what would be
-// deleted, without performing any deletions. Returns an empty result if no
-// policy is configured or the repository is not hosted.
-func DryRun(r repo.Repository, b blob.Store, m meta.Store) (DryRunResult, error) {
-	if r.CleanupPolicy == nil || r.Kind != repo.Hosted {
-		return DryRunResult{}, nil
+// DryRun applies p against repoName's stores and returns what would be deleted,
+// without performing any deletions. Returns an empty result if p is nil.
+func DryRun(repoName, format string, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (DryRunResult, error) {
+	if p == nil {
+		return DryRunResult{Candidates: []Candidate{}}, nil
 	}
-	p := r.CleanupPolicy
-	switch r.Format {
+	switch format {
 	case "cran":
-		return dryRunCRAN(r.Name, p, b, m)
+		return dryRunCRAN(repoName, p, b, m)
 	case "helm":
-		return dryRunHelm(r.Name, p, b, m)
+		return dryRunHelm(repoName, p, b, m)
 	case "npm":
-		return dryRunNPM(r.Name, p, b, m)
+		return dryRunNPM(repoName, p, b, m)
 	case "maven":
-		return dryRunMaven(r.Name, p, b)
+		return dryRunMaven(repoName, p, b)
 	}
-	return DryRunResult{}, nil
+	return DryRunResult{Candidates: []Candidate{}}, nil
 }
 
 // tagged pairs a record with the rule that triggered its selection.
