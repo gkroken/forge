@@ -178,7 +178,8 @@ func main() {
 
 	forgeSrv := server.New(mgr, reg, blobStore, metaStore, authStore).
 		WithMetrics(metrics, promReg).
-		WithQueue(workerCtx, q)
+		WithQueue(workerCtx, q).
+		WithCleanup(cleanup.NewPolicyManager(metaStore))
 
 	if oidcCfg, err := oidc.FromEnv(); err != nil {
 		slog.Error("oidc: invalid configuration", "err", err)

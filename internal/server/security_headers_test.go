@@ -32,6 +32,7 @@ func TestSecurityHeaders_PresentOnAllRoutes(t *testing.T) {
 		"/readyz",
 		"/repository/npm-hosted/lodash",
 		"/api/v1/repos",
+		"/api/v1/cleanup-policies",
 		"/ui/",
 	}
 

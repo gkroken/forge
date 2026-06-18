@@ -245,7 +245,7 @@ func (s *Server) deleteRepo(w http.ResponseWriter, name string) {
 }
 
 // handleCleanup handles POST /api/v1/repos/{name}/cleanup.
-// It applies the repository's CleanupPolicy and returns a JSON summary.
+// Add ?dry=true to preview candidates without deleting.
 func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request, name string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -256,11 +256,111 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request, name stri
 		http.Error(w, "repository not found: "+name, http.StatusNotFound)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	if r.URL.Query().Get("dry") == "true" {
+		result, err := cleanup.DryRun(rp, s.Blob, s.Meta)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if result.Candidates == nil {
+			result.Candidates = []cleanup.Candidate{}
+		}
+		json.NewEncoder(w).Encode(result)
+		return
+	}
 	result, err := cleanup.Run(rp, s.Blob, s.Meta)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
+}
+
+// handleCleanupPolicies dispatches /api/v1/cleanup-policies and
+// /api/v1/cleanup-policies/{name}.
+func (s *Server) handleCleanupPolicies(w http.ResponseWriter, r *http.Request) {
+	if !s.Enforcer.RequireAdmin(w, r) {
+		return
+	}
+	if s.Cleanup == nil {
+		http.Error(w, "cleanup policy manager not configured", http.StatusServiceUnavailable)
+		return
+	}
+	name := strings.TrimPrefix(r.URL.Path, "/api/v1/cleanup-policies")
+	name = strings.TrimPrefix(name, "/")
+	if name == "" {
+		s.handleCleanupPoliciesList(w, r)
+		return
+	}
+	s.handleCleanupPolicyByName(w, r, name)
+}
+
+func (s *Server) handleCleanupPoliciesList(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		policies, err := s.Cleanup.List()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if policies == nil {
+			policies = []cleanup.NamedPolicy{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(policies)
+	case http.MethodPost:
+		var p cleanup.NamedPolicy
+		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+			http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := s.Cleanup.Put(p); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(p)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleCleanupPolicyByName(w http.ResponseWriter, r *http.Request, name string) {
+	switch r.Method {
+	case http.MethodGet:
+		p, ok, err := s.Cleanup.Get(name)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			http.Error(w, "cleanup policy not found: "+name, http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(p)
+	case http.MethodPut:
+		var p cleanup.NamedPolicy
+		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+			http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		p.Name = name // URL name takes precedence over body
+		if err := s.Cleanup.Put(p); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(p)
+	case http.MethodDelete:
+		if err := s.Cleanup.Delete(name); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }

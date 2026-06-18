@@ -10,6 +10,7 @@ import (
 
 	"forge/internal/auth"
 	"forge/internal/blob"
+	"forge/internal/cleanup"
 	"forge/internal/format"
 	"forge/internal/meta"
 	"forge/internal/repo"
@@ -367,5 +368,142 @@ func TestMemberPolicy_MakePrivateAfterGroupFixed_Allowed(t *testing.T) {
 	}))
 	if rw.Code != http.StatusOK {
 		t.Errorf("making member private after group is fixed: got %d want 200", rw.Code)
+	}
+}
+
+// ── Cleanup policies API ──────────────────────────────────────────────────────
+
+func newAdminServerWithCleanup(t *testing.T) *Server {
+	t.Helper()
+	srv := newAdminServer(t)
+	srv.Cleanup = cleanup.NewPolicyManager(srv.Meta)
+	return srv
+}
+
+func TestCleanupPolicies_ListEmpty(t *testing.T) {
+	srv := newAdminServerWithCleanup(t)
+	rw := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw, adminReq(t, http.MethodGet, "/api/v1/cleanup-policies", nil))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status %d", rw.Code)
+	}
+	var policies []cleanup.NamedPolicy
+	json.NewDecoder(rw.Body).Decode(&policies)
+	if len(policies) != 0 {
+		t.Errorf("expected empty list, got %d policies", len(policies))
+	}
+}
+
+func TestCleanupPolicies_CreateAndGet(t *testing.T) {
+	srv := newAdminServerWithCleanup(t)
+	h := srv.Routes()
+
+	body := map[string]any{
+		"name":         "keep-5",
+		"description":  "Keep last 5 versions",
+		"keepVersions": 5,
+		"interval":     "24h",
+	}
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, adminReq(t, http.MethodPost, "/api/v1/cleanup-policies", body))
+	if rw.Code != http.StatusCreated {
+		t.Fatalf("create status %d: %s", rw.Code, rw.Body.String())
+	}
+
+	rw2 := httptest.NewRecorder()
+	h.ServeHTTP(rw2, adminReq(t, http.MethodGet, "/api/v1/cleanup-policies/keep-5", nil))
+	if rw2.Code != http.StatusOK {
+		t.Fatalf("get status %d", rw2.Code)
+	}
+	var p cleanup.NamedPolicy
+	json.NewDecoder(rw2.Body).Decode(&p)
+	if p.Name != "keep-5" || p.KeepVersions != 5 {
+		t.Errorf("unexpected policy: %+v", p)
+	}
+}
+
+func TestCleanupPolicies_Update(t *testing.T) {
+	srv := newAdminServerWithCleanup(t)
+	h := srv.Routes()
+
+	h.ServeHTTP(httptest.NewRecorder(), adminReq(t, http.MethodPost, "/api/v1/cleanup-policies",
+		map[string]any{"name": "my-policy", "keepVersions": 3}))
+
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, adminReq(t, http.MethodPut, "/api/v1/cleanup-policies/my-policy",
+		map[string]any{"name": "my-policy", "keepVersions": 10, "description": "updated"}))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("update status %d: %s", rw.Code, rw.Body.String())
+	}
+
+	rw2 := httptest.NewRecorder()
+	h.ServeHTTP(rw2, adminReq(t, http.MethodGet, "/api/v1/cleanup-policies/my-policy", nil))
+	var p cleanup.NamedPolicy
+	json.NewDecoder(rw2.Body).Decode(&p)
+	if p.KeepVersions != 10 || p.Description != "updated" {
+		t.Errorf("update not reflected: %+v", p)
+	}
+}
+
+func TestCleanupPolicies_Delete(t *testing.T) {
+	srv := newAdminServerWithCleanup(t)
+	h := srv.Routes()
+
+	h.ServeHTTP(httptest.NewRecorder(), adminReq(t, http.MethodPost, "/api/v1/cleanup-policies",
+		map[string]any{"name": "to-delete", "keepVersions": 1}))
+
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, adminReq(t, http.MethodDelete, "/api/v1/cleanup-policies/to-delete", nil))
+	if rw.Code != http.StatusNoContent {
+		t.Fatalf("delete status %d", rw.Code)
+	}
+
+	rw2 := httptest.NewRecorder()
+	h.ServeHTTP(rw2, adminReq(t, http.MethodGet, "/api/v1/cleanup-policies/to-delete", nil))
+	if rw2.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 after delete, got %d", rw2.Code)
+	}
+}
+
+func TestCleanupPolicies_InvalidName(t *testing.T) {
+	srv := newAdminServerWithCleanup(t)
+	rw := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw, adminReq(t, http.MethodPost, "/api/v1/cleanup-policies",
+		map[string]any{"name": "Invalid Name!", "keepVersions": 1}))
+	if rw.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid name, got %d", rw.Code)
+	}
+}
+
+func TestCleanupPolicies_NotConfigured(t *testing.T) {
+	srv := newAdminServer(t) // no Cleanup wired
+	rw := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw, adminReq(t, http.MethodGet, "/api/v1/cleanup-policies", nil))
+	if rw.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 when Cleanup is nil, got %d", rw.Code)
+	}
+}
+
+func TestCleanupDryRun(t *testing.T) {
+	srv := newAdminServer(t)
+	h := srv.Routes()
+
+	// Create a hosted CRAN repo.
+	h.ServeHTTP(httptest.NewRecorder(), adminReq(t, http.MethodPost, "/api/v1/repos",
+		map[string]any{"name": "cran", "format": "cran", "kind": "hosted", "anonymousRead": true}))
+
+	// Dry-run on a repo with no policy returns empty candidates.
+	rw := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/repos/cran/cleanup?dry=true", nil)
+	h.ServeHTTP(rw, req)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("dry-run status %d: %s", rw.Code, rw.Body.String())
+	}
+	var result struct {
+		Candidates []any `json:"candidates"`
+	}
+	json.NewDecoder(rw.Body).Decode(&result)
+	if result.Candidates == nil {
+		t.Error("expected candidates array (even if empty), got null")
 	}
 }

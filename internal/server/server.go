@@ -24,6 +24,7 @@ import (
 
 	"forge/internal/auth"
 	"forge/internal/blob"
+	"forge/internal/cleanup"
 	"forge/internal/format"
 	"forge/internal/indexer"
 	"forge/internal/meta"
@@ -52,12 +53,13 @@ type Server struct {
 	Handlers  *format.Registry
 	Blob      blob.Store
 	Meta      meta.Store
-	Auth      auth.Store     // nil = auth not enabled (eval mode)
-	Enforcer  *auth.Enforcer // always non-nil; uses AllowAll when Auth is nil
-	OIDC      oidcProvider   // nil = OIDC not configured; *oidc.Provider satisfies this
-	Queue     queue.Queue    // nil = no async index regen (eval / tests)
-	Metrics   *obs.Metrics   // nil = no instrumentation (tests)
-	MaxUpload int64          // per-request body limit; 0 = use defaultMaxUpload
+	Auth      auth.Store           // nil = auth not enabled (eval mode)
+	Enforcer  *auth.Enforcer       // always non-nil; uses AllowAll when Auth is nil
+	OIDC      oidcProvider         // nil = OIDC not configured; *oidc.Provider satisfies this
+	Queue     queue.Queue          // nil = no async index regen (eval / tests)
+	Metrics   *obs.Metrics         // nil = no instrumentation (tests)
+	Cleanup   *cleanup.PolicyManager // nil = cleanup-policies API returns 503
+	MaxUpload int64                // per-request body limit; 0 = use defaultMaxUpload
 	reg       prometheus.Gatherer
 	client    *http.Client
 	oidcKey   []byte // HMAC key for signing OIDC state cookies; set by WithOIDC
@@ -99,6 +101,11 @@ func (s *Server) WithQueue(ctx context.Context, q queue.Queue) *Server {
 	return s
 }
 
+func (s *Server) WithCleanup(pm *cleanup.PolicyManager) *Server {
+	s.Cleanup = pm
+	return s
+}
+
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handleProbe)
@@ -108,6 +115,8 @@ func (s *Server) Routes() http.Handler {
 	}
 	mux.HandleFunc("/api/v1/tokens", s.handleTokens)
 	mux.HandleFunc("/api/v1/tokens/", s.handleTokens)
+	mux.HandleFunc("/api/v1/cleanup-policies", s.handleCleanupPolicies)
+	mux.HandleFunc("/api/v1/cleanup-policies/", s.handleCleanupPolicies)
 	mux.HandleFunc("/api/v1/repos", s.handleAdminRepos)
 	mux.HandleFunc("/api/v1/repos/", s.handleAdminRepos)
 	mux.HandleFunc("/api/v1/search", s.handleSearch)
