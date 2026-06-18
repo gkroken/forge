@@ -1,0 +1,106 @@
+{{define "content"}}
+<div class="admin-topbar">
+  <span class="admin-topbar-title">Cleanup — {{.RepoName}}</span>
+</div>
+
+<div class="admin-content">
+  <div class="breadcrumb">
+    <a href="/ui/admin/">Repositories</a><span>/</span>
+    <a href="/ui/admin/repos/{{.RepoName}}/edit">{{.RepoName}}</a><span>/</span>
+    Cleanup
+  </div>
+
+  <!-- dry-run panel -->
+  <div>
+    <div class="section-title">Dry run</div>
+    <div style="margin-bottom:.75rem;font-size:.85em;color:var(--text-muted)">
+      Policy:
+      {{if .PolicyName}}
+        <a href="/ui/admin/cleanup-policies/{{.PolicyName}}/edit"><strong>{{.PolicyName}}</strong></a>
+      {{else}}
+        <em>none assigned</em> — <a href="/ui/admin/repos/{{.RepoName}}/edit">assign a policy</a>
+      {{end}}
+    </div>
+    <button class="btn" id="dry-run-btn" onclick="runDry('{{.RepoName}}',this)">Run dry-run</button>
+    <span id="dry-run-status" style="margin-left:.75rem;font-size:.85em;color:var(--text-muted)"></span>
+    <div id="dry-run-result" style="margin-top:1rem"></div>
+  </div>
+
+  <!-- history -->
+  <div style="margin-top:2.5rem">
+    <div class="section-title">Run history</div>
+    {{if .History}}
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>Time (UTC)</th>
+            <th>Policy</th>
+            <th>Mode</th>
+            <th>Deleted</th>
+            <th>Freed</th>
+            <th>Duration</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .History}}
+          <tr>
+            <td class="col-mono">{{.Timestamp}}</td>
+            <td>{{if .PolicyName}}{{.PolicyName}}{{else}}—{{end}}</td>
+            <td>
+              {{if .DryRun}}<span class="badge">dry-run</span>
+              {{else}}<span class="badge kind-hosted">live</span>{{end}}
+            </td>
+            <td>{{.Deleted}}</td>
+            <td>{{.FreedMB}} MB</td>
+            <td>{{.DurationMs}} ms</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    <div class="empty" style="padding:2rem 0;font-size:.85em;color:var(--text-muted)">
+      No cleanup runs recorded yet.
+    </div>
+    {{end}}
+  </div>
+
+</div>
+
+<script>
+function runDry(name, btn) {
+  btn.disabled = true;
+  var status = document.getElementById('dry-run-status');
+  var result = document.getElementById('dry-run-result');
+  status.textContent = 'Running…';
+  result.innerHTML = '';
+  fetch('/api/v1/repos/' + name + '/cleanup?dry=true', {method: 'POST'})
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var cands = d.candidates || [];
+      status.textContent = cands.length + ' candidate(s) found';
+      if (cands.length === 0) {
+        result.innerHTML = '<p style="font-size:.85em;color:var(--text-muted)">Nothing to clean up.</p>';
+        return;
+      }
+      var html = '<div class="admin-table-wrap"><table class="admin-table"><thead><tr>' +
+        '<th>Component</th><th>Version</th><th>Age (days)</th><th>Size</th><th>Reason</th>' +
+        '</tr></thead><tbody>';
+      cands.forEach(function(c) {
+        html += '<tr><td>' + esc(c.component) + '</td><td class="col-mono">' + esc(c.version) +
+          '</td><td>' + c.age_days + '</td><td>' +
+          (c.size_bytes / 1048576).toFixed(2) + ' MB</td><td style="font-size:.85em;color:var(--text-muted)">' +
+          esc(c.reason) + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+      result.innerHTML = html;
+    })
+    .catch(function(e) { status.textContent = 'Error: ' + e; })
+    .finally(function() { btn.disabled = false; });
+}
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+{{end}}

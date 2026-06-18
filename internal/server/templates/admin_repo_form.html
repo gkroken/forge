@@ -74,17 +74,27 @@
   <fieldset id="g-cleanup">
     <legend>Cleanup policy <span class="form-hint-inline">(hosted only)</span></legend>
     <div class="form-group">
-      <label for="f-cleanup-policy-name">Policy name</label>
+      <label for="f-cleanup-policy-name">Policy</label>
+      {{if .PolicyNames}}
+      <select id="f-cleanup-policy-name" name="cleanupPolicyName">
+        <option value="">— none —</option>
+        {{range .PolicyNames}}
+        <option value="{{.}}"{{if eq . $.Repo.CleanupPolicyName}} selected{{end}}>{{.}}</option>
+        {{end}}
+      </select>
+      {{else}}
       <input id="f-cleanup-policy-name" type="text" name="cleanupPolicyName"
              value="{{.Repo.CleanupPolicyName}}"
              placeholder="e.g. keep-5-versions (leave blank for none)">
-      <span class="form-hint">Named policies are managed on the <a href="/ui/admin/cleanup-policies">Cleanup</a> page.</span>
+      {{end}}
+      <span class="form-hint">Manage policies on the <a href="/ui/admin/cleanup-policies">Cleanup</a> page.</span>
     </div>
     {{if .IsEdit}}
-    <div class="form-group">
+    <div class="form-group" style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
       <button type="button" class="btn"
               onclick="runCleanup('{{.Repo.Name}}', this)">Run now</button>
-      <span id="cleanup-result" style="margin-left:.75rem;font-size:.85em"></span>
+      <a href="/ui/admin/repos/{{.Repo.Name}}/cleanup" class="btn">Dry-run &amp; history</a>
+      <span id="cleanup-result" style="font-size:.85em"></span>
     </div>
     {{end}}
   </fieldset>

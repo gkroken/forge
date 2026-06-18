@@ -114,10 +114,12 @@ var (
 	tmplAccess           = parseUITmpl("templates/base.html", "templates/access.html")
 	tmplUpload           = parseUITmpl("templates/base.html", "templates/upload.html")
 	// Foundry admin shell — sidebar layout
-	tmplDashboard        = parseUITmpl("templates/admin_shell.html", "templates/dashboard.html")
-	tmplAdminTokens      = parseUITmpl("templates/admin_shell.html", "templates/tokens_admin.html")
-	tmplCleanupPolicies  = parseUITmpl("templates/admin_shell.html", "templates/cleanup_policies.html")
-	tmplObservability    = parseUITmpl("templates/admin_shell.html", "templates/observability.html")
+	tmplDashboard          = parseUITmpl("templates/admin_shell.html", "templates/dashboard.html")
+	tmplAdminTokens        = parseUITmpl("templates/admin_shell.html", "templates/tokens_admin.html")
+	tmplCleanupPolicies    = parseUITmpl("templates/admin_shell.html", "templates/cleanup_policies.html")
+	tmplCleanupPolicyForm  = parseUITmpl("templates/admin_shell.html", "templates/cleanup_policy_form.html")
+	tmplCleanupRun         = parseUITmpl("templates/admin_shell.html", "templates/cleanup_run.html")
+	tmplObservability      = parseUITmpl("templates/admin_shell.html", "templates/observability.html")
 )
 
 // ── page data types ───────────────────────────────────────────────────────────

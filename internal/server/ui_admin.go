@@ -23,13 +23,14 @@ type adminReposPage struct {
 }
 
 type adminFormPage struct {
-	Title   string
-	Repo    repo.Repository
-	KindStr string // string(Repo.Kind) — avoids named-type comparison in templates
-	IsEdit  bool
-	Error   string
-	Formats []string
-	Kinds   []string
+	Title       string
+	Repo        repo.Repository
+	KindStr     string // string(Repo.Kind) — avoids named-type comparison in templates
+	IsEdit      bool
+	Error       string
+	Formats     []string
+	Kinds       []string
+	PolicyNames []string // named cleanup policies available for selection
 }
 
 // ── access view types ─────────────────────────────────────────────────────────
@@ -118,6 +119,17 @@ func (s *Server) handleUIAdmin(w http.ResponseWriter, r *http.Request, sub strin
 		s.uiAdminAccess(w, r)
 	case sub == "/cleanup-policies":
 		s.uiCleanupPolicies(w, r)
+	case sub == "/cleanup-policies/new":
+		s.uiCleanupPolicyForm(w, r, "", false)
+	case strings.HasPrefix(sub, "/cleanup-policies/") && strings.HasSuffix(sub, "/edit"):
+		name := strings.TrimSuffix(strings.TrimPrefix(sub, "/cleanup-policies/"), "/edit")
+		s.uiCleanupPolicyForm(w, r, name, true)
+	case strings.HasPrefix(sub, "/cleanup-policies/") && r.Method == http.MethodDelete:
+		name := strings.TrimPrefix(sub, "/cleanup-policies/")
+		s.uiDeleteCleanupPolicy(w, r, name)
+	case strings.HasPrefix(sub, "/repos/") && strings.HasSuffix(sub, "/cleanup"):
+		name := strings.TrimSuffix(strings.TrimPrefix(sub, "/repos/"), "/cleanup")
+		s.uiRepoCleanupPanel(w, r, name)
 	case sub == "/observability":
 		s.uiObservability(w, r)
 	default:
@@ -144,11 +156,12 @@ func (s *Server) uiAdminNewRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	render(w, tmplAdminForm, "base.html", adminFormPage{
-		Title:   "Admin — New repository",
-		Repo:    repo.Repository{Kind: repo.Hosted},
-		KindStr: "hosted",
-		Formats: allFormats,
-		Kinds:   allKinds,
+		Title:       "Admin — New repository",
+		Repo:        repo.Repository{Kind: repo.Hosted},
+		KindStr:     "hosted",
+		Formats:     allFormats,
+		Kinds:       allKinds,
+		PolicyNames: s.policyNames(),
 	})
 }
 
@@ -166,12 +179,13 @@ func (s *Server) uiAdminEditRepo(w http.ResponseWriter, r *http.Request, name st
 		return
 	}
 	render(w, tmplAdminForm, "base.html", adminFormPage{
-		Title:   "Admin — Edit " + name,
-		Repo:    rp,
-		KindStr: string(rp.Kind),
-		IsEdit:  true,
-		Formats: allFormats,
-		Kinds:   allKinds,
+		Title:       "Admin — Edit " + name,
+		Repo:        rp,
+		KindStr:     string(rp.Kind),
+		IsEdit:      true,
+		Formats:     allFormats,
+		Kinds:       allKinds,
+		PolicyNames: s.policyNames(),
 	})
 }
 
@@ -285,13 +299,14 @@ func (s *Server) reRenderForm(w http.ResponseWriter, r *http.Request, name strin
 		title = "Admin — Edit " + name
 	}
 	render(w, tmplAdminForm, "base.html", adminFormPage{
-		Title:   title,
-		Repo:    rp,
-		KindStr: string(rp.Kind),
-		IsEdit:  isEdit,
-		Error:   errMsg,
-		Formats: allFormats,
-		Kinds:   allKinds,
+		Title:       title,
+		Repo:        rp,
+		KindStr:     string(rp.Kind),
+		IsEdit:      isEdit,
+		Error:       errMsg,
+		Formats:     allFormats,
+		Kinds:       allKinds,
+		PolicyNames: s.policyNames(),
 	})
 }
 

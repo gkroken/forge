@@ -1,0 +1,93 @@
+{{define "content"}}
+<div class="admin-topbar">
+  <span class="admin-topbar-title">{{if .IsEdit}}Edit policy{{else}}New policy{{end}}</span>
+</div>
+
+<div class="admin-content">
+  <div class="breadcrumb">
+    <a href="/ui/admin/cleanup-policies">Cleanup</a><span>/</span>
+    {{if .IsEdit}}{{.Policy.Name}}{{else}}New{{end}}
+  </div>
+
+  {{if .Error}}
+  <div class="alert alert-error">{{.Error}}</div>
+  {{end}}
+
+  <form method="POST" class="repo-form" style="max-width:560px">
+    <div class="form-group">
+      <label for="f-name">Name</label>
+      <input id="f-name" type="text" name="name" value="{{.Policy.Name}}"
+             {{if .IsEdit}}readonly{{end}} required
+             placeholder="e.g. keep-5-versions">
+      <span class="form-hint">Lowercase letters, digits, and hyphens only.</span>
+    </div>
+
+    <div class="form-group">
+      <label for="f-desc">Description</label>
+      <input id="f-desc" type="text" name="description" value="{{.Policy.Description}}"
+             placeholder="Optional description">
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label for="f-keep">Keep last N versions</label>
+        <input id="f-keep" type="number" name="keepVersions" min="0"
+               value="{{.Policy.KeepVersions}}" placeholder="0 = disabled">
+      </div>
+      <div class="form-group">
+        <label for="f-older">Delete older than (days)</label>
+        <input id="f-older" type="number" name="deleteOlderThanDays" min="0"
+               value="{{.Policy.DeleteOlderThanDays}}" placeholder="0 = disabled">
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label for="f-snap">Delete snapshots older than (days)</label>
+        <input id="f-snap" type="number" name="deleteSnapshotsDays" min="0"
+               value="{{.Policy.DeleteSnapshotsDays}}" placeholder="0 = disabled">
+      </div>
+      <div class="form-group">
+        <label for="f-dl">Not downloaded in (days)</label>
+        <input id="f-dl" type="number" name="lastDownloadedDays" min="0"
+               value="{{.Policy.LastDownloadedDays}}" placeholder="0 = disabled">
+        <span class="form-hint">Requires download tracking (coming soon).</span>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="f-interval">Run interval</label>
+      <input id="f-interval" type="text" name="interval" value="{{.IntervalStr}}"
+             placeholder="e.g. 24h  (blank = manual only)">
+    </div>
+
+    <div class="form-group">
+      <label class="checkbox-label">
+        <input type="checkbox" name="keepReleasesOnly"{{if .Policy.KeepReleasesOnly}} checked{{end}}>
+        Keep releases only (exclude snapshots and pre-releases)
+      </label>
+    </div>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">
+        {{if .IsEdit}}Save changes{{else}}Create policy{{end}}
+      </button>
+      <a href="/ui/admin/cleanup-policies" class="btn">Cancel</a>
+      {{if .IsEdit}}
+      <button type="button" class="btn" style="margin-left:auto;color:var(--danger,#c0392b)"
+              onclick="deletePol('{{.Policy.Name}}')">Delete</button>
+      {{end}}
+    </div>
+  </form>
+</div>
+
+{{if .IsEdit}}
+<script>
+function deletePol(name) {
+  if (!confirm("Delete policy '" + name + "'?")) return;
+  fetch('/ui/admin/cleanup-policies/' + name, {method: 'DELETE'})
+    .then(function(r) { if (r.ok || r.status === 200) location.href = '/ui/admin/cleanup-policies'; });
+}
+</script>
+{{end}}
+{{end}}
