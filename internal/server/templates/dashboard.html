@@ -1,0 +1,160 @@
+{{define "content"}}
+<!-- top bar -->
+<div class="admin-topbar">
+  <span class="admin-topbar-title">Dashboard</span>
+  <div class="admin-topbar-actions">
+    <a href="/ui/search" class="btn" style="height:34px;padding:0 13px;font-size:12.5px;">Search</a>
+  </div>
+</div>
+
+<div class="admin-content">
+
+  <!-- system overview header -->
+  <div style="display:flex;align-items:flex-end;gap:12px;">
+    <div>
+      <div style="font-size:19px;font-weight:700;color:var(--text);letter-spacing:-.2px;">System overview</div>
+      <div style="font-size:12.5px;color:var(--text-muted);margin-top:2px;">forge · uptime unknown · eval mode</div>
+    </div>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:8px;background:var(--alert-ok-bg);border:1px solid var(--alert-ok-border);">
+      <span class="status-dot dot-ok"></span>
+      <span style="font-size:12.5px;font-weight:600;color:var(--alert-ok-fg);">All systems operational</span>
+    </div>
+  </div>
+
+  <!-- KPI row -->
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-label">Repositories</div>
+      <div class="kpi-value">{{.RepoCount}}<span class="kpi-unit">repos</span></div>
+      <div class="kpi-sub">{{.FormatCount}} format{{if ne .FormatCount 1}}s{{end}} in use</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Stored</div>
+      <div class="kpi-value">—<span class="kpi-unit">GB</span></div>
+      <div class="kpi-sub">blob store usage</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Requests · 24h</div>
+      <div class="kpi-value">{{if .TotalRequests}}{{.TotalRequests}}<span class="kpi-unit">req</span>{{else}}—{{end}}</div>
+      <div class="kpi-sub">all routes</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Cache hit rate</div>
+      <div class="kpi-value">{{if .CacheHitPct}}{{printf "%.1f" .CacheHitPct}}<span class="kpi-unit">%</span>{{else}}—{{end}}</div>
+      <div class="kpi-sub">proxy repositories</div>
+    </div>
+  </div>
+
+  <!-- mid row: health · requests chart · storage by format -->
+  <div class="mid-grid-3" style="height:220px;">
+
+    <!-- service health -->
+    <div class="panel-card">
+      <div class="panel-title">Service health</div>
+      <div class="health-rows">
+        <div class="health-row">
+          <span class="status-dot dot-ok"></span>
+          <span class="health-label">REST API</span>
+          <span class="health-stat text-ok">ok</span>
+        </div>
+        {{range .ReposByFormat}}
+        <div class="health-row">
+          <span class="status-dot dot-ok"></span>
+          <span class="health-label">{{.Format}}</span>
+          <span class="health-stat" style="color:var(--text-muted);">{{.Count}} repo{{if ne .Count 1}}s{{end}}</span>
+        </div>
+        {{end}}
+        {{if eq (len .ReposByFormat) 0}}
+        <div class="health-row">
+          <span class="status-dot dot-neutral"></span>
+          <span class="health-label" style="color:var(--text-muted);">No repositories</span>
+        </div>
+        {{end}}
+      </div>
+    </div>
+
+    <!-- requests chart (CSS bars, representative) -->
+    <div class="panel-card">
+      <div style="display:flex;align-items:center;margin-bottom:6px;">
+        <span class="panel-title" style="margin-bottom:0;">Requests · last 24h</span>
+        <span style="margin-left:auto;font-family:ui-monospace,monospace;font-size:12px;font-weight:600;color:var(--text);">{{if .TotalRequests}}{{.TotalRequests}} total{{else}}no data{{end}}</span>
+      </div>
+      <div class="bar-chart" style="height:120px;">
+        {{range .ReqBars}}
+        <div class="bar-col">
+          <div class="bar-miss" style="height:{{.Miss}}%;"></div>
+          <div class="bar-hit"  style="height:{{.Hit}}%;"></div>
+        </div>
+        {{end}}
+      </div>
+      <div class="chart-legend">
+        <span class="chart-legend-item"><span class="chart-swatch" style="background:var(--accent);"></span>Cache hit</span>
+        <span class="chart-legend-item"><span class="chart-swatch" style="background:var(--accent-subtle);"></span>Upstream / miss</span>
+      </div>
+    </div>
+
+    <!-- storage by format -->
+    <div class="panel-card">
+      <div class="panel-title">Repositories by format</div>
+      <div class="store-rows">
+        {{range .ReposByFormat}}
+        <div class="store-row">
+          <div class="store-row-hdr">
+            <span class="store-name">{{.Format}}</span>
+            <span class="store-size">{{.Count}} repo{{if ne .Count 1}}s{{end}}</span>
+          </div>
+          <div class="store-track">
+            <div class="store-fill" style="width:{{.Pct}}%;background:{{.Color}};"></div>
+          </div>
+        </div>
+        {{end}}
+        {{if eq (len .ReposByFormat) 0}}
+        <div style="font-size:12.5px;color:var(--text-muted);">No repositories configured.</div>
+        {{end}}
+      </div>
+    </div>
+  </div>
+
+  <!-- bottom row: recent activity · background tasks -->
+  <div class="bottom-grid-2" style="height:172px;flex:none;">
+    <div class="panel-card" style="overflow:hidden;">
+      <div class="panel-title">Recent activity</div>
+      {{if .RecentActivity}}
+      <div class="activity-rows">
+        {{range .RecentActivity}}
+        <div class="activity-row">
+          <span class="status-dot {{.DotClass}}"></span>
+          <span style="color:var(--text);">{{.Text}}</span>
+          <span class="activity-who">{{.Who}}</span>
+          <span class="activity-time">{{.When}}</span>
+        </div>
+        {{end}}
+      </div>
+      {{else}}
+      <div style="font-size:12.5px;color:var(--text-muted);">No recent activity.</div>
+      {{end}}
+    </div>
+    <div class="panel-card" style="overflow:hidden;">
+      <div class="panel-title">Background tasks</div>
+      {{if .BackgroundTasks}}
+      <div class="task-rows">
+        {{range .BackgroundTasks}}
+        <div class="task-row">
+          <div class="task-header">
+            <span class="task-name">{{.Name}}</span>
+            <span class="task-status" style="color:{{.Color}};">{{.Status}}</span>
+          </div>
+          <div class="task-track">
+            <div class="task-bar" style="width:{{.Pct}}%;background:{{.Color}};"></div>
+          </div>
+        </div>
+        {{end}}
+      </div>
+      {{else}}
+      <div style="font-size:12.5px;color:var(--text-muted);">No active tasks.</div>
+      {{end}}
+    </div>
+  </div>
+
+</div>
+{{end}}

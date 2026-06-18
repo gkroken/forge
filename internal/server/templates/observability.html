@@ -1,0 +1,129 @@
+{{define "content"}}
+<div class="admin-topbar">
+  <span class="admin-topbar-title">Observability</span>
+  <div class="admin-topbar-actions">
+    <a href="/metrics" class="btn" style="height:34px;padding:0 13px;font-size:12.5px;">/metrics</a>
+  </div>
+</div>
+
+<div class="admin-content">
+
+  <!-- KPI row -->
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-label">Total requests</div>
+      <div class="kpi-value">{{if .TotalRequests}}{{.TotalRequests}}<span class="kpi-unit">req</span>{{else}}—{{end}}</div>
+      <div class="kpi-sub">since startup</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Cache hits</div>
+      <div class="kpi-value">{{if .CacheHits}}{{.CacheHits}}{{else}}—{{end}}</div>
+      <div class="kpi-sub">proxy repositories</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Cache misses</div>
+      <div class="kpi-value">{{if .CacheMisses}}{{.CacheMisses}}{{else}}—{{end}}</div>
+      <div class="kpi-sub">upstream fetches</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Error rate</div>
+      <div class="kpi-value">{{if .ErrorPct}}{{printf "%.2f" .ErrorPct}}<span class="kpi-unit">%</span>{{else}}—{{end}}</div>
+      <div class="kpi-sub">5xx responses</div>
+    </div>
+  </div>
+
+  <!-- mid row: request chart · status breakdown -->
+  <div class="mid-grid-2" style="height:230px;flex:none;">
+
+    <!-- request rate chart -->
+    <div class="panel-card">
+      <div style="display:flex;align-items:center;margin-bottom:6px;">
+        <span class="panel-title" style="margin-bottom:0;">Request rate</span>
+        <span style="margin-left:auto;display:flex;gap:14px;font-size:11.5px;color:var(--text-muted);">
+          <span style="display:flex;align-items:center;gap:5px;">
+            <span style="width:9px;height:9px;border-radius:2px;background:var(--accent);display:inline-block;"></span>req/s
+          </span>
+        </span>
+      </div>
+      <div class="bar-chart" style="height:140px;">
+        {{range .RateBars}}
+        <div class="bar-col">
+          <div class="bar-single" style="height:{{.H}}%;"></div>
+        </div>
+        {{end}}
+      </div>
+      <div class="chart-time-labels">
+        <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>now</span>
+      </div>
+    </div>
+
+    <!-- response status breakdown -->
+    <div class="panel-card">
+      <div class="panel-title">Response status</div>
+      <div class="obs-status-bar">
+        {{range .StatusBreakdown}}
+        <div style="width:{{.Pct}}%;background:{{.Color}};"></div>
+        {{end}}
+        {{if eq (len .StatusBreakdown) 0}}
+        <div style="width:100%;background:var(--bg-hover);"></div>
+        {{end}}
+      </div>
+      <div class="obs-legend">
+        {{range .StatusBreakdown}}
+        <div class="obs-legend-row">
+          <span class="obs-swatch" style="background:{{.Color}};"></span>
+          <span style="font-family:ui-monospace,monospace;color:var(--text);font-weight:600;font-size:12.5px;">{{.Code}}</span>
+          <span style="color:var(--text-muted);">{{.Label}}</span>
+          <span style="margin-left:auto;font-family:ui-monospace,monospace;color:var(--text-muted);">{{.PctStr}}</span>
+        </div>
+        {{end}}
+        {{if eq (len .StatusBreakdown) 0}}
+        <div style="font-size:12.5px;color:var(--text-muted);">No request data yet.</div>
+        {{end}}
+      </div>
+    </div>
+  </div>
+
+  <!-- audit log -->
+  <div style="flex:1;min-height:0;display:flex;flex-direction:column;">
+    <div style="display:flex;align-items:center;margin-bottom:11px;">
+      <span class="section-title" style="margin-bottom:0;">Audit log</span>
+      <span style="margin-left:auto;font-size:12px;color:var(--text-muted);">Recent write &amp; auth events</span>
+    </div>
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th style="width:120px;">Time</th>
+            <th>Actor</th>
+            <th>Method</th>
+            <th>Path</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .AuditLog}}
+          <tr>
+            <td class="col-mono">{{.Time}}</td>
+            <td style="color:var(--text);">{{.Actor}}</td>
+            <td class="col-mono" style="color:{{.MethodColor}};">{{.Method}}</td>
+            <td class="col-mono" style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{.Path}}</td>
+            <td>
+              <span class="status-pill {{if .OK}}pill-ok{{else}}pill-err{{end}}">{{.Status}}</span>
+            </td>
+          </tr>
+          {{end}}
+          {{if eq (len .AuditLog) 0}}
+          <tr>
+            <td colspan="5" style="text-align:center;color:var(--text-muted);padding:2rem;">
+              Audit events are logged to stderr. No in-memory log yet.
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+{{end}}

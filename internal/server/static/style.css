@@ -567,7 +567,7 @@ td a:hover { text-decoration: underline; }
 .secret-reveal { border-left: 3px solid var(--alert-ok-border); }
 .secret-reveal code { display: block; margin-top: .5rem; word-break: break-all; font-size: 12px; font-family: ui-monospace, monospace; }
 
-/* ── login page ───────────────────────────────────────────────────────── */
+/* ── login page ─────────────────────────────────────────────────────────── */
 .login-wrap {
   max-width: 400px;
   margin: 4rem auto;
@@ -578,3 +578,289 @@ td a:hover { text-decoration: underline; }
   background: var(--bg);
 }
 .login-wrap h1 { text-align: center; margin-bottom: 1.5rem; font-size: 1.25rem; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Foundry admin shell — sidebar navigation (Dashboard, Tokens, Cleanup, Obs)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── sidebar tokens ──────────────────────────────────────────────────────── */
+:root {
+  --sidebar-bg:         var(--bg-alt);
+  --sidebar-border:     var(--border);
+  --sidebar-text:       var(--text-muted);
+  --sidebar-active-bg:  color-mix(in srgb, var(--accent) 12%, transparent);
+  --sidebar-active-fg:  var(--accent);
+  --sidebar-active-bar: var(--accent);
+
+  /* status dots */
+  --dot-ok:   #2e8b6f;
+  --dot-warn: #b3781f;
+  --dot-err:  #c0503f;
+
+  /* role / scope badges */
+  --badge-read-bg:   #e7eef6; --badge-read-fg:   #2f5d8a;
+  --badge-write-bg:  #f5eee0; --badge-write-fg:  #9a6a1f;
+  --badge-admin-bg:  #f3e4e2; --badge-admin-fg:  #a23f33;
+  --badge-deploy-bg: #e3f1ec; --badge-deploy-fg: #2f7d6b;
+
+  /* amber alert (proxy warn, dry-run) */
+  --alert-warn-bg: #fef9c3; --alert-warn-fg: #854d0e; --alert-warn-border: #fde68a;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --sidebar-active-bg:  color-mix(in srgb, var(--accent) 18%, transparent);
+  --badge-read-bg:  #1c3354; --badge-read-fg:  #93c5fd;
+  --badge-write-bg: #3b2f00; --badge-write-fg: #fcd34d;
+  --badge-admin-bg: #3b1212; --badge-admin-fg: #fca5a5;
+  --badge-deploy-bg:#0d3426; --badge-deploy-fg:#56d364;
+  --alert-warn-bg:  #3b2f00; --alert-warn-fg:  #fcd34d; --alert-warn-border:#855b00;
+}}
+:root[data-theme="dark"] {
+  --sidebar-active-bg:  color-mix(in srgb, var(--accent) 18%, transparent);
+  --badge-read-bg:  #1c3354; --badge-read-fg:  #93c5fd;
+  --badge-write-bg: #3b2f00; --badge-write-fg: #fcd34d;
+  --badge-admin-bg: #3b1212; --badge-admin-fg: #fca5a5;
+  --badge-deploy-bg:#0d3426; --badge-deploy-fg:#56d364;
+  --alert-warn-bg:  #3b2f00; --alert-warn-fg:  #fcd34d; --alert-warn-border:#855b00;
+}
+.alert-warn { background: var(--alert-warn-bg); color: var(--alert-warn-fg); border-color: var(--alert-warn-border); }
+
+/* ── admin shell layout ──────────────────────────────────────────────────── */
+.admin-body { overflow: hidden; height: 100vh; }
+.admin-shell { display: flex; height: 100vh; overflow: hidden; }
+
+/* sidebar rail */
+.admin-sidebar {
+  width: 214px;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--sidebar-border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+.sidebar-brand {
+  display: flex; align-items: center; gap: 10px;
+  padding: 16px 16px 14px;
+}
+.sidebar-logo {
+  width: 27px; height: 27px; border-radius: 7px;
+  background: var(--accent); color: var(--accent-fg);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 800; flex-shrink: 0;
+}
+.sidebar-appname { font-weight: 700; font-size: 15px; color: var(--text); }
+.sidebar-badge {
+  margin-left: auto; font-size: 10px; color: var(--text-muted);
+  border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px;
+  font-family: ui-monospace, monospace;
+}
+.sidebar-section {
+  font-size: 10px; font-weight: 600; letter-spacing: .9px;
+  color: var(--text-light); padding: 8px 22px 5px; text-transform: uppercase;
+}
+.sidebar-nav { display: flex; flex-direction: column; gap: 1px; padding-bottom: 8px; }
+.sidebar-nav-item {
+  position: relative;
+  display: flex; align-items: center;
+  padding: 8px 15px; margin: 1px 10px; border-radius: 7px;
+  font-size: 13px; font-weight: 500; color: var(--sidebar-text);
+  text-decoration: none; transition: background .1s, color .1s;
+}
+.sidebar-nav-item::before {
+  content: '';
+  position: absolute; left: 0; top: 7px; bottom: 7px;
+  width: 3px; border-radius: 2px; background: transparent;
+  transition: background .1s;
+}
+.sidebar-nav-item:hover { background: var(--bg-hover); color: var(--text); }
+.sidebar-nav-item.active {
+  background: var(--sidebar-active-bg);
+  color: var(--sidebar-active-fg);
+  font-weight: 600;
+}
+.sidebar-nav-item.active::before { background: var(--sidebar-active-bar); }
+.sidebar-footer {
+  margin-top: auto; border-top: 1px solid var(--sidebar-border);
+  padding: 12px 14px; display: flex; align-items: center; gap: 10px;
+}
+.sidebar-avatar {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: var(--accent-subtle); color: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; flex-shrink: 0;
+}
+.sidebar-user { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.sidebar-username { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.sidebar-userrole { font-size: 11px; color: var(--text-muted); }
+
+/* main content area */
+.admin-main { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.admin-topbar {
+  height: 54px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 14px;
+  padding: 0 24px; flex-shrink: 0; background: var(--bg);
+}
+.admin-topbar-title { font-size: 15px; font-weight: 600; color: var(--text); }
+.admin-topbar-actions { margin-left: auto; display: flex; align-items: center; gap: 9px; }
+.admin-content {
+  flex: 1; overflow-y: auto; background: var(--bg-alt);
+  padding: 20px 24px; display: flex; flex-direction: column; gap: 16px;
+}
+/* sub-header with tabs (Tokens page) */
+.admin-subheader { padding: 18px 24px 0; border-bottom: 1px solid var(--border); background: var(--bg); flex-shrink: 0; }
+.admin-subheader-row { display: flex; align-items: flex-start; gap: 12px; }
+.admin-subheader-title { font-size: 19px; font-weight: 700; color: var(--text); letter-spacing: -.2px; }
+.admin-subheader-sub { font-size: 12.5px; color: var(--text-muted); margin-top: 2px; }
+.admin-tabs { display: flex; gap: 22px; margin-top: 16px; }
+.admin-tab {
+  font-size: 13px; font-weight: 500; color: var(--text-muted);
+  padding-bottom: 11px; text-decoration: none;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.admin-tab.active { font-weight: 600; color: var(--accent); border-bottom-color: var(--accent); }
+
+/* ── KPI / stat cards ───────────────────────────────────────────────────── */
+.kpi-grid    { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; }
+.stat-grid-3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 14px; }
+.kpi-card, .stat-card {
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg); padding: 15px 16px;
+}
+.kpi-label, .stat-label {
+  font-size: 12px; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .4px; margin-bottom: 10px;
+}
+.kpi-value {
+  display: flex; align-items: baseline; gap: 6px;
+  font-size: 26px; font-weight: 700; color: var(--text);
+  font-family: ui-monospace, monospace; letter-spacing: -.5px;
+}
+.stat-value { font-size: 26px; font-weight: 700; font-family: ui-monospace, monospace; letter-spacing: -.5px; color: var(--text); }
+.kpi-unit   { font-size: 12px; color: var(--text-muted); font-family: inherit; font-weight: 400; }
+.kpi-trend  { display: flex; align-items: center; gap: 4px; margin-top: 7px; font-size: 11.5px; }
+.kpi-sub    { font-size: 11.5px; color: var(--text-light); margin-top: 6px; }
+
+/* ── panel cards ────────────────────────────────────────────────────────── */
+.panel-card   { border: 1px solid var(--border); border-radius: 10px; background: var(--bg); padding: 15px 16px; display: flex; flex-direction: column; }
+.panel-title  { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 13px; }
+.section-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 11px; }
+
+/* ── dashboard mid/bottom grids ─────────────────────────────────────────── */
+.mid-grid-3    { display: grid; grid-template-columns: 1.1fr 1.5fr 1fr; gap: 14px; }
+.mid-grid-2    { display: grid; grid-template-columns: 1.7fr 1fr;       gap: 14px; }
+.bottom-grid-2 { display: grid; grid-template-columns: 1.5fr 1fr;       gap: 14px; }
+
+/* ── status dots ──────────────────────────────────────────────────────────── */
+.status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+.dot-ok      { background: var(--dot-ok); }
+.dot-warn    { background: var(--dot-warn); }
+.dot-err     { background: var(--dot-err); }
+.dot-neutral { background: var(--text-light); }
+
+/* ── health rows ──────────────────────────────────────────────────────────── */
+.health-rows  { display: flex; flex-direction: column; gap: 13px; }
+.health-row   { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.health-label { font-weight: 500; color: var(--text); }
+.health-stat  { margin-left: auto; font-family: ui-monospace, monospace; font-size: 12px; }
+
+/* ── CSS bar chart ───────────────────────────────────────────────────────── */
+.bar-chart  { display: flex; align-items: flex-end; gap: 4px; flex: 1; min-height: 0; }
+.bar-col    { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; gap: 2px; }
+.bar-hit    { background: var(--accent); border-radius: 2px 2px 0 0; }
+.bar-miss   { background: var(--accent-subtle); border-radius: 0 0 2px 2px; }
+.bar-single { background: linear-gradient(180deg, color-mix(in srgb,var(--accent) 70%,#fff), var(--accent)); border-radius: 2px 2px 0 0; opacity: .9; }
+.chart-legend { display: flex; gap: 16px; margin-top: 12px; font-size: 11.5px; color: var(--text-muted); }
+.chart-legend-item { display: flex; align-items: center; gap: 5px; }
+.chart-swatch { width: 9px; height: 9px; border-radius: 2px; }
+.chart-time-labels { display: flex; justify-content: space-between; margin-top: 8px; font-size: 10.5px; color: var(--text-light); font-family: ui-monospace, monospace; }
+
+/* ── storage bars ────────────────────────────────────────────────────────── */
+.store-rows      { display: flex; flex-direction: column; gap: 13px; }
+.store-row       { display: flex; flex-direction: column; gap: 5px; }
+.store-row-hdr   { display: flex; align-items: center; font-size: 12.5px; }
+.store-name      { font-weight: 500; color: var(--text); }
+.store-size      { margin-left: auto; font-family: ui-monospace, monospace; color: var(--text-muted); font-size: 12px; }
+.store-track     { height: 6px; border-radius: 3px; background: var(--bg-hover); overflow: hidden; }
+.store-fill      { height: 100%; border-radius: 3px; }
+
+/* ── activity + task rows ────────────────────────────────────────────────── */
+.activity-rows { display: flex; flex-direction: column; gap: 11px; }
+.activity-row  { display: flex; align-items: center; gap: 10px; font-size: 12.5px; }
+.activity-who  { font-family: ui-monospace, monospace; color: var(--text-light); font-size: 11px; }
+.activity-time { margin-left: auto; color: var(--text-light); font-size: 11.5px; white-space: nowrap; }
+.task-rows     { display: flex; flex-direction: column; gap: 12px; }
+.task-row      { display: flex; flex-direction: column; gap: 5px; }
+.task-header   { display: flex; align-items: center; font-size: 12.5px; }
+.task-name     { font-weight: 500; color: var(--text); }
+.task-status   { margin-left: auto; font-size: 11.5px; font-weight: 600; }
+.task-track    { height: 5px; border-radius: 3px; background: var(--bg-hover); overflow: hidden; }
+.task-bar      { height: 100%; border-radius: 3px; }
+
+/* ── scheduled-task cards ────────────────────────────────────────────────── */
+.sched-grid-2 { display: grid; grid-template-columns: repeat(2,1fr); gap: 14px; }
+.sched-card   { border: 1px solid var(--border); border-radius: 10px; background: var(--bg); padding: 13px 15px; display: flex; align-items: center; gap: 12px; }
+.sched-icon   { width: 34px; height: 34px; border-radius: 8px; background: var(--accent-subtle); color: var(--accent); display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 14px; font-weight: 700; }
+.sched-info   { display: flex; flex-direction: column; line-height: 1.35; min-width: 0; }
+.sched-name   { font-size: 13px; font-weight: 600; color: var(--text); }
+.sched-cron   { font-size: 11.5px; color: var(--text-muted); font-family: ui-monospace, monospace; }
+.sched-right  { margin-left: auto; text-align: right; }
+.sched-status { font-size: 11.5px; font-weight: 600; }
+.sched-last   { font-size: 11px; color: var(--text-light); margin-top: 1px; }
+
+/* ── role cards ──────────────────────────────────────────────────────────── */
+.role-grid-3    { display: grid; grid-template-columns: repeat(3,1fr); gap: 14px; }
+.role-card      { border: 1px solid var(--border); border-radius: 10px; background: var(--bg); padding: 14px 16px; }
+.role-card-hdr  { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; }
+.role-card-name { font-size: 13.5px; font-weight: 700; color: var(--text); }
+.role-card-cnt  { margin-left: auto; font-size: 11.5px; color: var(--text-muted); }
+.role-card-desc { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+
+/* ── scope / role badges ─────────────────────────────────────────────────── */
+.scope-badge  { display: inline-flex; font-size: 10.5px; font-weight: 500; padding: 2px 7px; border-radius: 5px; font-family: ui-monospace, monospace; }
+.scope-read   { background: var(--badge-read-bg);   color: var(--badge-read-fg); }
+.scope-write  { background: var(--badge-write-bg);  color: var(--badge-write-fg); }
+.scope-admin  { background: var(--badge-admin-bg);  color: var(--badge-admin-fg); }
+.scope-deploy { background: var(--badge-deploy-bg); color: var(--badge-deploy-fg); }
+
+/* ── status pills ────────────────────────────────────────────────────────── */
+.status-pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 5px; font-size: 11px; font-weight: 600; }
+.pill-ok     { background: var(--alert-ok-bg);   color: var(--alert-ok-fg); }
+.pill-warn   { background: var(--alert-warn-bg);  color: var(--alert-warn-fg); }
+.pill-muted  { background: var(--bg-hover);       color: var(--text-muted); }
+.pill-info   { background: var(--accent-subtle);  color: var(--accent); }
+.pill-err    { background: var(--danger-bg);       color: var(--danger); }
+
+/* ── admin tables ────────────────────────────────────────────────────────── */
+.admin-table-wrap { border: 1px solid var(--border); border-radius: 10px; background: var(--bg); overflow: hidden; }
+.admin-table      { width: 100%; border-collapse: collapse; }
+.admin-table thead th {
+  text-align: left; padding: 11px 18px;
+  font-size: 11px; font-weight: 600; letter-spacing: .4px;
+  text-transform: uppercase; color: var(--text-muted);
+  background: var(--bg-alt); border-bottom: 1px solid var(--border);
+}
+.admin-table tbody tr { border-top: 1px solid var(--bg-alt); }
+.admin-table tbody tr:first-child { border-top: none; }
+.admin-table tbody tr:hover { background: var(--bg-hover); }
+.admin-table td { padding: 11px 18px; font-size: 13px; vertical-align: middle; }
+.admin-table td a { color: var(--accent); text-decoration: none; font-weight: 500; }
+.admin-table td a:hover { text-decoration: underline; }
+.col-mono { font-family: ui-monospace, monospace; font-size: 12px; color: var(--text-muted); }
+
+/* ── token detail cells ──────────────────────────────────────────────────── */
+.token-name-cell { display: flex; flex-direction: column; line-height: 1.3; }
+.token-desc      { font-weight: 600; color: var(--text); }
+.token-prefix    { font-family: ui-monospace, monospace; font-size: 11px; color: var(--text-muted); }
+.scope-list      { display: flex; gap: 5px; flex-wrap: wrap; }
+
+/* ── obs status bar ──────────────────────────────────────────────────────── */
+.obs-status-bar { display: flex; height: 9px; border-radius: 5px; overflow: hidden; margin-bottom: 16px; }
+.obs-legend     { display: flex; flex-direction: column; gap: 11px; }
+.obs-legend-row { display: flex; align-items: center; gap: 9px; font-size: 12.5px; }
+.obs-swatch     { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+
+/* ── misc helpers ────────────────────────────────────────────────────────── */
+.text-ok   { color: var(--dot-ok); }
+.text-warn { color: var(--dot-warn); }
+.text-err  { color: var(--dot-err); }
+.fw-600    { font-weight: 600; }

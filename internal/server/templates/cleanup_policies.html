@@ -1,0 +1,96 @@
+{{define "content"}}
+<div class="admin-topbar">
+  <span class="admin-topbar-title">Cleanup</span>
+  <div class="admin-topbar-actions">
+    <a href="/ui/admin/repos/new" class="btn" style="height:34px;padding:0 13px;font-size:12.5px;">New policy</a>
+  </div>
+</div>
+
+<div class="admin-content">
+
+  <!-- stats -->
+  <div class="stat-grid-3">
+    <div class="stat-card">
+      <div class="stat-label">Policies configured</div>
+      <div class="stat-value">{{.PolicyCount}}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Repos with policy</div>
+      <div class="stat-value" style="{{if .Policies}}color:var(--dot-ok);{{end}}">{{len .Policies}}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Next scheduled</div>
+      <div class="stat-value">—</div>
+    </div>
+  </div>
+
+  <!-- policies table -->
+  <div>
+    <div class="section-title">Cleanup policies</div>
+    {{if .Policies}}
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>Repository</th>
+            <th>Format</th>
+            <th>Kind</th>
+            <th>Rules</th>
+            <th>Schedule</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Policies}}
+          <tr>
+            <td><a href="/ui/admin/repos/{{.RepoName}}/edit" class="fw-600">{{.RepoName}}</a></td>
+            <td><span class="badge fmt-{{.Format}}">{{formatIcon .Format}}{{.Format}}</span></td>
+            <td><span class="badge kind-{{.Kind}}">{{.Kind}}</span></td>
+            <td style="font-size:12.5px;color:var(--text-muted);">{{.Criteria}}</td>
+            <td class="col-mono">{{if .Interval}}{{.Interval}}{{else}}—{{end}}</td>
+            <td><span class="status-pill pill-ok">Enabled</span></td>
+            <td class="col-actions">
+              <a href="/ui/admin/repos/{{.RepoName}}/edit" class="btn btn-sm">Edit</a>
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    <div class="admin-table-wrap">
+      <div class="empty" style="padding:3rem 1rem;">
+        No cleanup policies configured yet.
+        Set a cleanup policy on a repository via
+        <a href="/ui/admin/">Repositories → Edit</a>.
+      </div>
+    </div>
+    {{end}}
+  </div>
+
+  <!-- scheduled tasks -->
+  <div>
+    <div class="section-title">Scheduled tasks</div>
+    <div class="sched-grid-2">
+      {{range .SchedTasks}}
+      <div class="sched-card">
+        <div class="sched-icon">{{.Icon}}</div>
+        <div class="sched-info">
+          <span class="sched-name">{{.Name}}</span>
+          <span class="sched-cron">{{.Cron}}</span>
+        </div>
+        <div class="sched-right">
+          <div class="sched-status" style="color:{{.Color}};">{{.Status}}</div>
+          <div class="sched-last">{{.LastRun}}</div>
+        </div>
+      </div>
+      {{end}}
+      {{if eq (len .SchedTasks) 0}}
+      <div style="font-size:12.5px;color:var(--text-muted);padding:8px 0;">No scheduled tasks.</div>
+      {{end}}
+    </div>
+  </div>
+
+</div>
+{{end}}

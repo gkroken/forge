@@ -1146,3 +1146,86 @@ func TestUIAdmin_EvalMode_NoAuthRequired(t *testing.T) {
 		t.Errorf("eval mode: expected 303, got %d", rw.Code)
 	}
 }
+
+// ── Foundry admin shell new routes ────────────────────────────────────────────
+
+func TestUIDashboard_OK(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/dashboard")
+	if rw.Code != http.StatusOK {
+		t.Fatalf("/ui/dashboard: status %d", rw.Code)
+	}
+	body := rw.Body.String()
+	assertContains(t, body, "Dashboard")
+	assertContains(t, body, "System overview")
+}
+
+func TestUIDashboard_SidebarNav(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/dashboard")
+	body := rw.Body.String()
+	assertContains(t, body, "Tokens &amp; Access")
+	assertContains(t, body, "Cleanup")
+	assertContains(t, body, "Observability")
+	// Active nav item should be marked
+	assertContains(t, body, `active">Dashboard`)
+}
+
+func TestUIDashboard_ShowsFormatStats(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/dashboard")
+	body := rw.Body.String()
+	// newUIServer seeds npm-hosted and helm-hosted repos
+	assertContains(t, body, "npm")
+	assertContains(t, body, "helm")
+}
+
+func TestUIAdminTokensV2_OK(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/admin/tokens")
+	if rw.Code != http.StatusOK {
+		t.Fatalf("/ui/admin/tokens: status %d", rw.Code)
+	}
+	body := rw.Body.String()
+	assertContains(t, body, "Tokens &amp; Access")
+	assertContains(t, body, "sidebar-nav")
+	assertContains(t, body, "Authentication is not enabled") // eval mode shows this alert
+}
+
+func TestUICleanupPolicies_OK(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/admin/cleanup-policies")
+	if rw.Code != http.StatusOK {
+		t.Fatalf("/ui/admin/cleanup-policies: status %d", rw.Code)
+	}
+	body := rw.Body.String()
+	assertContains(t, body, "Cleanup")
+}
+
+func TestUICleanupPolicies_ShowsConfiguredPolicies(t *testing.T) {
+	srv := newUIServer(t)
+	// Add a repo with a cleanup policy.
+	srv.Repos.Add(repo.Repository{ //nolint:errcheck
+		Name: "maven-releases", Format: "maven", Kind: repo.Hosted,
+		CleanupPolicy: &repo.CleanupPolicy{KeepVersions: 5, DeleteOlderThanDays: 30},
+	})
+	h := srv.Routes()
+	rw := uiGet(t, h, "/ui/admin/cleanup-policies")
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status %d", rw.Code)
+	}
+	body := rw.Body.String()
+	assertContains(t, body, "maven-releases")
+	assertContains(t, body, "Keep last 5 versions")
+}
+
+func TestUIObservability_OK(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/admin/observability")
+	if rw.Code != http.StatusOK {
+		t.Fatalf("/ui/admin/observability: status %d", rw.Code)
+	}
+	body := rw.Body.String()
+	assertContains(t, body, "Observability")
+	assertContains(t, body, "Audit log")
+}

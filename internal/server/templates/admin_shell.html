@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — forge</title>
+  <link rel="stylesheet" href="/ui/static/style.css?v={{cssVer}}">
+  <script src="/ui/static/theme.js"></script>
+  <script src="https://unpkg.com/htmx.org@2.0.3/dist/htmx.min.js" defer></script>
+</head>
+<body class="admin-body">
+<div class="admin-shell">
+
+  <!-- ── sidebar ────────────────────────────────────────────────────────── -->
+  <aside class="admin-sidebar">
+    <div class="sidebar-brand">
+      <div class="sidebar-logo">f</div>
+      <span class="sidebar-appname">forge</span>
+      <span class="sidebar-badge">eval</span>
+    </div>
+
+    <div class="sidebar-section">Manage</div>
+
+    <nav class="sidebar-nav">
+      {{$p := .ActiveNav}}
+      <a href="/ui/dashboard"              class="sidebar-nav-item{{if eq $p "dashboard"}}    active{{end}}">Dashboard</a>
+      <a href="/ui/admin/"                 class="sidebar-nav-item{{if eq $p "repos"}}         active{{end}}">Repositories</a>
+      <a href="/ui/"                       class="sidebar-nav-item{{if eq $p "browse"}}        active{{end}}">Browse</a>
+      <a href="/ui/search"                 class="sidebar-nav-item{{if eq $p "search"}}        active{{end}}">Search</a>
+      <a href="/ui/admin/tokens"           class="sidebar-nav-item{{if eq $p "tokens"}}        active{{end}}">Tokens &amp; Access</a>
+      <a href="/ui/admin/cleanup-policies" class="sidebar-nav-item{{if eq $p "cleanup"}}       active{{end}}">Cleanup</a>
+      <a href="/ui/admin/observability"    class="sidebar-nav-item{{if eq $p "observability"}} active{{end}}">Observability</a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="sidebar-avatar">A</div>
+      <div class="sidebar-user">
+        <span class="sidebar-username">admin</span>
+        <span class="sidebar-userrole">administrator</span>
+      </div>
+      <form method="POST" action="/ui/logout" style="margin-left:auto">
+        <button type="submit" style="background:none;border:none;cursor:pointer;font-size:11px;color:var(--text-muted);padding:2px 4px;">Sign out</button>
+      </form>
+    </div>
+  </aside>
+
+  <!-- ── main ───────────────────────────────────────────────────────────── -->
+  <div class="admin-main">
+    {{block "content" .}}{{end}}
+  </div>
+
+</div>
+</body>
+</html>

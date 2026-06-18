@@ -1,0 +1,164 @@
+{{define "content"}}
+<!-- sub-header with tabs -->
+<div class="admin-subheader">
+  <div class="admin-subheader-row">
+    <div>
+      <div class="admin-subheader-title">Tokens &amp; Access</div>
+      <div class="admin-subheader-sub">Personal &amp; CI tokens, scoped by role and repository</div>
+    </div>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:9px;">
+      {{if .AuthEnabled}}
+      <a href="/ui/admin/tokens" class="btn" style="height:34px;padding:0 13px;font-size:12.5px;">New token</a>
+      {{end}}
+    </div>
+  </div>
+  <div class="admin-tabs">
+    <a class="admin-tab active">Tokens</a>
+    <a class="admin-tab">Users</a>
+    <a class="admin-tab">Roles</a>
+  </div>
+</div>
+
+<div class="admin-content">
+  {{if not .AuthEnabled}}
+  <div class="alert alert-error">Authentication is not enabled. Start forge with <code>-auth</code> to manage tokens.</div>
+  {{else}}
+
+  {{if .NewSecret}}
+  <div class="alert alert-success secret-reveal">
+    <strong>Token created.</strong> Copy your secret now — it will not be shown again.
+    <div class="copy-row" style="margin-top:.6rem">
+      <code class="copy-url" id="new-secret">{{.NewSecret}}</code>
+      <button class="btn btn-sm" onclick="navigator.clipboard.writeText(document.getElementById('new-secret').textContent).catch(function(){})">Copy</button>
+    </div>
+  </div>
+  {{end}}
+
+  {{if .Error}}
+  <div class="alert alert-error">{{.Error}}</div>
+  {{end}}
+
+  {{if .Flash}}
+  <div class="alert alert-success">{{.Flash}}</div>
+  {{end}}
+
+  <!-- filter row -->
+  <div style="display:flex;align-items:center;gap:10px;">
+    <div style="display:flex;align-items:center;gap:8px;width:280px;height:34px;padding:0 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="var(--text-muted)"><path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.099zm-5.242.656a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/></svg>
+      <span style="font-size:13px;color:var(--text-muted);">Filter tokens…</span>
+    </div>
+    <div style="margin-left:auto;font-size:12.5px;color:var(--text-muted);">{{len .Tokens}} token{{if ne (len .Tokens) 1}}s{{end}}</div>
+  </div>
+
+  <!-- token table -->
+  {{if .Tokens}}
+  <div class="admin-table-wrap">
+    <table class="admin-table">
+      <thead>
+        <tr>
+          <th>Token</th>
+          <th>Grants</th>
+          <th>Created</th>
+          <th>Expires</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Tokens}}
+        <tr>
+          <td>
+            <div class="token-name-cell">
+              <span class="token-desc">{{.Description}}</span>
+            </div>
+          </td>
+          <td class="col-mono">{{.GrantSummary}}</td>
+          <td class="col-mono">{{.CreatedStr}}</td>
+          <td class="col-mono">{{.ExpiresStr}}</td>
+          <td class="col-actions">
+            <button class="btn btn-sm btn-danger"
+                    hx-delete="/ui/admin/tokens/{{.ID}}"
+                    hx-confirm="Revoke token «{{.Description}}»? Any client using it will lose access."
+                    hx-target="closest tr"
+                    hx-swap="outerHTML">
+              Revoke
+            </button>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <div class="empty">No tokens yet. <a href="#create-token">Create one below.</a></div>
+  {{end}}
+
+  <!-- role summary cards -->
+  <div class="role-grid-3">
+    <div class="role-card">
+      <div class="role-card-hdr">
+        <span class="scope-badge scope-read" style="font-size:12px;padding:3px 10px;">read</span>
+        <span class="role-card-name">Reader</span>
+      </div>
+      <div class="role-card-desc">Pull and resolve artifacts from any repository. No publish rights.</div>
+    </div>
+    <div class="role-card">
+      <div class="role-card-hdr">
+        <span class="scope-badge scope-write" style="font-size:12px;padding:3px 10px;">write</span>
+        <span class="role-card-name">Publisher</span>
+      </div>
+      <div class="role-card-desc">Deploy to hosted repositories and trigger proxy prefetch. No config access.</div>
+    </div>
+    <div class="role-card">
+      <div class="role-card-hdr">
+        <span class="scope-badge scope-admin" style="font-size:12px;padding:3px 10px;">admin</span>
+        <span class="role-card-name">Administrator</span>
+      </div>
+      <div class="role-card-desc">Full control — repositories, tokens, cleanup, and system settings.</div>
+    </div>
+  </div>
+
+  <!-- create token form -->
+  <div id="create-token">
+    <div class="section-title">New token</div>
+    <div class="panel-card" style="max-width:640px;">
+      <form method="POST" class="repo-form" style="max-width:none;">
+        <div class="form-group">
+          <label for="t-desc">Description</label>
+          <input id="t-desc" type="text" name="description" required
+                 value="{{.Form.Description}}" placeholder="e.g. CI publish token">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="t-repo">Repository</label>
+            <select id="t-repo" name="repo">
+              <option value="*"{{if eq .Form.Repo "*"}} selected{{end}}>All repositories (*)</option>
+              {{range .AllRepos}}
+              <option value="{{.}}"{{if eq . $.Form.Repo}} selected{{end}}>{{.}}</option>
+              {{end}}
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="t-role">Role</label>
+            <select id="t-role" name="role">
+              <option value="read"{{if eq .Form.Role "read"}} selected{{end}}>read</option>
+              <option value="write"{{if eq .Form.Role "write"}} selected{{end}}>write</option>
+              <option value="admin"{{if eq .Form.Role "admin"}} selected{{end}}>admin</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="t-exp">Expires</label>
+          <input id="t-exp" type="date" name="expires" value="{{.Form.Expires}}">
+          <p class="form-hint">Leave blank for no expiry.</p>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Create token</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {{end}}
+</div>
+{{end}}

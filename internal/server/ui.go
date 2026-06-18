@@ -103,16 +103,21 @@ func parseUITmpl(files ...string) *template.Template {
 }
 
 var (
-	tmplHome        = parseUITmpl("templates/base.html", "templates/home.html")
-	tmplRepo        = parseUITmpl("templates/base.html", "templates/repo.html")
-	tmplSearch      = parseUITmpl("templates/base.html", "templates/search.html")
-	tmplAdminRepos  = parseUITmpl("templates/base.html", "templates/admin_repos.html")
-	tmplAdminForm   = parseUITmpl("templates/base.html", "templates/admin_repo_form.html")
-	tmplLogin       = parseUITmpl("templates/base.html", "templates/login.html")
-	tmplComponent   = parseUITmpl("templates/base.html", "templates/component.html")
-	tmplTokens      = parseUITmpl("templates/base.html", "templates/tokens.html")
-	tmplAccess      = parseUITmpl("templates/base.html", "templates/access.html")
-	tmplUpload      = parseUITmpl("templates/base.html", "templates/upload.html")
+	tmplHome             = parseUITmpl("templates/base.html", "templates/home.html")
+	tmplRepo             = parseUITmpl("templates/base.html", "templates/repo.html")
+	tmplSearch           = parseUITmpl("templates/base.html", "templates/search.html")
+	tmplAdminRepos       = parseUITmpl("templates/base.html", "templates/admin_repos.html")
+	tmplAdminForm        = parseUITmpl("templates/base.html", "templates/admin_repo_form.html")
+	tmplLogin            = parseUITmpl("templates/base.html", "templates/login.html")
+	tmplComponent        = parseUITmpl("templates/base.html", "templates/component.html")
+	tmplTokens           = parseUITmpl("templates/base.html", "templates/tokens.html")
+	tmplAccess           = parseUITmpl("templates/base.html", "templates/access.html")
+	tmplUpload           = parseUITmpl("templates/base.html", "templates/upload.html")
+	// Foundry admin shell — sidebar layout
+	tmplDashboard        = parseUITmpl("templates/admin_shell.html", "templates/dashboard.html")
+	tmplAdminTokens      = parseUITmpl("templates/admin_shell.html", "templates/tokens_admin.html")
+	tmplCleanupPolicies  = parseUITmpl("templates/admin_shell.html", "templates/cleanup_policies.html")
+	tmplObservability    = parseUITmpl("templates/admin_shell.html", "templates/observability.html")
 )
 
 // ── page data types ───────────────────────────────────────────────────────────
@@ -177,6 +182,8 @@ func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case p == "/":
 		s.uiHome(w, r)
+	case p == "/dashboard":
+		s.uiDashboard(w, r)
 	case p == "/search":
 		s.uiSearch(w, r)
 	case p == "/login":

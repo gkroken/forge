@@ -85,6 +85,12 @@ type adminTokensPage struct {
 	Flash       string
 }
 
+// adminTokensV2Page wraps adminTokensPage for the sidebar (Foundry) layout.
+type adminTokensV2Page struct {
+	adminTokensPage
+	ActiveNav string
+}
+
 // ── dispatcher ────────────────────────────────────────────────────────────────
 
 // handleUIAdmin dispatches all /ui/admin/* routes.
@@ -111,6 +117,10 @@ func (s *Server) handleUIAdmin(w http.ResponseWriter, r *http.Request, sub strin
 		s.uiAdminRevokeToken(w, r, id)
 	case sub == "/access":
 		s.uiAdminAccess(w, r)
+	case sub == "/cleanup-policies":
+		s.uiCleanupPolicies(w, r)
+	case sub == "/observability":
+		s.uiObservability(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -294,11 +304,11 @@ func (s *Server) uiAdminTokens(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodPost {
-		s.processTokenForm(w, r)
+		s.processTokenFormV2(w, r)
 		return
 	}
 
-	render(w, tmplTokens, "base.html", s.buildTokensPage("", "", tokenForm{Repo: "*", Role: "read"}))
+	render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("", "", tokenForm{Repo: "*", Role: "read"}))
 }
 
 func (s *Server) uiAdminRevokeToken(w http.ResponseWriter, r *http.Request, id string) {
@@ -398,6 +408,67 @@ func (s *Server) buildTokensPage(errMsg, newSecret string, form tokenForm) admin
 		page.AllRepos = append(page.AllRepos, rp.Name)
 	}
 	return page
+}
+
+// buildTokensPageV2 wraps buildTokensPage for the sidebar layout.
+func (s *Server) buildTokensPageV2(errMsg, newSecret string, form tokenForm) adminTokensV2Page {
+	base := s.buildTokensPage(errMsg, newSecret, form)
+	base.Title = "Tokens & Access"
+	return adminTokensV2Page{adminTokensPage: base, ActiveNav: "tokens"}
+}
+
+// processTokenFormV2 handles POST for the sidebar tokens page.
+func (s *Server) processTokenFormV2(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+
+	form := tokenForm{
+		Description: strings.TrimSpace(r.FormValue("description")),
+		Repo:        r.FormValue("repo"),
+		Role:        r.FormValue("role"),
+		Expires:     r.FormValue("expires"),
+	}
+
+	if form.Description == "" {
+		render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("description is required", "", form))
+		return
+	}
+	if s.Auth == nil {
+		render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("auth not enabled", "", form))
+		return
+	}
+
+	role, err := auth.ParseRole(form.Role)
+	if err != nil {
+		render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("invalid role: "+form.Role, "", form))
+		return
+	}
+
+	repoName := form.Repo
+	if repoName == "" {
+		repoName = "*"
+	}
+
+	var expiresAt *time.Time
+	if form.Expires != "" {
+		t, err := time.ParseInLocation("2006-01-02", form.Expires, time.UTC)
+		if err != nil {
+			render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("invalid expiry date (use YYYY-MM-DD)", "", form))
+			return
+		}
+		t = t.Add(24*time.Hour - time.Second)
+		expiresAt = &t
+	}
+
+	_, secret, err := s.Auth.Create(form.Description, []auth.Grant{{Repo: repoName, Role: role}}, expiresAt)
+	if err != nil {
+		render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("failed to create token: "+err.Error(), "", form))
+		return
+	}
+
+	render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("", secret, tokenForm{Repo: "*", Role: "read"}))
 }
 
 func formatGrants(grants []auth.Grant) string {
