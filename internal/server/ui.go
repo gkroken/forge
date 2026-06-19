@@ -122,7 +122,7 @@ func parseUITmpl(files ...string) *template.Template {
 
 var (
 	tmplHome             = parseUITmpl("templates/base.html", "templates/home.html")
-	tmplRepo             = parseUITmpl("templates/admin_shell.html", "templates/repo.html")
+	tmplBrowsePage       = parseUITmpl("templates/admin_shell.html", "templates/browse_page.html")
 	tmplSearch           = parseUITmpl("templates/base.html", "templates/search.html")
 	tmplAdminRepos       = parseUITmpl("templates/admin_shell.html", "templates/admin_repos.html")
 	tmplAdminForm        = parseUITmpl("templates/base.html", "templates/admin_repo_form.html")
@@ -172,6 +172,13 @@ type repoRow struct {
 	Health        string // "ok" | "down" | "" (non-proxy repos)
 }
 
+type browsePage struct {
+	Title        string
+	ActiveNav    string
+	SelectedRepo string
+	Repos        []repo.Repository
+}
+
 type repoPage struct {
 	Title      string
 	ActiveNav  string
@@ -219,26 +226,30 @@ func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/ui/", http.StatusFound)
 			return
 		}
-		// /repos/{name} → repo detail
-		// /repos/{name}/upload → upload page
-		// /repos/{name}/{component} → component detail (strings.Cut on first "/" preserves @scope/pkg)
 		repoName, sub, hasComponent := strings.Cut(rest, "/")
 		if hasComponent && sub == "upload" {
 			s.uiUpload(w, r, repoName)
 		} else if hasComponent && sub != "" {
 			s.uiComponent(w, r, repoName, sub)
 		} else {
-			s.uiRepo(w, r, repoName)
+			// /ui/repos/{name} → redirect to the browse page
+			http.Redirect(w, r, "/ui/browse/"+repoName, http.StatusFound)
 		}
-	case strings.HasPrefix(p, "/browse/") && strings.HasSuffix(p, "/tree"):
-		repoName := strings.TrimSuffix(strings.TrimPrefix(p, "/browse/"), "/tree")
-		s.uiBrowseTree(w, r, repoName)
-	case strings.HasPrefix(p, "/browse/") && strings.HasSuffix(p, "/versions"):
-		repoName := strings.TrimSuffix(strings.TrimPrefix(p, "/browse/"), "/versions")
-		s.uiBrowseVersions(w, r, repoName)
-	case strings.HasPrefix(p, "/browse/") && strings.HasSuffix(p, "/detail"):
-		repoName := strings.TrimSuffix(strings.TrimPrefix(p, "/browse/"), "/detail")
-		s.uiBrowseDetail(w, r, repoName)
+	case p == "/browse":
+		s.uiBrowsePage(w, r, "")
+	case strings.HasPrefix(p, "/browse/"):
+		rest := strings.TrimPrefix(p, "/browse/")
+		switch {
+		case strings.HasSuffix(rest, "/tree"):
+			s.uiBrowseTree(w, r, strings.TrimSuffix(rest, "/tree"))
+		case strings.HasSuffix(rest, "/versions"):
+			s.uiBrowseVersions(w, r, strings.TrimSuffix(rest, "/versions"))
+		case strings.HasSuffix(rest, "/detail"):
+			s.uiBrowseDetail(w, r, strings.TrimSuffix(rest, "/detail"))
+		default:
+			// /ui/browse/{name} — the browse page with that repo pre-selected
+			s.uiBrowsePage(w, r, rest)
+		}
 	case p == "/admin" || strings.HasPrefix(p, "/admin/"):
 		s.handleUIAdmin(w, r, strings.TrimPrefix(p, "/admin"))
 	default:
@@ -299,13 +310,19 @@ func (s *Server) uiHome(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) uiRepo(w http.ResponseWriter, r *http.Request, name string) {
-	rp, ok := s.Repos.Get(name)
-	if !ok {
-		http.NotFound(w, r)
-		return
+func (s *Server) uiBrowsePage(w http.ResponseWriter, r *http.Request, selected string) {
+	if selected != "" {
+		if _, ok := s.Repos.Get(selected); !ok {
+			http.NotFound(w, r)
+			return
+		}
 	}
-	render(w, tmplRepo, "admin_shell.html", repoPage{Title: rp.Name, ActiveNav: "browse", Repo: rp})
+	render(w, tmplBrowsePage, "admin_shell.html", browsePage{
+		Title:        "Browse",
+		ActiveNav:    "browse",
+		SelectedRepo: selected,
+		Repos:        s.Repos.All(),
+	})
 }
 
 func (s *Server) uiComponent(w http.ResponseWriter, r *http.Request, repoName, component string) {

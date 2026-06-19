@@ -1,0 +1,47 @@
+{{define "content-class"}}admin-browse{{end}}
+{{define "content"}}
+<div class="browse-shell">
+
+  <!-- ── Left: repository tree ────────────────────────────────────────────── -->
+  <div class="browse-left">
+    <div class="browse-pane-hdr">
+      <span class="ms" style="font-size:16px;color:var(--text-muted)">account_tree</span>
+      <span class="browse-repo-name">Repository tree</span>
+    </div>
+    <div id="pkg-list" class="browse-item-list">
+      {{range .Repos}}
+      <div class="browse-repo-node{{if eq .Name $.SelectedRepo}} auto-expand{{end}}"
+           data-repo="{{.Name}}" data-format="{{.Format}}">
+        <div class="browse-repo-hdr">
+          <span class="ms browse-tree-toggle">chevron_right</span>
+          <span class="badge fmt-{{.Format}} fmt-mono" style="font-size:10px">{{formatIcon .Format}}{{.Format}}</span>
+          <span class="browse-repo-name-lbl">{{.Name}}</span>
+          {{if eq .Kind "hosted"}}<a href="/ui/repos/{{.Name}}/upload" class="btn btn-sm" style="margin-left:auto;font-size:11px" title="Upload">↑</a>{{end}}
+        </div>
+        <div class="browse-repo-content"></div>
+      </div>
+      {{else}}
+      <div class="browse-msg">No repositories configured.</div>
+      {{end}}
+    </div>
+  </div>
+
+  <!-- ── Center: version list ─────────────────────────────────────────────── -->
+  <div class="browse-center" id="center-pane">
+    <div class="browse-placeholder">
+      <span class="ms" style="font-size:40px;color:var(--text-muted)">inventory_2</span>
+      <p>Select a package to view versions.</p>
+    </div>
+  </div>
+
+  <!-- ── Right: asset detail ──────────────────────────────────────────────── -->
+  <div class="browse-right" id="detail-pane">
+    <div class="browse-placeholder">
+      <span class="ms" style="font-size:40px;color:var(--text-muted)">info</span>
+      <p>Select a version.</p>
+    </div>
+  </div>
+
+</div>
+<script src="/ui/static/browse.js"></script>
+{{end}}

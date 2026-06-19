@@ -1,120 +1,115 @@
 /**
- * browse.js — 3-panel repository browse.
+ * browse.js — global 3-panel browse (all repos in one left pane).
  *
- * The left pane is FORMAT-AWARE. Maven's blob layout is a real directory
- * hierarchy (groupId path segments → artifactId), so it gets a folder-tree
- * browser. Every other format (npm, helm, cran, oci) stores flat named
- * packages with no meaningful folder structure, so they get a searchable
- * flat package list instead.
+ * The left pane is server-rendered: each repository appears as a collapsible
+ * top-level node. Expanding a node loads its content via the appropriate API,
+ * chosen by format:
  *
- *   FORMAT === "maven"  → initTreeBrowse()
- *                         uses GET /ui/browse/{repo}/tree?prefix=
- *                         folders expand/collapse inline; leaf click → versions
+ *   maven  → hierarchical folder tree   (GET /ui/browse/{repo}/tree?prefix=)
+ *   others → flat searchable package list (GET /api/v1/repos/{repo}/components)
  *
- *   FORMAT !== "maven"  → initFlatBrowse()
- *                         uses GET /api/v1/repos/{repo}/components?limit=200
- *                         client-side text filter via the search input
- *
- * Center pane: version list (GET /ui/browse/{repo}/versions?pkg=)
+ * Center pane: version list  (GET /ui/browse/{repo}/versions?pkg=)
  * Right pane:  asset detail  (GET /ui/browse/{repo}/detail?pkg=&ver=)
  *
- * No inline onclick/oninput attributes — event delegation throughout so the
- * page's CSP (script-src 'self') is satisfied.
+ * URL is kept in sync via history.pushState so deep-links work:
+ *   /ui/browse           → no repo selected
+ *   /ui/browse/{name}    → that repo auto-expanded on load
+ *
+ * No inline event handlers — all delegation satisfies CSP script-src 'self'.
  */
 
-const shell  = document.querySelector('.browse-shell');
-const REPO   = shell.dataset.repo;
-const FORMAT = shell.dataset.format;
+let currentRepo = '';   // repo context for the currently displayed versions/detail
 
-// ── Format-aware init ─────────────────────────────────────────────────────────
-if (FORMAT === 'maven') {
-  document.querySelector('.browse-search-wrap').style.display = 'none';
-  initTreeBrowse();
-} else {
-  initFlatBrowse();
-}
+// ── Repo-level toggle ─────────────────────────────────────────────────────────
 
-// ════════════════════════════════════════════════════════════════════════════════
-// FLAT BROWSE (npm / helm / cran / oci)
-// ════════════════════════════════════════════════════════════════════════════════
-
-let allPkgs = [];
-
-function initFlatBrowse() {
-  document.getElementById('pkg-search').addEventListener('input', function() {
-    filterPkgs(this.value);
+function toggleRepo(node) {
+  const isOpen = node.classList.contains('expanded');
+  // Collapse all open repos first
+  document.querySelectorAll('.browse-repo-node.expanded').forEach(n => {
+    n.classList.remove('expanded');
+    n.querySelector('.browse-tree-toggle').textContent = 'chevron_right';
   });
-  document.getElementById('pkg-list').addEventListener('click', function(e) {
-    const item = e.target.closest('.browse-pkg');
-    if (item) selectPkg(item.dataset.name, item);
-  });
-  loadPkgs();
-}
-
-async function loadPkgs() {
-  try {
-    const res = await fetch('/api/v1/repos/' + REPO + '/components?limit=200');
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const d = await res.json();
-    allPkgs = d.components || [];
-    renderPkgs(allPkgs);
-  } catch (e) {
-    document.getElementById('pkg-list').innerHTML =
-      '<div class="browse-msg browse-err">Failed to load: ' + esc(String(e)) + '</div>';
-  }
-}
-
-function renderPkgs(pkgs) {
-  const el = document.getElementById('pkg-list');
-  if (!pkgs.length) {
-    el.innerHTML = '<div class="browse-msg">No packages in this repository.</div>';
+  if (isOpen) {
+    history.pushState(null, '', '/ui/browse');
     return;
   }
-  el.innerHTML = pkgs.map(p =>
-    '<div class="browse-pkg" data-name="' + esc(p.name) + '">' +
-    '<span class="ms browse-pkg-icon">package_2</span>' +
-    '<span class="browse-pkg-name">' + esc(p.name) + '</span>' +
-    '<span class="browse-pkg-ver">' + esc((p.versions && p.versions[0]) || '') + '</span>' +
-    '</div>'
-  ).join('');
-}
-
-function filterPkgs(q) {
-  const ql = q.toLowerCase();
-  renderPkgs(ql ? allPkgs.filter(p => p.name.toLowerCase().includes(ql)) : allPkgs);
-}
-
-// ════════════════════════════════════════════════════════════════════════════════
-// TREE BROWSE (maven)
-// ════════════════════════════════════════════════════════════════════════════════
-
-function initTreeBrowse() {
-  // Event delegation: folder toggle or leaf selection anywhere in the list.
-  document.getElementById('pkg-list').addEventListener('click', function(e) {
-    const node = e.target.closest('.browse-tree-node');
-    if (!node) return;
-    if (node.dataset.isDir === 'true') {
-      toggleTreeFolder(node);
-    } else {
-      selectTreeLeaf(node);
-    }
-  });
-  loadTreeLevel('', 0, document.getElementById('pkg-list'));
-}
-
-async function loadTreeLevel(prefix, depth, container) {
-  container.innerHTML = '<div class="browse-msg">Loading…</div>';
-  try {
-    const res = await fetch('/ui/browse/' + REPO + '/tree?prefix=' + encodeURIComponent(prefix));
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const nodes = await res.json();
-    renderTreeNodes(nodes, depth, container, /* replace */ true);
-  } catch (e) {
-    container.innerHTML = '<div class="browse-msg browse-err">Failed: ' + esc(String(e)) + '</div>';
+  node.classList.add('expanded');
+  node.querySelector('.browse-tree-toggle').textContent = 'expand_more';
+  history.pushState(null, '', '/ui/browse/' + node.dataset.repo);
+  const content = node.querySelector('.browse-repo-content');
+  if (!content.dataset.loaded) {
+    loadRepoContent(node, content);
   }
 }
 
-function renderTreeNodes(nodes, depth, container, replace) {
+async function loadRepoContent(repoNode, content) {
+  const repo   = repoNode.dataset.repo;
+  const format = repoNode.dataset.format;
+  content.innerHTML = '<div class="browse-msg">Loading…</div>';
+  try {
+    if (format === 'maven') {
+      await loadTreeLevel(repo, '', 0, content);
+    } else {
+      await loadFlatPkgs(repo, content);
+    }
+    content.dataset.loaded = '1';
+  } catch (e) {
+    content.innerHTML = '<div class="browse-msg browse-err">Failed: ' + esc(String(e)) + '</div>';
+  }
+}
+
+// ── Flat browse (npm / helm / cran / oci) ────────────────────────────────────
+
+async function loadFlatPkgs(repo, container) {
+  const res = await fetch('/api/v1/repos/' + repo + '/components?limit=200');
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const d = await res.json();
+  const pkgs = d.components || [];
+
+  if (!pkgs.length) {
+    container.innerHTML = '<div class="browse-msg">No packages.</div>';
+    return;
+  }
+
+  // Search input + list wrapper
+  container.innerHTML =
+    '<div class="browse-search-wrap" style="border-bottom:1px solid var(--border)">' +
+    '<input type="search" class="repo-pkg-search" placeholder="Filter…" autocomplete="off">' +
+    '</div>' +
+    '<div class="repo-pkg-list"></div>';
+
+  const listEl = container.querySelector('.repo-pkg-list');
+  const allPkgs = pkgs;
+
+  function render(items) {
+    listEl.innerHTML = items.length
+      ? items.map(p =>
+          '<div class="browse-pkg" data-name="' + esc(p.name) + '">' +
+          '<span class="ms browse-pkg-icon">package_2</span>' +
+          '<span class="browse-pkg-name">' + esc(p.name) + '</span>' +
+          '<span class="browse-pkg-ver">' + esc((p.versions && p.versions[0]) || '') + '</span>' +
+          '</div>'
+        ).join('')
+      : '<div class="browse-msg">No match.</div>';
+  }
+  render(allPkgs);
+
+  container.querySelector('.repo-pkg-search').addEventListener('input', function() {
+    const q = this.value.toLowerCase();
+    render(q ? allPkgs.filter(p => p.name.toLowerCase().includes(q)) : allPkgs);
+  });
+}
+
+// ── Tree browse (maven) ───────────────────────────────────────────────────────
+
+async function loadTreeLevel(repo, prefix, depth, container) {
+  const res = await fetch('/ui/browse/' + repo + '/tree?prefix=' + encodeURIComponent(prefix));
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const nodes = await res.json();
+  renderTreeNodes(repo, nodes, depth, container, true);
+}
+
+function renderTreeNodes(repo, nodes, depth, container, replace) {
   if (!nodes.length) {
     if (replace) container.innerHTML = '<div class="browse-msg">Empty.</div>';
     return;
@@ -124,6 +119,7 @@ function renderTreeNodes(nodes, depth, container, replace) {
     const icon = n.is_dir ? 'folder' : 'package_2';
     return '<div class="browse-tree-node" ' +
       'data-path="' + esc(n.path) + '" ' +
+      'data-repo="' + esc(repo) + '" ' +
       'data-is-dir="' + n.is_dir + '" ' +
       'data-depth="' + depth + '" ' +
       'style="padding-left:' + indent + 'px">' +
@@ -133,21 +129,20 @@ function renderTreeNodes(nodes, depth, container, replace) {
       '<span class="ms browse-tree-icon">' + icon + '</span>' +
       '<span class="browse-tree-name">' + esc(n.name) + '</span>' +
       '</div>' +
-      // placeholder for children (collapsed by default)
-      (n.is_dir ? '<div class="browse-tree-children" data-for="' + esc(n.path) + '" style="display:none"></div>' : '');
+      (n.is_dir
+        ? '<div class="browse-tree-children" data-for="' + esc(repo + ':' + n.path) + '" style="display:none"></div>'
+        : '');
   }).join('');
 
-  if (replace) {
-    container.innerHTML = html;
-  } else {
-    container.insertAdjacentHTML('beforeend', html);
-  }
+  if (replace) container.innerHTML = html;
+  else container.insertAdjacentHTML('beforeend', html);
 }
 
-async function toggleTreeFolder(node) {
-  const path = node.dataset.path;
+async function toggleTreeFolder(repo, node) {
+  const path  = node.dataset.path;
   const depth = parseInt(node.dataset.depth, 10);
-  const children = document.querySelector('.browse-tree-children[data-for="' + CSS.escape(path) + '"]');
+  const key   = repo + ':' + path;
+  const children = document.querySelector('.browse-tree-children[data-for="' + CSS.escape(key) + '"]');
   if (!children) return;
 
   const toggle = node.querySelector('.browse-tree-toggle');
@@ -155,23 +150,21 @@ async function toggleTreeFolder(node) {
   const isOpen = children.style.display !== 'none';
 
   if (isOpen) {
-    // Collapse
     children.style.display = 'none';
     toggle.textContent = 'chevron_right';
     icon.textContent   = 'folder';
   } else {
-    // Expand — fetch children if not yet loaded
     toggle.textContent = 'expand_more';
     icon.textContent   = 'folder_open';
     children.style.display = 'block';
     if (!children.dataset.loaded) {
       children.innerHTML = '<div class="browse-msg" style="padding-left:' + (12 + (depth + 1) * 16) + 'px">Loading…</div>';
       try {
-        const res = await fetch('/ui/browse/' + REPO + '/tree?prefix=' + encodeURIComponent(path));
+        const res = await fetch('/ui/browse/' + repo + '/tree?prefix=' + encodeURIComponent(path));
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const nodes = await res.json();
         children.innerHTML = '';
-        renderTreeNodes(nodes, depth + 1, children, false);
+        renderTreeNodes(repo, nodes, depth + 1, children, false);
         children.dataset.loaded = '1';
       } catch (e) {
         children.innerHTML = '<div class="browse-msg browse-err">Failed: ' + esc(String(e)) + '</div>';
@@ -180,38 +173,10 @@ async function toggleTreeFolder(node) {
   }
 }
 
-function selectTreeLeaf(node) {
-  document.querySelectorAll('.browse-tree-node').forEach(n => n.classList.remove('active'));
-  node.classList.add('active');
-  selectPkg(mavenComponentFromPath(node.dataset.path), null);
-}
+// ── Versions pane ─────────────────────────────────────────────────────────────
 
-// Convert a Maven blob path to a groupId:artifactId component name, matching
-// the same heuristic used in BrowseRepo on the server side. The first path
-// segment that starts with a digit is the version; the segment before it is
-// the artifactId; everything before that forms the dotted groupId.
-// e.g. "com/google/guava/guava/33.0.0/guava-33.0.0.jar" → "com.google.guava:guava"
-function mavenComponentFromPath(path) {
-  const parts = path.split('/').filter(Boolean);
-  let verIdx = -1;
-  for (let i = 0; i < parts.length; i++) {
-    if (parts[i] && parts[i][0] >= '0' && parts[i][0] <= '9') { verIdx = i; break; }
-  }
-  if (verIdx < 2) return path; // not a versioned artifact path — pass through
-  const groupId    = parts.slice(0, verIdx - 1).join('.');
-  const artifactId = parts[verIdx - 1];
-  return groupId + ':' + artifactId;
-}
-
-// ════════════════════════════════════════════════════════════════════════════════
-// SHARED: versions + detail panes
-// ════════════════════════════════════════════════════════════════════════════════
-
-async function selectPkg(pkg, el) {
-  if (el) {
-    document.querySelectorAll('.browse-pkg').forEach(i => i.classList.remove('active'));
-    el.classList.add('active');
-  }
+async function selectPkg(repo, pkg) {
+  currentRepo = repo;
   const cp = document.getElementById('center-pane');
   cp.innerHTML = '<div class="browse-msg">Loading…</div>';
   document.getElementById('detail-pane').innerHTML =
@@ -219,12 +184,12 @@ async function selectPkg(pkg, el) {
     '<span class="ms" style="font-size:40px;color:var(--text-muted)">info</span>' +
     '<p>Select a version.</p></div>';
   try {
-    const res = await fetch('/ui/browse/' + REPO + '/versions?pkg=' + encodeURIComponent(pkg));
+    const res = await fetch('/ui/browse/' + repo + '/versions?pkg=' + encodeURIComponent(pkg));
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const d = await res.json();
     renderVersions(d);
   } catch (e) {
-    cp.innerHTML = '<div class="browse-msg browse-err">Failed to load versions: ' + esc(String(e)) + '</div>';
+    cp.innerHTML = '<div class="browse-msg browse-err">Failed: ' + esc(String(e)) + '</div>';
   }
 }
 
@@ -246,6 +211,8 @@ function renderVersions(d) {
   cp.innerHTML = h;
 }
 
+// ── Detail pane ───────────────────────────────────────────────────────────────
+
 document.getElementById('center-pane').addEventListener('click', function(e) {
   const row = e.target.closest('.browse-ver-row');
   if (row) selectVer(row.dataset.pkg, row.dataset.ver, row);
@@ -257,12 +224,14 @@ async function selectVer(pkg, ver, el) {
   const dp = document.getElementById('detail-pane');
   dp.innerHTML = '<div class="browse-msg">Loading…</div>';
   try {
-    const res = await fetch('/ui/browse/' + REPO + '/detail?pkg=' + encodeURIComponent(pkg) + '&ver=' + encodeURIComponent(ver));
+    const res = await fetch(
+      '/ui/browse/' + currentRepo + '/detail?pkg=' + encodeURIComponent(pkg) + '&ver=' + encodeURIComponent(ver)
+    );
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const d = await res.json();
     renderDetail(d);
   } catch (e) {
-    dp.innerHTML = '<div class="browse-msg browse-err">Failed to load detail: ' + esc(String(e)) + '</div>';
+    dp.innerHTML = '<div class="browse-msg browse-err">Failed: ' + esc(String(e)) + '</div>';
   }
 }
 
@@ -289,12 +258,62 @@ function renderDetail(d) {
   document.getElementById('detail-pane').innerHTML = h;
 
   const copyBtn = document.getElementById('copy-url-btn');
-  if (copyBtn) {
-    copyBtn.addEventListener('click', function() {
-      navigator.clipboard.writeText(d.download_url);
-    });
-  }
+  if (copyBtn) copyBtn.addEventListener('click', () => navigator.clipboard.writeText(d.download_url));
 }
+
+// ── Unified event delegation for the left pane ────────────────────────────────
+
+document.getElementById('pkg-list').addEventListener('click', function(e) {
+  // Repo header → toggle expand/collapse
+  const hdr = e.target.closest('.browse-repo-hdr');
+  if (hdr) {
+    toggleRepo(hdr.closest('.browse-repo-node'));
+    return;
+  }
+
+  // All other clicks need a repo context
+  const repoNode = e.target.closest('.browse-repo-node');
+  if (!repoNode) return;
+  const repo = repoNode.dataset.repo;
+
+  // Flat package item
+  const pkg = e.target.closest('.browse-pkg');
+  if (pkg) {
+    document.querySelectorAll('.browse-pkg').forEach(i => i.classList.remove('active'));
+    pkg.classList.add('active');
+    selectPkg(repo, pkg.dataset.name);
+    return;
+  }
+
+  // Maven tree node
+  const tn = e.target.closest('.browse-tree-node');
+  if (tn) {
+    if (tn.dataset.isDir === 'true') {
+      toggleTreeFolder(repo, tn);
+    } else {
+      document.querySelectorAll('.browse-tree-node').forEach(n => n.classList.remove('active'));
+      tn.classList.add('active');
+      selectPkg(repo, mavenComponentFromPath(tn.dataset.path));
+    }
+  }
+});
+
+// ── Maven path → groupId:artifactId ──────────────────────────────────────────
+// Mirrors the heuristic in BrowseRepo: first digit-starting segment = version.
+// e.g. "com/google/guava/guava/33.0.0/guava-33.0.0.jar" → "com.google.guava:guava"
+function mavenComponentFromPath(path) {
+  const parts = path.split('/').filter(Boolean);
+  let verIdx = -1;
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i] && parts[i][0] >= '0' && parts[i][0] <= '9') { verIdx = i; break; }
+  }
+  if (verIdx < 2) return path;
+  return parts.slice(0, verIdx - 1).join('.') + ':' + parts[verIdx - 1];
+}
+
+// ── Auto-expand repo from URL ─────────────────────────────────────────────────
+const autoNode = document.querySelector('.browse-repo-node.auto-expand');
+if (autoNode) toggleRepo(autoNode);
 
 // ── Shared util ───────────────────────────────────────────────────────────────
 function esc(s) {

@@ -135,21 +135,21 @@ func TestUIHome_FullPage(t *testing.T) {
 // ── /ui/repos/{name} ──────────────────────────────────────────────────────────
 
 func TestUIRepo_OK(t *testing.T) {
+	// /ui/repos/{name} redirects to /ui/browse/{name}; test the browse page directly
 	h := newUIServer(t).Routes()
-	rw := uiGet(t, h, "/ui/repos/npm-hosted")
+	rw := uiGet(t, h, "/ui/browse/npm-hosted")
 	if rw.Code != http.StatusOK {
 		t.Fatalf("status %d", rw.Code)
 	}
 	body := rw.Body.String()
 	assertContains(t, body, "npm-hosted")
-	// 3-panel shell: package list is JS-loaded, not server-rendered
 	assertContains(t, body, "browse-shell")
-	assertContains(t, body, "browse-left")
+	assertContains(t, body, "browse-repo-node")
 }
 
 func TestUIRepo_NotFound(t *testing.T) {
 	h := newUIServer(t).Routes()
-	rw := uiGet(t, h, "/ui/repos/no-such-repo")
+	rw := uiGet(t, h, "/ui/browse/no-such-repo")
 	if rw.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d", rw.Code)
 	}
@@ -157,20 +157,19 @@ func TestUIRepo_NotFound(t *testing.T) {
 
 func TestUIRepo_HasFilterInput(t *testing.T) {
 	h := newUIServer(t).Routes()
-	rw := uiGet(t, h, "/ui/repos/npm-hosted")
+	rw := uiGet(t, h, "/ui/browse/npm-hosted")
 	body := rw.Body.String()
-	// 3-panel: filter is a client-side search input; JS is in external browse.js (CSP)
-	assertContains(t, body, `id="pkg-search"`)
+	// All repos are server-rendered as repo nodes; JS (browse.js) handles expansion
+	assertContains(t, body, `browse-repo-node`)
 	assertContains(t, body, `/ui/static/browse.js`)
 }
 
 func TestUIRepo_EmptyRepo(t *testing.T) {
 	h := newUIServer(t).Routes()
-	rw := uiGet(t, h, "/ui/repos/helm-hosted")
+	rw := uiGet(t, h, "/ui/browse/helm-hosted")
 	if rw.Code != http.StatusOK {
 		t.Fatalf("status %d", rw.Code)
 	}
-	// 3-panel shell renders regardless of content; packages are JS-loaded
 	assertContains(t, rw.Body.String(), "browse-shell")
 }
 
@@ -598,8 +597,8 @@ func TestUIAdminHome_HasBreadcrumb(t *testing.T) {
 	h := newUIServer(t).Routes()
 	rw := uiGet(t, h, "/ui/admin/")
 	body := rw.Body.String()
-	// Sidebar nav always contains a link back to Browse (/)
-	assertContains(t, body, `href="/ui/"`)
+	// Sidebar nav always contains a link to Browse
+	assertContains(t, body, `href="/ui/browse"`)
 	// Page title shown in admin-subheader
 	assertContains(t, body, "Repositories")
 	assertContains(t, body, "admin-subheader")
@@ -680,8 +679,9 @@ func TestUIUpload_NotFound(t *testing.T) {
 }
 
 func TestUIUpload_RepoDetail_HasUploadButton(t *testing.T) {
+	// Upload button is on the browse page inside the hosted repo node header.
 	h := newUIServer(t).Routes()
-	rw := uiGet(t, h, "/ui/repos/npm-hosted")
+	rw := uiGet(t, h, "/ui/browse/npm-hosted")
 	assertContains(t, rw.Body.String(), "/ui/repos/npm-hosted/upload")
 }
 
@@ -742,7 +742,7 @@ func TestUIUpload_NPM_ClickThrough(t *testing.T) {
 	assertContains(t, rw.Body.String(), "Upload successful")
 
 	// Step 2: repo browse page renders the 3-panel shell (packages are JS-loaded).
-	rw2 := uiGet(t, h, "/ui/repos/npm-hosted")
+	rw2 := uiGet(t, h, "/ui/browse/npm-hosted")
 	if rw2.Code != http.StatusOK {
 		t.Fatalf("browse: status %d", rw2.Code)
 	}

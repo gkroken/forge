@@ -980,6 +980,18 @@ td a:hover { text-decoration: underline; }
   width: 316px; flex-shrink: 0; overflow-y: auto; background: var(--bg);
 }
 
+/* repo-level nodes in global browse left pane */
+.browse-repo-node { border-bottom: 1px solid var(--border); }
+.browse-repo-hdr {
+  display: flex; align-items: center; gap: 7px;
+  padding: 9px 12px; cursor: pointer; font-size: 13px; font-weight: 500;
+}
+.browse-repo-hdr:hover { background: var(--bg-hover); }
+.browse-repo-node.expanded > .browse-repo-hdr { background: var(--accent-subtle); }
+.browse-repo-name-lbl { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browse-repo-content { border-top: 1px solid var(--border); }
+.browse-repo-content:empty { display: none; }
+
 /* tree nodes (maven) */
 .browse-tree-node {
   display: flex; align-items: center; gap: 6px;
