@@ -989,8 +989,8 @@ td a:hover { text-decoration: underline; }
 .browse-repo-hdr:hover { background: var(--bg-hover); }
 .browse-repo-node.expanded > .browse-repo-hdr { background: var(--accent-subtle); }
 .browse-repo-name-lbl { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.browse-repo-content { border-top: 1px solid var(--border); }
-.browse-repo-content:empty { display: none; }
+.browse-repo-content { border-top: 1px solid var(--border); display: none; }
+.browse-repo-node.expanded > .browse-repo-content { display: block; }
 
 /* tree nodes (maven) */
 .browse-tree-node {
