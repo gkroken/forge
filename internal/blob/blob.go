@@ -5,15 +5,19 @@
 // needs to change. Keys are logical paths, e.g. "maven-hosted/com/acme/lib/1.0/lib-1.0.jar".
 package blob
 
-import "io"
+import (
+	"io"
+	"time"
+)
 
 // Info carries the size and checksums computed while writing a blob.
 // Maven clients require md5 + sha1 sidecars; everything modern wants sha256.
 type Info struct {
-	Size   int64
-	SHA256 string
-	SHA1   string
-	MD5    string
+	Size    int64
+	SHA256  string
+	SHA1    string
+	MD5     string
+	ModTime time.Time // zero if unknown (e.g. written without mtime support)
 }
 
 // Store is the contract every backend (filesystem, S3, GCS, ...) must satisfy.

@@ -1032,6 +1032,7 @@ func (h *Handler) Inspect(c *format.Context, baseURL, comp string) (format.Compo
 		versions[i] = format.VersionInfo{
 			Version:     rec.Version,
 			DownloadURL: fmt.Sprintf("%s/repository/%s/src/contrib/%s_%s.tar.gz", baseURL, c.Repo.Name, rec.Package, rec.Version),
+			PublishedAt: rec.UploadedAt,
 		}
 	}
 	deps := cranParseDeps(c.Repo.Name, latest.Depends, latest.Imports)

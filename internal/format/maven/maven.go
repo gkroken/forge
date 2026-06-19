@@ -807,13 +807,31 @@ func (h *Handler) Inspect(c *format.Context, baseURL, comp string) (format.Compo
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(allVersions)))
 
+	// Map version → first blob key to stat for ModTime (upload timestamp proxy).
+	versionKey := make(map[string]string, len(allVersions))
+	for _, k := range keys {
+		rel := strings.TrimPrefix(k, blobPrefix)
+		ver, _, ok := strings.Cut(rel, "/")
+		if ok && len(ver) > 0 && ver[0] >= '0' && ver[0] <= '9' {
+			if _, seen := versionKey[ver]; !seen {
+				versionKey[ver] = k
+			}
+		}
+	}
+
 	versions := make([]format.VersionInfo, len(allVersions))
 	for i, ver := range allVersions {
-		versions[i] = format.VersionInfo{
+		vi := format.VersionInfo{
 			Version: ver,
 			DownloadURL: fmt.Sprintf("%s/repository/%s/%s/%s/%s/%s-%s.jar",
 				baseURL, c.Repo.Name, groupPath, artifactID, ver, artifactID, ver),
 		}
+		if key, ok := versionKey[ver]; ok {
+			if info, exists, err := c.Blob.Stat(key); err == nil && exists {
+				vi.PublishedAt = info.ModTime
+			}
+		}
+		versions[i] = vi
 	}
 
 	snippet := fmt.Sprintf("<dependency>\n  <groupId>%s</groupId>\n  <artifactId>%s</artifactId>\n  <version>%s</version>\n</dependency>",

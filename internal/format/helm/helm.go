@@ -592,6 +592,7 @@ func (h *Handler) Inspect(c *format.Context, baseURL, name string) (format.Compo
 		versions[i] = format.VersionInfo{
 			Version:     rec.Version,
 			DownloadURL: fmt.Sprintf("%s/repository/%s/%s", baseURL, c.Repo.Name, rec.Filename),
+			PublishedAt: rec.UploadedAt,
 		}
 	}
 

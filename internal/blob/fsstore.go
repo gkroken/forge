@@ -94,7 +94,7 @@ func (f *FS) Stat(key string) (Info, bool, error) {
 	if err != nil {
 		return Info{}, false, err
 	}
-	return Info{Size: st.Size()}, true, nil
+	return Info{Size: st.Size(), ModTime: st.ModTime()}, true, nil
 }
 
 func (f *FS) List(prefix string) ([]string, error) {

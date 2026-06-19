@@ -823,13 +823,24 @@ func (h *Handler) Inspect(c *format.Context, baseURL, pkg string) (format.Compon
 		latestVer = allVersions[0]
 	}
 
+	// npm packument "time" map: {"1.0.0": "2023-01-15T10:30:00.000Z", ...}
+	timesMap, _ := packument["time"].(map[string]any)
+
 	versions := make([]format.VersionInfo, len(allVersions))
 	for i, ver := range allVersions {
 		tarName := fmt.Sprintf("%s-%s.tgz", lastPathSeg(pkg), ver)
-		versions[i] = format.VersionInfo{
+		vi := format.VersionInfo{
 			Version:     ver,
 			DownloadURL: fmt.Sprintf("%s/repository/%s/%s/-/%s", baseURL, c.Repo.Name, pkg, tarName),
 		}
+		if timesMap != nil {
+			if ts, ok := timesMap[ver].(string); ok {
+				if t, err := time.Parse(time.RFC3339, ts); err == nil {
+					vi.PublishedAt = t
+				}
+			}
+		}
+		versions[i] = vi
 	}
 
 	var deps []format.Dep
