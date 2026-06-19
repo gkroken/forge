@@ -14,7 +14,7 @@
   <!-- ── sidebar ────────────────────────────────────────────────────────── -->
   <aside class="admin-sidebar">
     <div class="sidebar-brand">
-      <div class="sidebar-logo">f</div>
+      <div class="sidebar-logo"><span class="ms" style="font-size:18px;">deployed_code</span></div>
       <span class="sidebar-appname">forge</span>
       <span class="sidebar-badge">eval</span>
     </div>
@@ -23,13 +23,13 @@
 
     <nav class="sidebar-nav">
       {{$p := .ActiveNav}}
-      <a href="/ui/dashboard"              class="sidebar-nav-item{{if eq $p "dashboard"}}    active{{end}}">Dashboard</a>
-      <a href="/ui/admin/"                 class="sidebar-nav-item{{if eq $p "repos"}}         active{{end}}">Repositories</a>
-      <a href="/ui/"                       class="sidebar-nav-item{{if eq $p "browse"}}        active{{end}}">Browse</a>
-      <a href="/ui/search"                 class="sidebar-nav-item{{if eq $p "search"}}        active{{end}}">Search</a>
-      <a href="/ui/admin/tokens"           class="sidebar-nav-item{{if eq $p "tokens"}}        active{{end}}">Tokens &amp; Access</a>
-      <a href="/ui/admin/cleanup-policies" class="sidebar-nav-item{{if eq $p "cleanup"}}       active{{end}}">Cleanup</a>
-      <a href="/ui/admin/observability"    class="sidebar-nav-item{{if eq $p "observability"}} active{{end}}">Observability</a>
+      <a href="/ui/dashboard"              class="sidebar-nav-item{{if eq $p "dashboard"}}    active{{end}}"><span class="ms sidebar-nav-icon">dashboard</span>Dashboard</a>
+      <a href="/ui/admin/"                 class="sidebar-nav-item{{if eq $p "repos"}}         active{{end}}"><span class="ms sidebar-nav-icon">inventory_2</span>Repositories</a>
+      <a href="/ui/"                       class="sidebar-nav-item{{if eq $p "browse"}}        active{{end}}"><span class="ms sidebar-nav-icon">folder_open</span>Browse</a>
+      <a href="/ui/search"                 class="sidebar-nav-item{{if eq $p "search"}}        active{{end}}"><span class="ms sidebar-nav-icon">search</span>Search</a>
+      <a href="/ui/admin/tokens"           class="sidebar-nav-item{{if eq $p "tokens"}}        active{{end}}"><span class="ms sidebar-nav-icon">key</span>Tokens &amp; Access</a>
+      <a href="/ui/admin/cleanup-policies" class="sidebar-nav-item{{if eq $p "cleanup"}}       active{{end}}"><span class="ms sidebar-nav-icon">cleaning_services</span>Cleanup</a>
+      <a href="/ui/admin/observability"    class="sidebar-nav-item{{if eq $p "observability"}} active{{end}}"><span class="ms sidebar-nav-icon">monitoring</span>Observability</a>
     </nav>
 
     <div class="sidebar-footer">
@@ -46,6 +46,17 @@
 
   <!-- ── main ───────────────────────────────────────────────────────────── -->
   <div class="admin-main">
+    <div class="admin-topbar">
+      <span class="admin-topbar-title">{{.Title}}</span>
+      <div class="topbar-search">
+        <span class="ms topbar-search-icon">search</span>
+        <span class="topbar-search-hint">Search repositories &amp; artifacts</span>
+      </div>
+      <div class="topbar-icon-group">
+        <button class="topbar-icon-btn" type="button" title="Notifications"><span class="ms">notifications</span></button>
+        <button class="topbar-icon-btn" type="button" title="Help"><span class="ms">help</span></button>
+      </div>
+    </div>
     {{block "content" .}}{{end}}
   </div>
 

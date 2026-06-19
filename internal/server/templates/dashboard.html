@@ -1,12 +1,4 @@
 {{define "content"}}
-<!-- top bar -->
-<div class="admin-topbar">
-  <span class="admin-topbar-title">Dashboard</span>
-  <div class="admin-topbar-actions">
-    <a href="/ui/search" class="btn" style="height:34px;padding:0 13px;font-size:12.5px;">Search</a>
-  </div>
-</div>
-
 <div class="admin-content">
 
   <!-- system overview header -->
@@ -24,24 +16,36 @@
   <!-- KPI row -->
   <div class="kpi-grid">
     <div class="kpi-card">
-      <div class="kpi-label">Repositories</div>
+      <div class="kpi-icon-row"><span class="ms">inventory_2</span><span class="kpi-label">Repositories</span></div>
       <div class="kpi-value">{{.RepoCount}}<span class="kpi-unit">repos</span></div>
-      <div class="kpi-sub">{{.FormatCount}} format{{if ne .FormatCount 1}}s{{end}} in use</div>
+      <div class="kpi-trend">
+        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
+        <span class="kpi-trend-sub">{{.FormatCount}} format{{if ne .FormatCount 1}}s{{end}} in use</span>
+      </div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-label">Stored</div>
+      <div class="kpi-icon-row"><span class="ms">storage</span><span class="kpi-label">Stored</span></div>
       <div class="kpi-value">—<span class="kpi-unit">GB</span></div>
-      <div class="kpi-sub">blob store usage</div>
+      <div class="kpi-trend">
+        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
+        <span class="kpi-trend-sub">blob store usage</span>
+      </div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-label">Requests · 24h</div>
+      <div class="kpi-icon-row"><span class="ms">bar_chart</span><span class="kpi-label">Requests · 24h</span></div>
       <div class="kpi-value">{{if .TotalRequests}}{{.TotalRequests}}<span class="kpi-unit">req</span>{{else}}—{{end}}</div>
-      <div class="kpi-sub">all routes</div>
+      <div class="kpi-trend">
+        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
+        <span class="kpi-trend-sub">all routes</span>
+      </div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-label">Cache hit rate</div>
+      <div class="kpi-icon-row"><span class="ms">cached</span><span class="kpi-label">Cache hit rate</span></div>
       <div class="kpi-value">{{if .CacheHitPct}}{{printf "%.1f" .CacheHitPct}}<span class="kpi-unit">%</span>{{else}}—{{end}}</div>
-      <div class="kpi-sub">proxy repositories</div>
+      <div class="kpi-trend">
+        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
+        <span class="kpi-trend-sub">proxy repositories</span>
+      </div>
     </div>
   </div>
 

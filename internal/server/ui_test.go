@@ -1169,7 +1169,7 @@ func TestUIDashboard_SidebarNav(t *testing.T) {
 	assertContains(t, body, "Cleanup")
 	assertContains(t, body, "Observability")
 	// Active nav item should be marked
-	assertContains(t, body, `active">Dashboard`)
+	assertContains(t, body, `sidebar-nav-item    active">`) // dashboard nav item is active
 }
 
 func TestUIDashboard_ShowsFormatStats(t *testing.T) {
