@@ -84,6 +84,19 @@ Each lives in `internal/format/{name}/`:
 - **Helm** (`helm.go`): `POST /api/charts` (upload), `GET /index.yaml` (generated), `GET /{chart}.tgz` (download), `GET /api/charts` (list/delete API). Index generated from `meta.Store` records.
 - **CRAN** (`cran.go`): `PUT /src/contrib/{pkg}_{ver}.tar.gz` (upload, parses DESCRIPTION), `GET /src/contrib/PACKAGES` and `PACKAGES.gz` (generated index). Proxy mode fetches from upstream CRAN.
 
+## Browse UI — format-aware left pane
+
+`/ui/repos/{name}` renders a 3-panel shell (left / center / right). The **left pane** adapts to the repository format because the storage structures differ fundamentally:
+
+- **Maven** → hierarchical folder-tree browser. Maven's blob layout mirrors the `groupId/artifactId/version` path hierarchy, so the tree is meaningful and navigable. Uses `GET /ui/browse/{repo}/tree?prefix=` to fetch one level at a time; folders expand/collapse inline. Leaf click loads versions in the center pane.
+- **All other formats** (npm, helm, cran, oci) → flat searchable package list. These formats have no folder hierarchy; packages are identified by name only. Uses `GET /api/v1/repos/{repo}/components?limit=200`; client-side text filter.
+
+Center and right panes are shared across formats:
+- Center: `GET /ui/browse/{repo}/versions?pkg=` — version list for selected component
+- Right: `GET /ui/browse/{repo}/detail?pkg=&ver=` — asset metadata + download link
+
+The dispatch lives in `internal/server/static/browse.js`, keyed on `data-format` injected by `repo.html`. Adding a new format that has meaningful folder structure: add its name to the `FORMAT === 'maven'` check in `browse.js`.
+
 ## Data layout on disk
 
 ```

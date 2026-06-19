@@ -980,6 +980,20 @@ td a:hover { text-decoration: underline; }
   width: 316px; flex-shrink: 0; overflow-y: auto; background: var(--bg);
 }
 
+/* tree nodes (maven) */
+.browse-tree-node {
+  display: flex; align-items: center; gap: 6px;
+  padding-top: 7px; padding-right: 12px; padding-bottom: 7px;
+  cursor: pointer; font-size: 13px; border-bottom: 1px solid var(--border);
+}
+.browse-tree-node:hover  { background: var(--bg-hover); }
+.browse-tree-node.active { background: var(--accent-subtle); }
+.browse-tree-toggle        { font-size: 16px; color: var(--text-muted); flex-shrink: 0; }
+.browse-tree-toggle-spacer { width: 16px; flex-shrink: 0; }
+.browse-tree-icon          { font-size: 16px; color: var(--text-muted); flex-shrink: 0; }
+.browse-tree-name          { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browse-tree-children      { border-bottom: none; }
+
 /* pane header row */
 .browse-pane-hdr {
   display: flex; align-items: center; gap: 7px;

@@ -1,10 +1,56 @@
-// browse.js — 3-panel repo browse. Loaded as external script; no inline JS allowed (CSP).
-// Reads data-repo from .browse-shell so the template can inject the repo name safely.
+/**
+ * browse.js — 3-panel repository browse.
+ *
+ * The left pane is FORMAT-AWARE. Maven's blob layout is a real directory
+ * hierarchy (groupId path segments → artifactId), so it gets a folder-tree
+ * browser. Every other format (npm, helm, cran, oci) stores flat named
+ * packages with no meaningful folder structure, so they get a searchable
+ * flat package list instead.
+ *
+ *   FORMAT === "maven"  → initTreeBrowse()
+ *                         uses GET /ui/browse/{repo}/tree?prefix=
+ *                         folders expand/collapse inline; leaf click → versions
+ *
+ *   FORMAT !== "maven"  → initFlatBrowse()
+ *                         uses GET /api/v1/repos/{repo}/components?limit=200
+ *                         client-side text filter via the search input
+ *
+ * Center pane: version list (GET /ui/browse/{repo}/versions?pkg=)
+ * Right pane:  asset detail  (GET /ui/browse/{repo}/detail?pkg=&ver=)
+ *
+ * No inline onclick/oninput attributes — event delegation throughout so the
+ * page's CSP (script-src 'self') is satisfied.
+ */
 
-const REPO = document.querySelector('.browse-shell').dataset.repo;
+const shell  = document.querySelector('.browse-shell');
+const REPO   = shell.dataset.repo;
+const FORMAT = shell.dataset.format;
+
+// ── Format-aware init ─────────────────────────────────────────────────────────
+if (FORMAT === 'maven') {
+  document.querySelector('.browse-search-wrap').style.display = 'none';
+  initTreeBrowse();
+} else {
+  initFlatBrowse();
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// FLAT BROWSE (npm / helm / cran / oci)
+// ════════════════════════════════════════════════════════════════════════════════
+
 let allPkgs = [];
 
-// ── Package list ──────────────────────────────────────────────────────────────
+function initFlatBrowse() {
+  document.getElementById('pkg-search').addEventListener('input', function() {
+    filterPkgs(this.value);
+  });
+  document.getElementById('pkg-list').addEventListener('click', function(e) {
+    const item = e.target.closest('.browse-pkg');
+    if (item) selectPkg(item.dataset.name, item);
+  });
+  loadPkgs();
+}
+
 async function loadPkgs() {
   try {
     const res = await fetch('/api/v1/repos/' + REPO + '/components?limit=200');
@@ -38,14 +84,124 @@ function filterPkgs(q) {
   renderPkgs(ql ? allPkgs.filter(p => p.name.toLowerCase().includes(ql)) : allPkgs);
 }
 
-// ── Versions ──────────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════════
+// TREE BROWSE (maven)
+// ════════════════════════════════════════════════════════════════════════════════
+
+function initTreeBrowse() {
+  // Event delegation: folder toggle or leaf selection anywhere in the list.
+  document.getElementById('pkg-list').addEventListener('click', function(e) {
+    const node = e.target.closest('.browse-tree-node');
+    if (!node) return;
+    if (node.dataset.isDir === 'true') {
+      toggleTreeFolder(node);
+    } else {
+      selectTreeLeaf(node);
+    }
+  });
+  loadTreeLevel('', 0, document.getElementById('pkg-list'));
+}
+
+async function loadTreeLevel(prefix, depth, container) {
+  container.innerHTML = '<div class="browse-msg">Loading…</div>';
+  try {
+    const res = await fetch('/ui/browse/' + REPO + '/tree?prefix=' + encodeURIComponent(prefix));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const nodes = await res.json();
+    renderTreeNodes(nodes, depth, container, /* replace */ true);
+  } catch (e) {
+    container.innerHTML = '<div class="browse-msg browse-err">Failed: ' + esc(String(e)) + '</div>';
+  }
+}
+
+function renderTreeNodes(nodes, depth, container, replace) {
+  if (!nodes.length) {
+    if (replace) container.innerHTML = '<div class="browse-msg">Empty.</div>';
+    return;
+  }
+  const indent = 12 + depth * 16;
+  const html = nodes.map(n => {
+    const icon = n.is_dir ? 'folder' : 'package_2';
+    return '<div class="browse-tree-node" ' +
+      'data-path="' + esc(n.path) + '" ' +
+      'data-is-dir="' + n.is_dir + '" ' +
+      'data-depth="' + depth + '" ' +
+      'style="padding-left:' + indent + 'px">' +
+      (n.is_dir
+        ? '<span class="ms browse-tree-toggle">chevron_right</span>'
+        : '<span class="browse-tree-toggle-spacer"></span>') +
+      '<span class="ms browse-tree-icon">' + icon + '</span>' +
+      '<span class="browse-tree-name">' + esc(n.name) + '</span>' +
+      '</div>' +
+      // placeholder for children (collapsed by default)
+      (n.is_dir ? '<div class="browse-tree-children" data-for="' + esc(n.path) + '" style="display:none"></div>' : '');
+  }).join('');
+
+  if (replace) {
+    container.innerHTML = html;
+  } else {
+    container.insertAdjacentHTML('beforeend', html);
+  }
+}
+
+async function toggleTreeFolder(node) {
+  const path = node.dataset.path;
+  const depth = parseInt(node.dataset.depth, 10);
+  const children = document.querySelector('.browse-tree-children[data-for="' + CSS.escape(path) + '"]');
+  if (!children) return;
+
+  const toggle = node.querySelector('.browse-tree-toggle');
+  const icon   = node.querySelector('.browse-tree-icon');
+  const isOpen = children.style.display !== 'none';
+
+  if (isOpen) {
+    // Collapse
+    children.style.display = 'none';
+    toggle.textContent = 'chevron_right';
+    icon.textContent   = 'folder';
+  } else {
+    // Expand — fetch children if not yet loaded
+    toggle.textContent = 'expand_more';
+    icon.textContent   = 'folder_open';
+    children.style.display = 'block';
+    if (!children.dataset.loaded) {
+      children.innerHTML = '<div class="browse-msg" style="padding-left:' + (12 + (depth + 1) * 16) + 'px">Loading…</div>';
+      try {
+        const res = await fetch('/ui/browse/' + REPO + '/tree?prefix=' + encodeURIComponent(path));
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const nodes = await res.json();
+        children.innerHTML = '';
+        renderTreeNodes(nodes, depth + 1, children, false);
+        children.dataset.loaded = '1';
+      } catch (e) {
+        children.innerHTML = '<div class="browse-msg browse-err">Failed: ' + esc(String(e)) + '</div>';
+      }
+    }
+  }
+}
+
+function selectTreeLeaf(node) {
+  document.querySelectorAll('.browse-tree-node').forEach(n => n.classList.remove('active'));
+  node.classList.add('active');
+  // Use the leaf path as the package identifier for the versions endpoint.
+  selectPkg(node.dataset.path, null);
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SHARED: versions + detail panes
+// ════════════════════════════════════════════════════════════════════════════════
+
 async function selectPkg(pkg, el) {
-  document.querySelectorAll('.browse-pkg').forEach(i => i.classList.remove('active'));
-  if (el) el.classList.add('active');
+  if (el) {
+    document.querySelectorAll('.browse-pkg').forEach(i => i.classList.remove('active'));
+    el.classList.add('active');
+  }
   const cp = document.getElementById('center-pane');
   cp.innerHTML = '<div class="browse-msg">Loading…</div>';
   document.getElementById('detail-pane').innerHTML =
-    '<div class="browse-placeholder"><span class="ms" style="font-size:40px;color:var(--text-muted)">info</span><p>Select a version.</p></div>';
+    '<div class="browse-placeholder">' +
+    '<span class="ms" style="font-size:40px;color:var(--text-muted)">info</span>' +
+    '<p>Select a version.</p></div>';
   try {
     const res = await fetch('/ui/browse/' + REPO + '/versions?pkg=' + encodeURIComponent(pkg));
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -74,7 +230,11 @@ function renderVersions(d) {
   cp.innerHTML = h;
 }
 
-// ── Asset detail ──────────────────────────────────────────────────────────────
+document.getElementById('center-pane').addEventListener('click', function(e) {
+  const row = e.target.closest('.browse-ver-row');
+  if (row) selectVer(row.dataset.pkg, row.dataset.ver, row);
+});
+
 async function selectVer(pkg, ver, el) {
   document.querySelectorAll('.browse-ver-row').forEach(r => r.classList.remove('active'));
   if (el) el.classList.add('active');
@@ -120,23 +280,7 @@ function renderDetail(d) {
   }
 }
 
+// ── Shared util ───────────────────────────────────────────────────────────────
 function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
-
-// ── Event delegation (no inline handlers) ────────────────────────────────────
-document.getElementById('pkg-search').addEventListener('input', function() {
-  filterPkgs(this.value);
-});
-
-document.getElementById('pkg-list').addEventListener('click', function(e) {
-  const pkg = e.target.closest('.browse-pkg');
-  if (pkg) selectPkg(pkg.dataset.name, pkg);
-});
-
-document.getElementById('center-pane').addEventListener('click', function(e) {
-  const row = e.target.closest('.browse-ver-row');
-  if (row) selectVer(row.dataset.pkg, row.dataset.ver, row);
-});
-
-loadPkgs();
