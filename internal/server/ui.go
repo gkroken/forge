@@ -209,6 +209,9 @@ func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 		} else {
 			s.uiRepo(w, r, repoName)
 		}
+	case strings.HasPrefix(p, "/browse/") && strings.HasSuffix(p, "/tree"):
+		repoName := strings.TrimSuffix(strings.TrimPrefix(p, "/browse/"), "/tree")
+		s.uiBrowseTree(w, r, repoName)
 	case p == "/admin" || strings.HasPrefix(p, "/admin/"):
 		s.handleUIAdmin(w, r, strings.TrimPrefix(p, "/admin"))
 	default:

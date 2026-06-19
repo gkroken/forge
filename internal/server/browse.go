@@ -10,6 +10,66 @@ import (
 	"forge/internal/format"
 )
 
+// uiBrowseTree serves GET /ui/browse/{repo}/tree?prefix=
+//
+// Returns a JSON array of tree nodes directly under the given prefix, one
+// level deep. Prefix is relative to the repo root (no leading slash).
+//
+//	[{"name":"com","path":"com","is_dir":true}, ...]
+func (s *Server) uiBrowseTree(w http.ResponseWriter, r *http.Request, repoName string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	rp, ok := s.Repos.Get(repoName)
+	if !ok {
+		jsonError(w, "repository not found: "+repoName, http.StatusNotFound)
+		return
+	}
+
+	prefix := strings.Trim(r.URL.Query().Get("prefix"), "/")
+	blobPrefix := rp.Name + "/"
+	if prefix != "" {
+		blobPrefix += prefix + "/"
+	}
+
+	keys, err := s.Blob.List(blobPrefix)
+	if err != nil {
+		jsonError(w, "list failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Collect immediate children (one level deep) deduplicating directories.
+	seen := map[string]bool{}
+	var nodes []treeNode
+	for _, k := range keys {
+		rel := strings.TrimPrefix(k, blobPrefix)
+		if rel == "" {
+			continue
+		}
+		seg, rest, isDir := strings.Cut(rel, "/")
+		if seg == "" {
+			continue
+		}
+		if seen[seg] {
+			continue
+		}
+		seen[seg] = true
+		nodePath := prefix
+		if nodePath != "" {
+			nodePath += "/" + seg
+		} else {
+			nodePath = seg
+		}
+		_ = rest
+		nodes = append(nodes, treeNode{Name: seg, Path: nodePath, IsDir: isDir})
+	}
+	if nodes == nil {
+		nodes = []treeNode{}
+	}
+	writeJSON(w, nodes)
+}
+
 // handleComponents serves GET /api/v1/repos/{name}/components
 //
 //	?q=      substring filter on component name (case-insensitive)
@@ -147,6 +207,13 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── types ─────────────────────────────────────────────────────────────────────
+
+// treeNode is one entry in the browse-tree API response.
+type treeNode struct {
+	Name  string `json:"name"`
+	Path  string `json:"path"`   // repo-relative path (no leading slash)
+	IsDir bool   `json:"is_dir"` // true when the node has children
+}
 
 type componentItem struct {
 	Name      string    `json:"name"`
