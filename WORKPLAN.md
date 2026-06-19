@@ -679,3 +679,192 @@ BE-D (model extension)
 BE-D and BE-E are low-risk backend changes (additive to the model, backward-compatible
 JSON). BE-F is slightly more involved (new in-memory ring buffer + endpoint). F4 is the
 UI layer that exposes everything. Build in that order; F4 last.
+
+---
+
+### 10.6 Dashboard + Observability — gap analysis
+
+The F2 and BE-A descriptions in §10.4 name the right areas but do not specify data
+sources precisely enough to implement from. This section closes that gap by mapping
+every element in the mockup (`Forge Admin - Foundry (remaining tabs).dc.html`) to its
+required backend data, and lists what is currently missing.
+
+#### Dashboard — element-by-element
+
+**KPI cards (4):**
+
+| Card | Value shown | Data source | Gap |
+|---|---|---|---|
+| Repositories | count, "+2 this month" | `repo.Manager.Len()` ✅; trend needs new-this-month count | Trend counter: count repos created in the last 30d |
+| Stored | "297.2 GB", "+8.1 GB 7d" | BE-A blob walker (total GB) ✅ | Trend: store last-week snapshot to compute Δ |
+| Requests · 24h | "1.84 M", "+12% vs prev" | **Not tracked** | New: 24h rolling request counter + prev-24h baseline |
+| Cache hit rate | "94.6%", "-0.4% 24h" | **Not tracked globally** | New: global 24h hit/miss counter (aggregate of per-repo from BE-F) |
+
+**Service health table (5 rows):**
+
+| Row | Stat shown | Data source | Gap |
+|---|---|---|---|
+| REST API | "12ms" (p50) | `obs.Metrics` latency histogram (BE-A) ✅ | Expose p50 on `/api/v1/system/health` |
+| Async indexer | "idle · 0 queued" | `internal/queue` queue depth | New: `queue.Depth() int` + `queue.Busy() bool` exposed via health endpoint |
+| Blob store (default-fs) | "62% used" | No capacity concept | New: `blob.Store.Capacity() (used, total int64)` (FS impl uses `syscall.Statfs`; S3 impl returns −1/−1) |
+| Proxy workers | "1 retrying" | No retry-in-flight counter | New: atomic counter incremented/decremented around retry loops in `proxy.Fetch` |
+| PostgreSQL | "4ms" (p50) | No DB latency tracking | New: instrument `meta.pgStore` query timing; expose p50 on health endpoint |
+
+**24-bar stacked request chart:**
+
+The chart shows 24 hourly bars. Each bar is split: blue (cache-hit requests) + orange
+(miss / upstream-fetch requests). Height = total requests that hour.
+
+- **Not in BE-A at all.** Need a global hourly ring buffer `[24]struct{ hits, misses atomic.Uint64 }` in `Server`, incremented from the request middleware.
+- Endpoint: `GET /api/v1/system/request-chart` → `[{hour, hits, misses}×24]`
+- Same pattern as BE-F's per-repo ring buffer; this one is global and lives in `obs` or `Server`.
+
+**Storage by format (5 rows with progress bars):**
+
+| Field | Data source | Gap |
+|---|---|---|
+| Format name | Derived from repos ✅ | None |
+| Size (GB) | BE-A blob walker broken down per format ✅ | Blob walker must bucket by format (not just total) |
+| % of total | Computed from above ✅ | None once walker has per-format buckets |
+
+The BE-A blob walker description says "total + per-format GB" — this is correct, just
+needs to be confirmed in the implementation.
+
+**Recent activity feed (4 items):**
+
+| Field | Data source | Gap |
+|---|---|---|
+| icon | Event type (upload/cached/key/cleaning_services) | Derive from audit log `action` field; map already defined in §10.3 |
+| text | Human-readable event description | Audit log `target` field, needs formatting |
+| who | Actor (token name or "system") | Audit log `actor` field ✅ |
+| time ago | Relative to `event.Time` | Computed client-side from timestamp ✅ |
+
+No new backend work — this is a render change to the existing audit log feed. Already
+planned in F2.
+
+**System tasks panel (with progress bars):**
+
+The design shows live system tasks: running/queued/done with a % progress bar.
+
+- **Not planned anywhere.** The `internal/queue` package processes jobs but has no
+  API to expose in-progress or recently-completed task state.
+- New: `queue.TaskStatus() []TaskInfo` where `TaskInfo = {Name, Status, Pct int}`.
+  Status is one of Running/Queued/Done. For Done items, retain the last N (e.g. 10)
+  completed tasks in a ring buffer so the dashboard can show recent results.
+- Endpoint: `GET /api/v1/system/tasks` → `[{name, status, pct}]`
+- Pct: the indexer job already knows how many blobs it has processed; it just needs to
+  report that back through a callback or atomic field on the job struct.
+
+---
+
+#### Observability — element-by-element
+
+**KPI cards (4):**
+
+| Card | Value | Data source | Gap |
+|---|---|---|---|
+| P50 LATENCY | "11ms" | `obs.Metrics` latency histogram (BE-A) ✅ | Expose snapshot on API endpoint |
+| P95 LATENCY | "88ms" | Same histogram ✅ | Expose p95 snapshot |
+| ERROR RATE | "0.21%" (5xx) | 5xx counter / total counter | New: status-class counters (2xx/304/4xx/5xx) in middleware |
+| THROUGHPUT | "212 req/s" rolling 1m | `obs.Metrics` rolling throughput (BE-A) ✅ | Expose on API endpoint |
+
+**Request rate + latency dual-series chart (32 time buckets):**
+
+The chart shows 32 bars (req/s) with a p95 ms line overlay.
+
+- **Not in BE-A.** Need a time-series ring buffer at finer granularity than the hourly
+  dashboard chart: 32 buckets of 15 minutes each = 8-hour window.
+- Each bucket: `struct{ requests, errors uint64; latencySum uint64 }` (latencySum for avg p95 approx).
+- Endpoint: `GET /api/v1/system/metrics-chart` → `[{bucket, req_rate, p95_ms}×32]`
+- This can share the same ring buffer infrastructure as the hourly dashboard chart; just
+  a different bucket width.
+
+**Status code breakdown (4 rows):**
+
+| Code class | % shown | Data source | Gap |
+|---|---|---|---|
+| 2xx | 78.0% | **No counter** | New: atomic status-class counters in response middleware |
+| 304 | 13.8% | **No counter** | Included in above |
+| 4xx | 4.9% | **No counter** | Included in above |
+| 5xx | 0.2% | **No counter** | Included in above |
+
+Endpoint: `GET /api/v1/system/status-breakdown` → `[{code, label, pct}]`. Alternatively
+fold into the metrics-chart endpoint. Counters reset on server restart (acceptable).
+
+**Audit log table:**
+
+Already fully specified in §10.3 and F2. No additional gaps.
+
+**`/metrics` external link button:**
+
+Trivial — the Prometheus `/metrics` endpoint already exists. F2 just needs to add the
+`<a href="/metrics">` button to the Observability page header.
+
+---
+
+#### What BE-A currently specifies vs what it must produce
+
+BE-A as written (§10.4) is sufficient for: latency histogram, rolling throughput, blob
+walker (per-format), cleanup reclaimable/freed/tasks, token owner/last-used.
+
+BE-A is **not** sufficient for:
+
+1. **24h request count + trend** — rolling 24h total + yesterday baseline
+2. **Global cache hit rate** — aggregate of per-repo hit/miss (can reuse BE-F ring buffers)
+3. **24-bar dashboard request chart** — global hourly ring buffer hit/miss split
+4. **Service health: indexer queue depth** — `queue.Depth()` + busy state
+5. **Service health: blob store capacity** — `blob.Store.Capacity()` new method
+6. **Service health: proxy retry count** — atomic in-flight retry counter in proxy
+7. **Service health: DB query latency** — instrument `meta.pgStore`
+8. **System tasks panel** — `queue.TaskStatus()` with progress + recent history
+9. **Status code breakdown counters** — 2xx/304/4xx/5xx atomics in response middleware
+10. **32-bucket metrics chart** — 15-min ring buffer for req rate + p95 latency
+
+#### BE-G — Extended metrics for Dashboard + Observability (~2 days)
+
+These items are additive to BE-A (which may already be built); they extend the metrics
+layer without changing any existing interfaces.
+
+- **Global hourly ring buffer** (`[24]struct{ hits, misses uint64 }`) in `obs` or
+  `Server`; incremented from the logging middleware that already runs on every request.
+  Feeds both the Dashboard 24-bar chart and the "Cache hit rate" KPI.
+- **24h request total** from the same ring buffer (sum over 24 slots). Prev-24h baseline
+  stored as a snapshot at midnight (or best-effort: sum of slots 25–48 in a 48-slot buffer).
+- **32-bucket 15-min ring buffer** for Observability chart: `req_rate`, `p95_ms` approx
+  (running max or exponential moving average — exact histogram per bucket is expensive;
+  moving average is acceptable for the display use case).
+- **Status code class counters** (`atomic.Uint64` × 4: 2xx/304/4xx/5xx) in the response
+  middleware. Endpoint: `GET /api/v1/system/status-breakdown`.
+- **`queue.Depth() int`** — count of pending jobs in the queue. `queue.RecentTasks(n int)
+  []TaskInfo` — last N completed + current running, with Pct field. Endpoint:
+  `GET /api/v1/system/tasks`.
+- **`blob.Store` capacity** — add optional `Capacity() (used, total int64, err error)`
+  to the `blob.Store` interface; FS impl calls `syscall.Statfs`; S3 impl returns
+  `−1, −1, nil`. Expose on `GET /api/v1/system/health` alongside the existing CB state.
+- **Proxy retry counter** — `atomic.Int32` in `Server`, incremented at retry entry /
+  decremented at exit in `proxy.Fetch`. Expose on health endpoint.
+- **DB latency p50** — wrap `meta.pgStore.GetJSON` / `PutJSON` with a simple
+  exponential moving average: `α·new + (1−α)·prev` with α=0.1. Expose on health endpoint.
+
+New endpoints summary:
+
+| Endpoint | Used by |
+|---|---|
+| `GET /api/v1/system/health` | Dashboard service health table |
+| `GET /api/v1/system/tasks` | Dashboard system tasks panel |
+| `GET /api/v1/system/request-chart` | Dashboard 24-bar chart |
+| `GET /api/v1/system/metrics-chart` | Observability req rate + p95 chart |
+| `GET /api/v1/system/status-breakdown` | Observability status code widget |
+
+#### Sequencing
+
+```
+BE-A (latency histogram, blob walker, cleanup, token fields)
+  └── already done or in progress
+BE-G (extended metrics — gauge, ring buffers, status counters, task API)
+  └── parallel with BE-D/BE-E/BE-F (no shared code)
+        └── F2 (Dashboard + Observability UI)   ← needs BE-A + BE-G
+```
+
+F2 can be stubbed with hardcoded values and progressively replaced as BE-A and BE-G
+land. The chart rendering uses inline SVG or CSS bars — no external charting library.
