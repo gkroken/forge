@@ -30,6 +30,7 @@ type formatStat struct {
 	Count  int
 	Pct    int
 	Color  string
+	SizeGB float64 // from blob walker; 0 until first walk completes
 }
 
 type reqBar struct {
@@ -38,7 +39,8 @@ type reqBar struct {
 }
 
 type activityRow struct {
-	DotClass string
+	Icon     string // Material Symbols icon name
+	DotClass string // kept for templates that still use it
 	Text     string
 	Who      string
 	When     string
@@ -108,6 +110,9 @@ func (s *Server) uiDashboard(w http.ResponseWriter, r *http.Request) {
 		"oci":   "#5566b5",
 	}
 
+	bsizes := s.GetBlobSizes()
+	storedGB := float64(bsizes.TotalBytes) / (1 << 30)
+
 	total := len(repos)
 	var fmtStats []formatStat
 	for _, f := range []string{"maven", "npm", "helm", "cran", "oci"} {
@@ -115,23 +120,31 @@ func (s *Server) uiDashboard(w http.ResponseWriter, r *http.Request) {
 		if n == 0 {
 			continue
 		}
+		sizeBytes := bsizes.ByFormat[f]
+		sizeGB := float64(sizeBytes) / (1 << 30)
 		pct := 0
-		if total > 0 {
+		if bsizes.TotalBytes > 0 {
+			pct = int(float64(sizeBytes) / float64(bsizes.TotalBytes) * 100)
+		} else if total > 0 {
 			pct = n * 100 / total
 		}
 		color, ok := fmtColors[f]
 		if !ok {
 			color = "var(--accent)"
 		}
-		fmtStats = append(fmtStats, formatStat{Format: f, Count: n, Pct: pct, Color: color})
+		fmtStats = append(fmtStats, formatStat{Format: f, Count: n, Pct: pct, Color: color, SizeGB: sizeGB})
 	}
 	for f, n := range fmtCounts {
 		if _, known := fmtColors[f]; !known {
+			sizeBytes := bsizes.ByFormat[f]
+			sizeGB := float64(sizeBytes) / (1 << 30)
 			pct := 0
-			if total > 0 {
+			if bsizes.TotalBytes > 0 {
+				pct = int(float64(sizeBytes) / float64(bsizes.TotalBytes) * 100)
+			} else if total > 0 {
 				pct = n * 100 / total
 			}
-			fmtStats = append(fmtStats, formatStat{Format: f, Count: n, Pct: pct, Color: "var(--text-muted)"})
+			fmtStats = append(fmtStats, formatStat{Format: f, Count: n, Pct: pct, Color: "var(--text-muted)", SizeGB: sizeGB})
 		}
 	}
 
@@ -155,6 +168,10 @@ func (s *Server) uiDashboard(w http.ResponseWriter, r *http.Request) {
 			"POST": "Published", "PUT": "Uploaded",
 			"DELETE": "Deleted", "PATCH": "Updated",
 		}
+		methodIcon := map[string]string{
+			"POST": "cloud_upload", "PUT": "upload",
+			"DELETE": "delete", "PATCH": "edit",
+		}
 		for _, e := range s.AuditLog.Recent(5) {
 			dot := "dot-ok"
 			if e.Status >= 400 {
@@ -168,7 +185,15 @@ func (s *Server) uiDashboard(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				verb = e.Method
 			}
+			icon := methodIcon[e.Method]
+			if icon == "" {
+				icon = "info"
+			}
+			if e.Status >= 400 {
+				icon = "warning"
+			}
 			recentActivity = append(recentActivity, activityRow{
+				Icon:     icon,
 				DotClass: dot,
 				Text:     verb + " " + path,
 				Who:      e.Actor,
@@ -176,9 +201,6 @@ func (s *Server) uiDashboard(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-
-	bsizes := s.GetBlobSizes()
-	storedGB := float64(bsizes.TotalBytes) / (1 << 30)
 
 	var latP50, latP95 int64
 	var rps float64

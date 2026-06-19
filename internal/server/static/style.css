@@ -907,6 +907,8 @@ td a:hover { text-decoration: underline; }
 /* ── activity + task rows ────────────────────────────────────────────────── */
 .activity-rows { display: flex; flex-direction: column; gap: 11px; }
 .activity-row  { display: flex; align-items: center; gap: 10px; font-size: 12.5px; }
+.activity-icon { font-size: 17px; color: var(--accent); flex-shrink: 0; }
+.activity-icon.dot-err { color: var(--dot-err); }
 .activity-who  { font-family: 'IBM Plex Mono', ui-monospace, monospace; color: var(--text-light); font-size: 11px; }
 .activity-time { margin-left: auto; color: var(--text-light); font-size: 11.5px; white-space: nowrap; }
 .task-rows     { display: flex; flex-direction: column; gap: 12px; }

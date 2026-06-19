@@ -59,7 +59,7 @@
         <div class="health-row">
           <span class="status-dot dot-ok"></span>
           <span class="health-label">REST API</span>
-          <span class="health-stat text-ok">ok</span>
+          <span class="health-stat text-ok">ok{{if .LatencyP50Ms}} &middot; {{.LatencyP50Ms}}ms p50{{end}}</span>
         </div>
         {{range .ReposByFormat}}
         <div class="health-row">
@@ -99,13 +99,13 @@
 
     <!-- storage by format -->
     <div class="panel-card">
-      <div class="panel-title">Repositories by format</div>
+      <div class="panel-title">Storage by format</div>
       <div class="store-rows">
         {{range .ReposByFormat}}
         <div class="store-row">
           <div class="store-row-hdr">
             <span class="store-name">{{.Format}}</span>
-            <span class="store-size">{{.Count}} repo{{if ne .Count 1}}s{{end}}</span>
+            <span class="store-size">{{if .SizeGB}}{{printf "%.2f" .SizeGB}} GB{{else}}{{.Count}} repo{{if ne .Count 1}}s{{end}}{{end}}</span>
           </div>
           <div class="store-track">
             <div class="store-fill" style="width:{{.Pct}}%;background:{{.Color}};"></div>
@@ -127,7 +127,7 @@
       <div class="activity-rows">
         {{range .RecentActivity}}
         <div class="activity-row">
-          <span class="status-dot {{.DotClass}}"></span>
+          <span class="ms activity-icon {{.DotClass}}">{{.Icon}}</span>
           <span style="color:var(--text);">{{.Text}}</span>
           <span class="activity-who">{{.Who}}</span>
           <span class="activity-time">{{.When}}</span>
