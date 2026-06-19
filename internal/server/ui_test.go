@@ -142,8 +142,9 @@ func TestUIRepo_OK(t *testing.T) {
 	}
 	body := rw.Body.String()
 	assertContains(t, body, "npm-hosted")
-	assertContains(t, body, "lodash")
-	assertContains(t, body, "4.17.21") // latest version
+	// 3-panel shell: package list is JS-loaded, not server-rendered
+	assertContains(t, body, "browse-shell")
+	assertContains(t, body, "browse-left")
 }
 
 func TestUIRepo_NotFound(t *testing.T) {
@@ -158,39 +159,19 @@ func TestUIRepo_HasFilterInput(t *testing.T) {
 	h := newUIServer(t).Routes()
 	rw := uiGet(t, h, "/ui/repos/npm-hosted")
 	body := rw.Body.String()
-	// htmx filter input must be present
-	assertContains(t, body, `hx-get="/ui/repos/npm-hosted"`)
-	assertContains(t, body, `hx-target="#components-section"`)
-}
-
-func TestUIRepo_HtmxPartial(t *testing.T) {
-	h := newUIServer(t).Routes()
-	rw := uiGet(t, h, "/ui/repos/npm-hosted?q=lodash", "HX-Request", "true")
-	if rw.Code != http.StatusOK {
-		t.Fatalf("status %d", rw.Code)
-	}
-	body := rw.Body.String()
-	// Partial must NOT have the base layout
-	assertNotContains(t, body, "<!DOCTYPE html>")
-	assertNotContains(t, body, "<nav")
-	// But must contain the component
-	assertContains(t, body, "lodash")
-}
-
-func TestUIRepo_HtmxFilter_NoMatch(t *testing.T) {
-	h := newUIServer(t).Routes()
-	rw := uiGet(t, h, "/ui/repos/npm-hosted?q=zzznomatch", "HX-Request", "true")
-	body := rw.Body.String()
-	assertContains(t, body, "zzznomatch") // shown in empty-state message
-	assertNotContains(t, body, "lodash")
+	// 3-panel: filter is a client-side search input driven by JS
+	assertContains(t, body, `id="pkg-search"`)
+	assertContains(t, body, `filterPkgs`)
 }
 
 func TestUIRepo_EmptyRepo(t *testing.T) {
 	h := newUIServer(t).Routes()
-	rw := uiGet(t, h, "/ui/repos/helm-hosted") // no seeded data for helm beyond one chart
-	body := rw.Body.String()
-	// mychart IS seeded
-	assertContains(t, body, "mychart")
+	rw := uiGet(t, h, "/ui/repos/helm-hosted")
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status %d", rw.Code)
+	}
+	// 3-panel shell renders regardless of content; packages are JS-loaded
+	assertContains(t, rw.Body.String(), "browse-shell")
 }
 
 func TestUIRepo_Pagination_NoMore(t *testing.T) {
@@ -537,10 +518,14 @@ func TestUIComponent_NotFoundComponent(t *testing.T) {
 }
 
 func TestUIRepo_ComponentLinksPresent(t *testing.T) {
+	// Component links are built dynamically by JS from the /api/v1 components endpoint.
+	// Verify the API endpoint serves the component list so the JS has data to render.
 	h := newUIServer(t).Routes()
-	rw := uiGet(t, h, "/ui/repos/npm-hosted")
-	body := rw.Body.String()
-	assertContains(t, body, `href="/ui/repos/npm-hosted/lodash"`)
+	rw := uiGet(t, h, "/api/v1/repos/npm-hosted/components")
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status %d", rw.Code)
+	}
+	assertContains(t, rw.Body.String(), "lodash")
 }
 
 // ── U3: cache-busting, dark mode, nav search, breadcrumb ─────────────────────
@@ -756,12 +741,12 @@ func TestUIUpload_NPM_ClickThrough(t *testing.T) {
 	}
 	assertContains(t, rw.Body.String(), "Upload successful")
 
-	// Step 2: browse the repo — the component must appear.
+	// Step 2: repo browse page renders the 3-panel shell (packages are JS-loaded).
 	rw2 := uiGet(t, h, "/ui/repos/npm-hosted")
 	if rw2.Code != http.StatusOK {
 		t.Fatalf("browse: status %d", rw2.Code)
 	}
-	assertContains(t, rw2.Body.String(), "my-pkg")
+	assertContains(t, rw2.Body.String(), "browse-shell")
 
 	// Step 3: component detail page must resolve and show the version.
 	rw3 := uiGet(t, h, "/ui/repos/npm-hosted/my-pkg")

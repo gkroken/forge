@@ -206,7 +206,141 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, searchResponse{Query: q, Results: results})
 }
 
+// uiBrowseVersions serves GET /ui/browse/{repo}/versions?pkg=
+// Returns a JSON list of versions for the given package using Inspect or BrowseRepo.
+func (s *Server) uiBrowseVersions(w http.ResponseWriter, r *http.Request, repoName string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	rp, ok := s.Repos.Get(repoName)
+	if !ok {
+		jsonError(w, "repository not found: "+repoName, http.StatusNotFound)
+		return
+	}
+	pkg := r.URL.Query().Get("pkg")
+	if pkg == "" {
+		jsonError(w, "pkg is required", http.StatusBadRequest)
+		return
+	}
+	h, ok := s.Handlers.For(rp.Format)
+	if !ok {
+		jsonError(w, "no handler for format", http.StatusNotImplemented)
+		return
+	}
+
+	c := s.browseCtx(rp)
+	resp := browseVersionsResponse{Name: pkg, Pkg: pkg}
+
+	if insp, ok := h.(format.Inspectable); ok {
+		detail, found := insp.Inspect(c, publicBase(r), pkg)
+		if !found {
+			jsonError(w, "component not found", http.StatusNotFound)
+			return
+		}
+		for _, v := range detail.Versions {
+			resp.Versions = append(resp.Versions, browseVersionRow{
+				Version:     v.Version,
+				PublishedAt: v.PublishedAt,
+			})
+		}
+	} else if b, ok := h.(format.Browsable); ok {
+		entries, err := b.BrowseRepo(c)
+		if err != nil {
+			jsonError(w, "browse failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		for _, e := range entries {
+			if e.Name == pkg {
+				for _, v := range e.Versions {
+					resp.Versions = append(resp.Versions, browseVersionRow{Version: v})
+				}
+				break
+			}
+		}
+	}
+	if resp.Versions == nil {
+		resp.Versions = []browseVersionRow{}
+	}
+	writeJSON(w, resp)
+}
+
+// uiBrowseDetail serves GET /ui/browse/{repo}/detail?pkg=&ver=
+// Returns a JSON object with asset metadata for the given package version.
+func (s *Server) uiBrowseDetail(w http.ResponseWriter, r *http.Request, repoName string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	rp, ok := s.Repos.Get(repoName)
+	if !ok {
+		jsonError(w, "repository not found: "+repoName, http.StatusNotFound)
+		return
+	}
+	pkg := r.URL.Query().Get("pkg")
+	ver := r.URL.Query().Get("ver")
+	if pkg == "" || ver == "" {
+		jsonError(w, "pkg and ver are required", http.StatusBadRequest)
+		return
+	}
+	h, ok := s.Handlers.For(rp.Format)
+	if !ok {
+		jsonError(w, "no handler for format", http.StatusNotImplemented)
+		return
+	}
+	insp, ok := h.(format.Inspectable)
+	if !ok {
+		jsonError(w, "format does not support inspection", http.StatusNotImplemented)
+		return
+	}
+
+	c := s.browseCtx(rp)
+	detail, found := insp.Inspect(c, publicBase(r), pkg)
+	if !found {
+		jsonError(w, "component not found", http.StatusNotFound)
+		return
+	}
+
+	resp := browseDetailResponse{
+		Name:    pkg,
+		Version: ver,
+		Format:  rp.Format,
+		Repo:    repoName,
+	}
+	for _, v := range detail.Versions {
+		if v.Version == ver {
+			resp.PublishedAt = v.PublishedAt
+			resp.DownloadURL = v.DownloadURL
+			break
+		}
+	}
+	if resp.DownloadURL == "" {
+		resp.DownloadURL = publicBase(r) + "/repository/" + repoName + "/" + pkg
+	}
+	writeJSON(w, resp)
+}
+
 // ── types ─────────────────────────────────────────────────────────────────────
+
+type browseVersionsResponse struct {
+	Name     string             `json:"name"`
+	Pkg      string             `json:"pkg"`
+	Versions []browseVersionRow `json:"versions"`
+}
+
+type browseVersionRow struct {
+	Version     string    `json:"version"`
+	PublishedAt time.Time `json:"published_at,omitempty"`
+}
+
+type browseDetailResponse struct {
+	Name        string    `json:"name"`
+	Version     string    `json:"version"`
+	Format      string    `json:"format"`
+	Repo        string    `json:"repo"`
+	PublishedAt time.Time `json:"published_at,omitempty"`
+	DownloadURL string    `json:"download_url"`
+}
 
 // treeNode is one entry in the browse-tree API response.
 type treeNode struct {

@@ -960,6 +960,92 @@ td a:hover { text-decoration: underline; }
 .pill-info   { background: var(--accent-subtle);  color: var(--accent); }
 .pill-err    { background: var(--danger-bg);       color: var(--danger); }
 
+/* ── browse 3-panel ─────────────────────────────────────────────────────────── */
+.browse-shell {
+  position: fixed; top: 56px; left: 0; right: 0; bottom: 0;
+  display: flex; overflow: hidden; background: var(--bg-alt);
+}
+.browse-left {
+  width: 288px; flex-shrink: 0;
+  background: var(--bg); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.browse-center {
+  flex: 1; min-width: 0; overflow-y: auto;
+  background: var(--bg-alt); border-right: 1px solid var(--border);
+}
+.browse-right {
+  width: 316px; flex-shrink: 0; overflow-y: auto; background: var(--bg);
+}
+
+/* pane header row */
+.browse-pane-hdr {
+  display: flex; align-items: center; gap: 7px;
+  padding: 10px 12px; border-bottom: 1px solid var(--border);
+  flex-shrink: 0; font-size: 13px;
+}
+.browse-repo-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* left pane search + list */
+.browse-search-wrap {
+  padding: 7px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.browse-search-wrap input {
+  width: 100%; box-sizing: border-box; padding: 5px 9px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg-alt); color: var(--text); font-size: 12.5px;
+}
+.browse-search-wrap input:focus { outline: none; border-color: var(--accent); }
+
+.browse-item-list { flex: 1; overflow-y: auto; }
+
+.browse-pkg {
+  display: flex; align-items: center; gap: 7px;
+  padding: 8px 13px; cursor: pointer; font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+.browse-pkg:hover  { background: var(--bg-hover); }
+.browse-pkg.active { background: var(--accent-subtle); }
+.browse-pkg-icon   { font-size: 16px; color: var(--text-muted); flex-shrink: 0; }
+.browse-pkg-name   { flex: 1; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browse-pkg-ver    { font-size: 11px; font-family: 'IBM Plex Mono', monospace; color: var(--text-muted); flex-shrink: 0; }
+
+/* center pane version table */
+.browse-ver-title {
+  padding: 12px 16px; font-weight: 700; font-size: 13.5px;
+  border-bottom: 1px solid var(--border); background: var(--bg);
+  position: sticky; top: 0;
+}
+.browse-ver-tbl { width: 100%; border-collapse: collapse; }
+.browse-ver-tbl thead th {
+  padding: 7px 14px; font-size: 11.5px; font-weight: 600;
+  color: var(--text-muted); text-align: left;
+  border-bottom: 1px solid var(--border); background: var(--bg-alt);
+}
+.browse-ver-row { cursor: pointer; border-bottom: 1px solid var(--border); }
+.browse-ver-row td { padding: 9px 14px; font-size: 13px; }
+.browse-ver-row:hover  { background: var(--bg-hover); }
+.browse-ver-row.active { background: var(--accent-subtle); }
+
+/* right pane detail */
+.browse-detail      { padding: 16px; }
+.browse-detail-ver  { font-size: 15px; font-weight: 700; font-family: 'IBM Plex Mono', monospace; margin-bottom: 3px; word-break: break-all; }
+.browse-detail-pkg  { font-size: 12px; color: var(--text-muted); margin-bottom: 14px; }
+.browse-detail-actions { display: flex; gap: 7px; margin-bottom: 16px; flex-wrap: wrap; }
+
+.browse-meta    { display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; margin: 0; font-size: 12px; }
+.browse-meta dt { color: var(--text-muted); font-weight: 600; white-space: nowrap; }
+.browse-meta dd { margin: 0; word-break: break-all; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; }
+
+/* shared states */
+.browse-placeholder {
+  height: 100%; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 10px; color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px;
+}
+.browse-msg     { padding: 20px; text-align: center; color: var(--text-muted); font-size: 13px; }
+.browse-err     { color: var(--danger); }
+
 /* ── repo config layout ──────────────────────────────────────────────────── */
 .repo-config-layout { display: grid; grid-template-columns: 1fr 272px; gap: 20px; align-items: start; }
 .repo-config-rail   { display: flex; flex-direction: column; gap: 14px; }

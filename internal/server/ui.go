@@ -232,6 +232,12 @@ func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(p, "/browse/") && strings.HasSuffix(p, "/tree"):
 		repoName := strings.TrimSuffix(strings.TrimPrefix(p, "/browse/"), "/tree")
 		s.uiBrowseTree(w, r, repoName)
+	case strings.HasPrefix(p, "/browse/") && strings.HasSuffix(p, "/versions"):
+		repoName := strings.TrimSuffix(strings.TrimPrefix(p, "/browse/"), "/versions")
+		s.uiBrowseVersions(w, r, repoName)
+	case strings.HasPrefix(p, "/browse/") && strings.HasSuffix(p, "/detail"):
+		repoName := strings.TrimSuffix(strings.TrimPrefix(p, "/browse/"), "/detail")
+		s.uiBrowseDetail(w, r, repoName)
 	case p == "/admin" || strings.HasPrefix(p, "/admin/"):
 		s.handleUIAdmin(w, r, strings.TrimPrefix(p, "/admin"))
 	default:
@@ -298,56 +304,7 @@ func (s *Server) uiRepo(w http.ResponseWriter, r *http.Request, name string) {
 		http.NotFound(w, r)
 		return
 	}
-
-	q := r.URL.Query().Get("q")
-	page := clampedInt(r, "page", 1, 1, 1<<20)
-	const limit = 50
-
-	var components []componentItem
-	var total int
-
-	if h, ok := s.Handlers.For(rp.Format); ok {
-		if b, ok := h.(format.Browsable); ok {
-			if entries, err := b.BrowseRepo(s.browseCtx(rp)); err == nil {
-				if q != "" {
-					ql := strings.ToLower(q)
-					kept := entries[:0]
-					for _, e := range entries {
-						if strings.Contains(strings.ToLower(e.Name), ql) {
-							kept = append(kept, e)
-						}
-					}
-					entries = kept
-				}
-				total = len(entries)
-				start := (page - 1) * limit
-				if start < total {
-					end := start + limit
-					if end > total {
-						end = total
-					}
-					for _, e := range entries[start:end] {
-						components = append(components, componentItem{
-							Name: e.Name, Versions: e.Versions, UpdatedAt: e.UpdatedAt,
-						})
-					}
-				}
-			}
-		}
-	}
-
-	data := repoPage{
-		Title: rp.Name, Repo: rp,
-		Components: components, Total: total,
-		Page: page, Limit: limit,
-		HasMore: page*limit < total,
-		Query:   q,
-	}
-	if r.Header.Get("HX-Request") == "true" {
-		render(w, tmplRepo, "components-section", data)
-		return
-	}
-	render(w, tmplRepo, "base.html", data)
+	render(w, tmplRepo, "base.html", repoPage{Title: rp.Name, Repo: rp})
 }
 
 func (s *Server) uiComponent(w http.ResponseWriter, r *http.Request, repoName, component string) {
