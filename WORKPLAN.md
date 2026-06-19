@@ -667,6 +667,40 @@ All changes in `internal/server/templates/repo_config.html` and `repo_config.js`
 - "Rebuild index": confirm modal → `POST /api/v1/repos/{name}/reindex`; shows queued
   confirmation.
 
+**Tab decisions (confirmed):**
+
+*Content tab* — Package + version management view for this repo.
+- Searchable list of all packages and versions stored locally.
+- Per-version row actions: Delete version, Expire cache entry (proxy repos only),
+  Copy download URL.
+- This is the admin surface for "something is wrong with this version" — distinct
+  from Browse (which is a read/download UI, not a management UI).
+- Data: same `GET /api/v1/repos/{name}/components` + version detail endpoints used by
+  Browse; delete via `DELETE /repository/{name}/{path}` (already exists for npm unpublish
+  pattern; extend to all formats).
+- Expire cache: `DELETE /api/v1/repos/{name}/cache/{pkg}/{ver}` — removes blob store
+  entries for that version so the next request re-fetches from upstream.
+
+*Access tab* — Principal → role bindings for this repo.
+- Design: a table of `{principal, principal_type, role}` rows plus the anonymous-read
+  toggle. Principal types: `token`, `user`, `group` (group is SSO-only, rendered as
+  disabled until SSO is wired).
+- This model is SSO-safe by design: adding OIDC/LDAP support later only introduces
+  new `principal_type` values; the binding table shape does not change.
+- Initial implementation (pre-BE-C): show tokens with access to this repo (filtered
+  from token list by repo scope); anonymous-read toggle. No user/group rows yet.
+- Post-BE-C: add user rows with role dropdowns; group rows appear when SSO is configured.
+- Backend: `GET /api/v1/repos/{name}/access` → `[{principal, principal_type, role}]`;
+  `PUT /api/v1/repos/{name}/access` to update a binding.
+
+*Activity tab* — Audit log scoped to this repo.
+- Same feed as the global Observability audit log, filtered to events where
+  `target` contains this repo's name.
+- Columns: time, actor (initials avatar), action verb, target path, OK/DENY badge.
+- Fetch: `GET /api/v1/audit?repo={name}&limit=50` — add `?repo=` filter param to
+  the existing audit log endpoint (or a separate scoped endpoint if simpler).
+- No new backend storage — reads the existing audit log.
+
 **Dependencies and sequencing:**
 
 ```
@@ -674,11 +708,25 @@ BE-D (model extension)
   └── BE-E (proxy wiring)      ← can parallel with BE-F
   └── BE-F (cache metrics)     ← can parallel with BE-E
         └── F4 (UI)            ← needs all three
+              Content tab: needs delete + expire-cache endpoints (extend existing)
+              Access tab:  stub now; full view after BE-C
+              Activity tab: needs audit log ?repo= filter param
 ```
 
 BE-D and BE-E are low-risk backend changes (additive to the model, backward-compatible
 JSON). BE-F is slightly more involved (new in-memory ring buffer + endpoint). F4 is the
 UI layer that exposes everything. Build in that order; F4 last.
+
+**Browse page — scope clarification (confirmed):**
+
+Browse shows only locally stored artifacts — it reads `blob.Store` (Maven tree) and
+`meta.Store` (npm/Helm/CRAN flat list), both of which contain only what has been
+uploaded to hosted repos or fetched and cached from proxy repos. Nothing from upstream
+that hasn't been pulled appears. This is the correct behavior.
+
+UX improvement needed in F4: proxy repo nodes in Browse should display a subtitle
+"Showing locally cached artifacts" so it's clear an empty repo is not broken — it
+just hasn't cached anything yet.
 
 ---
 
