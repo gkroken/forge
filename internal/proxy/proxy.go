@@ -160,6 +160,7 @@ const (
 // breaker is a per-upstream-host circuit breaker.
 type breaker struct {
 	mu          sync.Mutex
+	host        string // "scheme://host" — used to update globalHealth
 	state       cbState
 	failures    int
 	lastFailure time.Time
@@ -191,6 +192,9 @@ func (b *breaker) success() {
 	defer b.mu.Unlock()
 	b.failures = 0
 	b.state = cbClosed
+	if b.host != "" {
+		globalHealth.Store(b.host, "ok")
+	}
 }
 
 // failure increments the failure count; opens the circuit when the threshold
@@ -202,6 +206,9 @@ func (b *breaker) failure(now time.Time) {
 	b.lastFailure = now
 	if b.state == cbHalfOpen || b.failures >= cbFailureThreshold {
 		b.state = cbOpen
+		if b.host != "" {
+			globalHealth.Store(b.host, "down")
+		}
 	}
 }
 
@@ -233,7 +240,7 @@ func (f *Fetcher) getBreaker(host string) *breaker {
 	defer f.mu.Unlock()
 	b, ok := f.breakers[host]
 	if !ok {
-		b = &breaker{}
+		b = &breaker{host: host}
 		f.breakers[host] = b
 	}
 	return b
@@ -246,6 +253,22 @@ func upstreamHost(rawURL string) string {
 		return rawURL
 	}
 	return u.Scheme + "://" + u.Host
+}
+
+// ── Health registry ──────────────────────────────────────────────────────────
+//
+// globalHealth persists circuit-breaker state across per-request Fetchers.
+// Keys are "scheme://host"; values are one of "ok", "degraded", "down".
+// Written by breaker state transitions; read by Server for the health dot.
+var globalHealth sync.Map
+
+// HealthOf returns the most recently observed health state for the upstream at
+// rawURL. Returns "ok" if no CB trip has been recorded for this host.
+func HealthOf(rawURL string) string {
+	if v, ok := globalHealth.Load(upstreamHost(rawURL)); ok {
+		return v.(string)
+	}
+	return "ok"
 }
 
 // Fetch returns the content for blobKey, fetching from upURL when needed.
