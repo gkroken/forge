@@ -175,7 +175,8 @@ func main() {
 	}
 
 	cleanupPolicies := cleanup.NewPolicyManager(metaStore)
-	cleanup.NewScheduler(mgr, cleanupPolicies, blobStore, metaStore).Start(workerCtx)
+	cleanupScheduler := cleanup.NewScheduler(mgr, cleanupPolicies, blobStore, metaStore)
+	cleanupScheduler.Start(workerCtx)
 
 	auditLog := obs.NewAuditLog(500)
 
@@ -183,6 +184,7 @@ func main() {
 		WithMetrics(metrics, promReg).
 		WithQueue(workerCtx, q).
 		WithCleanup(cleanupPolicies).
+		WithScheduler(cleanupScheduler).
 		WithAuditLog(auditLog)
 
 	if oidcCfg, err := oidc.FromEnv(); err != nil {

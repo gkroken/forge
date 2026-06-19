@@ -6,19 +6,39 @@
     <a href="/ui/admin/cleanup-policies/new" class="btn btn-primary" style="height:34px;padding:0 14px;font-size:12.5px;display:flex;align-items:center;gap:6px;"><span class="ms" style="font-size:17px;">add</span>New policy</a>
   </div>
 
-  <!-- stats -->
-  <div class="stat-grid-3">
-    <div class="stat-card">
-      <div class="stat-label">Policies configured</div>
-      <div class="stat-value">{{.PolicyCount}}</div>
+  <!-- KPI row -->
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-icon-row"><span class="ms">inventory</span><span class="kpi-label">Policies</span></div>
+      <div class="kpi-value">{{.PolicyCount}}</div>
+      <div class="kpi-trend">
+        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
+        <span class="kpi-trend-sub">named policies configured</span>
+      </div>
     </div>
-    <div class="stat-card">
-      <div class="stat-label">Total policies</div>
-      <div class="stat-value" style="{{if .Policies}}color:var(--dot-ok);{{end}}">{{len .Policies}}</div>
+    <div class="kpi-card">
+      <div class="kpi-icon-row"><span class="ms">savings</span><span class="kpi-label">Reclaimable</span></div>
+      <div class="kpi-value" style="font-size:22px;">{{.ReclaimableGB}}</div>
+      <div class="kpi-trend">
+        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
+        <span class="kpi-trend-sub">dry-run across all policies</span>
+      </div>
     </div>
-    <div class="stat-card">
-      <div class="stat-label">Next scheduled</div>
-      <div class="stat-value">—</div>
+    <div class="kpi-card">
+      <div class="kpi-icon-row"><span class="ms">recycling</span><span class="kpi-label">Freed · 30d</span></div>
+      <div class="kpi-value" style="font-size:22px;">{{.FreedLast30dGB}}</div>
+      <div class="kpi-trend">
+        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
+        <span class="kpi-trend-sub">last 30 days, non-dry-run</span>
+      </div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-icon-row"><span class="ms">schedule</span><span class="kpi-label">Next run</span></div>
+      <div class="kpi-value" style="font-size:22px;">—</div>
+      <div class="kpi-trend">
+        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
+        <span class="kpi-trend-sub">next scheduled cleanup</span>
+      </div>
     </div>
   </div>
 
@@ -31,19 +51,24 @@
         <thead>
           <tr>
             <th>Name</th>
-            <th>Description</th>
             <th>Rules</th>
+            <th>Applied to</th>
             <th>Schedule</th>
+            <th>Status</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
           {{range .Policies}}
           <tr>
-            <td class="fw-600">{{.Name}}</td>
-            <td style="color:var(--text-muted);">{{.Description}}</td>
+            <td>
+              <div class="fw-600">{{.Name}}</div>
+              {{if .Description}}<div style="font-size:11.5px;color:var(--text-muted);">{{.Description}}</div>{{end}}
+            </td>
             <td style="font-size:12.5px;color:var(--text-muted);">{{.Criteria}}</td>
+            <td style="font-size:12.5px;color:var(--text-muted);">{{.AppliedTo}}</td>
             <td class="col-mono">{{.Interval}}</td>
+            <td><span class="status-pill {{.StatusClass}}">{{.Status}}</span></td>
             <td class="col-actions">
               <a href="/ui/admin/cleanup-policies/{{.Name}}/edit" class="btn btn-sm">Edit</a>
             </td>
@@ -68,7 +93,7 @@
     <div class="sched-grid-2">
       {{range .SchedTasks}}
       <div class="sched-card">
-        <div class="sched-icon">{{.Icon}}</div>
+        <span class="ms sched-icon-ms" style="color:{{.Color}};">{{.Icon}}</span>
         <div class="sched-info">
           <span class="sched-name">{{.Name}}</span>
           <span class="sched-cron">{{.Cron}}</span>

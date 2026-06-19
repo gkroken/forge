@@ -13,11 +13,13 @@ import (
 // ── page types ────────────────────────────────────────────────────────────────
 
 type cleanupPoliciesPage struct {
-	Title       string
-	ActiveNav   string
-	PolicyCount int
-	Policies    []cleanupPolicyRow
-	SchedTasks  []schedTask
+	Title          string
+	ActiveNav      string
+	PolicyCount    int
+	ReclaimableGB  string // formatted from cleanup.Reclaimable; "—" when unknown
+	FreedLast30dGB string // formatted from cleanup.FreedLast30d
+	Policies       []cleanupPolicyRow
+	SchedTasks     []schedTask
 }
 
 type cleanupPolicyRow struct {
@@ -25,10 +27,13 @@ type cleanupPolicyRow struct {
 	Description string
 	Criteria    string
 	Interval    string
+	AppliedTo   string // comma-separated repo names using this policy
+	Status      string // "Active" | "Manual"
+	StatusClass string // CSS class for the status pill
 }
 
 type schedTask struct {
-	Icon    string
+	Icon    string // Material Symbols icon name
 	Name    string
 	Cron    string
 	Status  string
@@ -43,33 +48,80 @@ func (s *Server) uiCleanupPolicies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Build a map of policy name → repo names that use it.
+	policyRepos := make(map[string][]string)
+	for _, rp := range s.Repos.All() {
+		if rp.CleanupPolicyName != "" {
+			policyRepos[rp.CleanupPolicyName] = append(policyRepos[rp.CleanupPolicyName], rp.Name)
+		}
+	}
+
 	var rows []cleanupPolicyRow
 	if s.Cleanup != nil {
 		policies, err := s.Cleanup.List()
 		if err == nil {
 			for _, p := range policies {
+				status, cls := "Manual", "pill-muted"
+				if p.Interval > 0 {
+					status, cls = "Active", "pill-ok"
+				}
+				applied := strings.Join(policyRepos[p.Name], ", ")
+				if applied == "" {
+					applied = "—"
+				}
 				rows = append(rows, cleanupPolicyRow{
 					Name:        p.Name,
 					Description: p.Description,
 					Criteria:    summarizeNamedPolicy(p),
 					Interval:    namedPolicyInterval(p),
+					AppliedTo:   applied,
+					Status:      status,
+					StatusClass: cls,
 				})
 			}
 		}
 	}
 
+	// KPI: reclaimable and freed in last 30 days.
+	reclaimableGB := "—"
+	freedLast30dGB := "—"
+	if s.Cleanup != nil {
+		if rb := cleanup.Reclaimable(s.Cleanup, s.Repos, s.Blob, s.Meta); rb >= 0 {
+			reclaimableGB = fmt.Sprintf("%.2f GB", float64(rb)/(1<<30))
+		}
+		if fb := cleanup.FreedLast30d(s.Meta, s.Repos); fb >= 0 {
+			freedLast30dGB = fmt.Sprintf("%.2f GB", float64(fb)/(1<<30))
+		}
+	}
+
+	// Scheduled tasks — derive last-run of "Apply cleanup policies" from Scheduler.
+	lastCleanupRun := "—"
+	if s.Scheduler != nil {
+		runs := s.Scheduler.LastRuns()
+		var latest time.Time
+		for _, t := range runs {
+			if t.After(latest) {
+				latest = t
+			}
+		}
+		if !latest.IsZero() {
+			lastCleanupRun = latest.UTC().Format("2006-01-02 15:04")
+		}
+	}
 	tasks := []schedTask{
-		{Icon: "GC", Name: "Blob store GC", Cron: "0 2 * * *", Status: "Scheduled", Color: "var(--accent)", LastRun: "—"},
-		{Icon: "IX", Name: "Rebuild search index", Cron: "0 */6 * * *", Status: "Scheduled", Color: "var(--accent)", LastRun: "—"},
-		{Icon: "CL", Name: "Apply cleanup policies", Cron: "30 2 * * *", Status: "Scheduled", Color: "var(--accent)", LastRun: "—"},
+		{Icon: "delete_sweep", Name: "Blob store GC", Cron: "0 2 * * *", Status: "Scheduled", Color: "var(--accent)", LastRun: "—"},
+		{Icon: "manage_search", Name: "Rebuild search index", Cron: "0 */6 * * *", Status: "Scheduled", Color: "var(--accent)", LastRun: "—"},
+		{Icon: "auto_delete", Name: "Apply cleanup policies", Cron: "30 2 * * *", Status: "Scheduled", Color: "var(--accent)", LastRun: lastCleanupRun},
 	}
 
 	render(w, tmplCleanupPolicies, "admin_shell.html", cleanupPoliciesPage{
-		Title:       "Cleanup",
-		ActiveNav:   "cleanup",
-		PolicyCount: len(rows),
-		Policies:    rows,
-		SchedTasks:  tasks,
+		Title:          "Cleanup",
+		ActiveNav:      "cleanup",
+		PolicyCount:    len(rows),
+		ReclaimableGB:  reclaimableGB,
+		FreedLast30dGB: freedLast30dGB,
+		Policies:       rows,
+		SchedTasks:     tasks,
 	})
 }
 

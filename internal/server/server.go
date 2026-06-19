@@ -66,7 +66,8 @@ type Server struct {
 	OIDC      oidcProvider         // nil = OIDC not configured; *oidc.Provider satisfies this
 	Queue     queue.Queue          // nil = no async index regen (eval / tests)
 	Metrics   *obs.Metrics         // nil = no instrumentation (tests)
-	Cleanup   *cleanup.PolicyManager // nil = cleanup-policies API returns 503
+	Cleanup   *cleanup.PolicyManager  // nil = cleanup-policies API returns 503
+	Scheduler *cleanup.Scheduler     // nil = no scheduled runs (eval / tests)
 	AuditLog  *obs.AuditLog          // nil = no in-memory audit log
 	MaxUpload int64                // per-request body limit; 0 = use defaultMaxUpload
 	reg       prometheus.Gatherer
@@ -115,6 +116,11 @@ func (s *Server) WithQueue(ctx context.Context, q queue.Queue) *Server {
 
 func (s *Server) WithCleanup(pm *cleanup.PolicyManager) *Server {
 	s.Cleanup = pm
+	return s
+}
+
+func (s *Server) WithScheduler(sc *cleanup.Scheduler) *Server {
+	s.Scheduler = sc
 	return s
 }
 
