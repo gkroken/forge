@@ -63,6 +63,10 @@ type tokenRow struct {
 	GrantSummary string
 	CreatedStr   string
 	ExpiresStr   string
+	Owner        string // from auth.Token.Owner (empty if not set)
+	LastUsedStr  string // formatted auth.Token.LastUsed; "never" if nil
+	StatusClass  string // CSS dot class: dot-ok / dot-err / dot-neutral
+	StatusLabel  string // "Active" | "Expired" | "Never used"
 }
 
 // tokenForm holds the last-submitted (or default) create-token form values
@@ -408,13 +412,28 @@ func (s *Server) buildTokensPage(errMsg, newSecret string, form tokenForm) admin
 	}
 
 	tokens, _ := s.Auth.List()
+	now := time.Now()
 	for _, t := range tokens {
+		lastUsed := "never"
+		if t.LastUsed != nil {
+			lastUsed = t.LastUsed.UTC().Format("2006-01-02 15:04")
+		}
+		statusClass, statusLabel := "dot-ok", "Active"
+		if t.ExpiresAt != nil && now.After(*t.ExpiresAt) {
+			statusClass, statusLabel = "dot-err", "Expired"
+		} else if t.LastUsed == nil {
+			statusClass, statusLabel = "dot-neutral", "Never used"
+		}
 		page.Tokens = append(page.Tokens, tokenRow{
 			ID:           t.ID,
 			Description:  t.Description,
 			GrantSummary: formatGrants(t.Grants),
 			CreatedStr:   t.CreatedAt.UTC().Format("2006-01-02"),
 			ExpiresStr:   formatExpiry(t.ExpiresAt),
+			Owner:        t.Owner,
+			LastUsedStr:  lastUsed,
+			StatusClass:  statusClass,
+			StatusLabel:  statusLabel,
 		})
 	}
 
