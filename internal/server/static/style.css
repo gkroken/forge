@@ -961,9 +961,11 @@ td a:hover { text-decoration: underline; }
 .pill-err    { background: var(--danger-bg);       color: var(--danger); }
 
 /* ── browse 3-panel ─────────────────────────────────────────────────────────── */
+/* admin-browse replaces admin-content — no padding, fills admin-main fully */
+.admin-browse { flex: 1; overflow: hidden; display: flex; min-height: 0; }
+
 .browse-shell {
-  position: fixed; top: 56px; left: 0; right: 0; bottom: 0;
-  display: flex; overflow: hidden; background: var(--bg-alt);
+  flex: 1; display: flex; overflow: hidden; background: var(--bg-alt);
 }
 .browse-left {
   width: 288px; flex-shrink: 0;

@@ -122,7 +122,7 @@ func parseUITmpl(files ...string) *template.Template {
 
 var (
 	tmplHome             = parseUITmpl("templates/base.html", "templates/home.html")
-	tmplRepo             = parseUITmpl("templates/base.html", "templates/repo.html")
+	tmplRepo             = parseUITmpl("templates/admin_shell.html", "templates/repo.html")
 	tmplSearch           = parseUITmpl("templates/base.html", "templates/search.html")
 	tmplAdminRepos       = parseUITmpl("templates/admin_shell.html", "templates/admin_repos.html")
 	tmplAdminForm        = parseUITmpl("templates/base.html", "templates/admin_repo_form.html")
@@ -174,6 +174,7 @@ type repoRow struct {
 
 type repoPage struct {
 	Title      string
+	ActiveNav  string
 	Repo       repo.Repository
 	Components []componentItem
 	Total      int
@@ -304,7 +305,7 @@ func (s *Server) uiRepo(w http.ResponseWriter, r *http.Request, name string) {
 		http.NotFound(w, r)
 		return
 	}
-	render(w, tmplRepo, "base.html", repoPage{Title: rp.Name, Repo: rp})
+	render(w, tmplRepo, "admin_shell.html", repoPage{Title: rp.Name, ActiveNav: "browse", Repo: rp})
 }
 
 func (s *Server) uiComponent(w http.ResponseWriter, r *http.Request, repoName, component string) {

@@ -57,7 +57,9 @@
         <button class="topbar-icon-btn" type="button" title="Help"><span class="ms">help</span></button>
       </div>
     </div>
-    {{block "content" .}}{{end}}
+    <div class="{{block "content-class" .}}admin-content{{end}}">
+      {{block "content" .}}{{end}}
+    </div>
   </div>
 
 </div>
