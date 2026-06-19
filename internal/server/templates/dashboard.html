@@ -25,7 +25,7 @@
     </div>
     <div class="kpi-card">
       <div class="kpi-icon-row"><span class="ms">storage</span><span class="kpi-label">Stored</span></div>
-      <div class="kpi-value">—<span class="kpi-unit">GB</span></div>
+      <div class="kpi-value">{{if .StoredGB}}{{printf "%.2f" .StoredGB}}{{else}}—{{end}}<span class="kpi-unit">GB</span></div>
       <div class="kpi-trend">
         <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
         <span class="kpi-trend-sub">blob store usage</span>

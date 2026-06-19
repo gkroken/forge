@@ -3,6 +3,7 @@ package cleanup
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"forge/internal/blob"
@@ -17,10 +18,16 @@ type Scheduler struct {
 	policies *PolicyManager
 	blob     blob.Store
 	meta     meta.Store
+
+	mu      sync.RWMutex
+	lastRun map[string]time.Time // last scheduled run time per repo name
 }
 
 func NewScheduler(repos *repo.Manager, policies *PolicyManager, b blob.Store, m meta.Store) *Scheduler {
-	return &Scheduler{repos: repos, policies: policies, blob: b, meta: m}
+	return &Scheduler{
+		repos: repos, policies: policies, blob: b, meta: m,
+		lastRun: map[string]time.Time{},
+	}
 }
 
 // Start runs the scheduler in a background goroutine. It checks every minute
@@ -30,7 +37,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 }
 
 func (s *Scheduler) loop(ctx context.Context) {
-	lastRun := map[string]time.Time{}
+	local := map[string]time.Time{}
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
@@ -38,9 +45,25 @@ func (s *Scheduler) loop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
-			s.RunDue(now, lastRun)
+			s.RunDue(now, local)
+			s.mu.Lock()
+			for k, v := range local {
+				s.lastRun[k] = v
+			}
+			s.mu.Unlock()
 		}
 	}
+}
+
+// LastRuns returns a snapshot of the most recent scheduled run time per repo name.
+func (s *Scheduler) LastRuns() map[string]time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cp := make(map[string]time.Time, len(s.lastRun))
+	for k, v := range s.lastRun {
+		cp[k] = v
+	}
+	return cp
 }
 
 // RunDue checks every repo and fires Run for those whose interval has elapsed.
@@ -58,11 +81,19 @@ func (s *Scheduler) RunDue(now time.Time, lastRun map[string]time.Time) {
 			continue
 		}
 		lastRun[r.Name] = now
+		start := time.Now()
 		result, err := Run(r.Name, r.Format, np.ToCleanupPolicy(), s.blob, s.meta)
 		if err != nil {
 			slog.Error("cleanup: scheduled run failed", "repo", r.Name, "err", err)
 			continue
 		}
+		_ = RecordRun(s.meta, r.Name, CleanupRun{
+			Timestamp:  now,
+			PolicyName: r.CleanupPolicyName,
+			Deleted:    result.Deleted,
+			FreedBytes: result.FreedBytes,
+			DurationMs: time.Since(start).Milliseconds(),
+		})
 		if result.Deleted > 0 {
 			slog.Info("cleanup: scheduled run complete",
 				"repo", r.Name,

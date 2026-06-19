@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"time"
 
+	"forge/internal/blob"
 	"forge/internal/meta"
 	"forge/internal/repo"
 )
@@ -108,6 +109,30 @@ func (pm *PolicyManager) Put(p NamedPolicy) error {
 
 func (pm *PolicyManager) Delete(name string) error {
 	return pm.meta.Delete(policyNS, name)
+}
+
+// Reclaimable returns the total bytes that would be freed if all enabled
+// policies were applied now, computed by running a dry-run across every
+// hosted repo that has a cleanup policy assigned.
+func Reclaimable(pm *PolicyManager, repos *repo.Manager, b blob.Store, m meta.Store) int64 {
+	var total int64
+	for _, r := range repos.All() {
+		if r.CleanupPolicyName == "" || r.Kind != repo.Hosted {
+			continue
+		}
+		np, ok, err := pm.Get(r.CleanupPolicyName)
+		if err != nil || !ok {
+			continue
+		}
+		result, err := DryRun(r.Name, r.Format, np.ToCleanupPolicy(), b, m)
+		if err != nil {
+			continue
+		}
+		for _, c := range result.Candidates {
+			total += c.SizeBytes
+		}
+	}
+	return total
 }
 
 func durationString(d time.Duration) string {

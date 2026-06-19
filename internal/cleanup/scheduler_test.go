@@ -119,6 +119,16 @@ func TestScheduler_RunDue_FiresWhenDue(t *testing.T) {
 	}
 }
 
+func TestScheduler_LastRuns_Empty(t *testing.T) {
+	b, m := stores(t)
+	mgr := repo.NewManager()
+	pm := cleanup.NewPolicyManager(m)
+	sched := cleanup.NewScheduler(mgr, pm, b, m)
+	if got := sched.LastRuns(); len(got) != 0 {
+		t.Errorf("want empty LastRuns, got %v", got)
+	}
+}
+
 func TestScheduler_RunDue_SkipsProxyRepo(t *testing.T) {
 	b, m := stores(t)
 	mgr := repo.NewManager()

@@ -21,6 +21,10 @@ type Metrics struct {
 
 	// Index regen queue
 	QueueJobsTotal *prometheus.CounterVec // {type, result}
+
+	// In-process latency + throughput (not Prometheus instruments)
+	Latency    *LatencyTracker
+	Throughput *ThroughputTracker
 }
 
 // NewMetrics registers all instruments with reg and returns the populated struct.
@@ -35,7 +39,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		HTTPDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "forge_http_request_duration_seconds",
 			Help:    "HTTP request latency by method and route pattern.",
-			Buckets: prometheus.DefBuckets,
+			Buckets: []float64{.005, .025, .1, .5, 1, 2.5, 5},
 		}, []string{"method", "route"}),
 
 		CacheHits: prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -53,6 +57,9 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help: "Index-regeneration jobs processed by the background worker.",
 		}, []string{"type", "result"}),
 	}
+
+	m.Latency = NewLatencyTracker(1000)
+	m.Throughput = &ThroughputTracker{}
 
 	reg.MustRegister(
 		// Go runtime + process metrics

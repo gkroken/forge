@@ -80,6 +80,8 @@ type Token struct {
 	Grants      []Grant    `json:"grants"`
 	CreatedAt   time.Time  `json:"created_at"`
 	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	Owner       string     `json:"owner,omitempty"`
+	LastUsed    *time.Time `json:"last_used,omitempty"`
 }
 
 // RoleFor returns the highest Role this token grants on repo.
@@ -100,7 +102,8 @@ func (t *Token) RoleFor(repo string) Role {
 type Store interface {
 	// Create mints a new token. Returns the Token metadata and the raw
 	// display secret (shown once; caller must convey it to the user).
-	Create(desc string, grants []Grant, expiresAt *time.Time) (Token, string, error)
+	// The optional owner argument (first element only) sets Token.Owner.
+	Create(desc string, grants []Grant, expiresAt *time.Time, owner ...string) (Token, string, error)
 	// Verify checks a raw display secret and returns the corresponding
 	// Token, or nil if unknown, expired, or malformed.
 	Verify(secret string) (*Token, error)

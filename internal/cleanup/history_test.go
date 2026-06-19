@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"forge/internal/cleanup"
+	"forge/internal/repo"
 )
 
 func TestHistory_RecordAndGet(t *testing.T) {
@@ -120,5 +121,34 @@ func TestHistory_IsolatedByRepo(t *testing.T) {
 	}
 	if len(hB) != 1 || hB[0].Deleted != 99 {
 		t.Errorf("repo-b history wrong: %+v", hB)
+	}
+}
+
+func TestFreedLast30d_Empty(t *testing.T) {
+	_, m := stores(t)
+	mgr := repo.NewManager()
+	if got := cleanup.FreedLast30d(m, mgr); got != 0 {
+		t.Errorf("want 0 for empty store, got %d", got)
+	}
+}
+
+func TestFreedLast30d_Sums(t *testing.T) {
+	_, m := stores(t)
+	mgr := repo.NewManager()
+	mgr.Add(repo.Repository{Name: "r1", Format: "helm", Kind: repo.Hosted}) //nolint:errcheck
+	mgr.Add(repo.Repository{Name: "r2", Format: "npm", Kind: repo.Hosted})  //nolint:errcheck
+
+	now := time.Now().UTC()
+	cleanup.RecordRun(m, "r1", cleanup.CleanupRun{Timestamp: now, FreedBytes: 1000}) //nolint:errcheck
+	cleanup.RecordRun(m, "r2", cleanup.CleanupRun{Timestamp: now, FreedBytes: 2000}) //nolint:errcheck
+	// Dry-run should not count (use a distinct timestamp to avoid overwriting the first entry).
+	cleanup.RecordRun(m, "r1", cleanup.CleanupRun{Timestamp: now.Add(time.Second), FreedBytes: 999, DryRun: true}) //nolint:errcheck
+	// Old run (> 30 days) should not count.
+	old := now.Add(-31 * 24 * time.Hour)
+	cleanup.RecordRun(m, "r2", cleanup.CleanupRun{Timestamp: old, FreedBytes: 5000}) //nolint:errcheck
+
+	got := cleanup.FreedLast30d(m, mgr)
+	if got != 3000 {
+		t.Errorf("want 3000, got %d", got)
 	}
 }

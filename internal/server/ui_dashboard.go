@@ -19,6 +19,10 @@ type dashboardPage struct {
 	ReqBars         []reqBar
 	RecentActivity  []activityRow
 	BackgroundTasks []taskRow
+	StoredGB        float64
+	LatencyP50Ms    int64
+	LatencyP95Ms    int64
+	ThroughputRPS   float64
 }
 
 type formatStat struct {
@@ -173,6 +177,17 @@ func (s *Server) uiDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	bsizes := s.GetBlobSizes()
+	storedGB := float64(bsizes.TotalBytes) / (1 << 30)
+
+	var latP50, latP95 int64
+	var rps float64
+	if s.Metrics != nil {
+		latP50 = s.Metrics.Latency.P50()
+		latP95 = s.Metrics.Latency.P95()
+		rps = s.Metrics.Throughput.RatePerSec()
+	}
+
 	render(w, tmplDashboard, "admin_shell.html", dashboardPage{
 		Title:          "Dashboard",
 		ActiveNav:      "dashboard",
@@ -183,6 +198,10 @@ func (s *Server) uiDashboard(w http.ResponseWriter, r *http.Request) {
 		ReposByFormat:  fmtStats,
 		ReqBars:        buildRepresentativeBars(24),
 		RecentActivity: recentActivity,
+		StoredGB:       storedGB,
+		LatencyP50Ms:   latP50,
+		LatencyP95Ms:   latP95,
+		ThroughputRPS:  rps,
 	})
 }
 

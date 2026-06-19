@@ -8,7 +8,7 @@ import (
 
 type metaStore struct{ meta meta.Store }
 
-func (s *metaStore) Create(desc string, grants []Grant, expiresAt *time.Time) (Token, string, error) {
+func (s *metaStore) Create(desc string, grants []Grant, expiresAt *time.Time, owner ...string) (Token, string, error) {
 	raw, display := generate()
 	hash := hashRaw(raw)
 	id := generateID()
@@ -16,6 +16,9 @@ func (s *metaStore) Create(desc string, grants []Grant, expiresAt *time.Time) (T
 	tok := Token{
 		ID: id, Description: desc, Grants: grants,
 		CreatedAt: time.Now().UTC(), ExpiresAt: expiresAt,
+	}
+	if len(owner) > 0 {
+		tok.Owner = owner[0]
 	}
 	if err := s.meta.PutJSON(nsTokenByHash, hash, storedToken{Token: tok, SecretHash: hash}); err != nil {
 		return Token{}, "", err
@@ -39,6 +42,9 @@ func (s *metaStore) Verify(secret string) (*Token, error) {
 	if st.ExpiresAt != nil && time.Now().After(*st.ExpiresAt) {
 		return nil, nil // expired
 	}
+	now := time.Now().UTC()
+	st.Token.LastUsed = &now
+	_ = s.meta.PutJSON(nsTokenByHash, hash, storedToken{Token: st.Token, SecretHash: hash})
 	return &st.Token, nil
 }
 

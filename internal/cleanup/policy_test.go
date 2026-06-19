@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"forge/internal/cleanup"
+	"forge/internal/repo"
 )
 
 func TestPolicyManager_PutAndGet(t *testing.T) {
@@ -131,5 +132,41 @@ func TestNamedPolicy_JSONRoundtrip(t *testing.T) {
 	}
 	if got.Interval != 72*time.Hour {
 		t.Errorf("interval not preserved: got %v, want %v", got.Interval, 72*time.Hour)
+	}
+}
+
+func TestReclaimable_Empty(t *testing.T) {
+	b, m := stores(t)
+	mgr := repo.NewManager()
+	pm := cleanup.NewPolicyManager(m)
+	if got := cleanup.Reclaimable(pm, mgr, b, m); got != 0 {
+		t.Errorf("want 0 for empty store, got %d", got)
+	}
+}
+
+func TestReclaimable_NoPolicyName(t *testing.T) {
+	b, m := stores(t)
+	mgr := repo.NewManager()
+	pm := cleanup.NewPolicyManager(m)
+	mgr.Add(repo.Repository{Name: "helm-hosted", Format: "helm", Kind: repo.Hosted}) //nolint:errcheck
+	// No CleanupPolicyName set — should return 0 without panicking.
+	if got := cleanup.Reclaimable(pm, mgr, b, m); got != 0 {
+		t.Errorf("want 0 when no policy assigned, got %d", got)
+	}
+}
+
+func TestReclaimable_WithPolicy(t *testing.T) {
+	b, m := stores(t)
+	mgr := repo.NewManager()
+	pm := cleanup.NewPolicyManager(m)
+
+	pm.Put(cleanup.NamedPolicy{Name: "keep-1", KeepVersions: 1}) //nolint:errcheck
+	mgr.Add(repo.Repository{                                       //nolint:errcheck
+		Name: "helm-hosted", Format: "helm", Kind: repo.Hosted,
+		CleanupPolicyName: "keep-1",
+	})
+	// No blobs in the store — reclaimable should be 0.
+	if got := cleanup.Reclaimable(pm, mgr, b, m); got != 0 {
+		t.Errorf("want 0 with empty blob store, got %d", got)
 	}
 }

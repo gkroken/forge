@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"forge/internal/meta"
+	"forge/internal/repo"
 )
 
 const (
@@ -52,6 +53,22 @@ func GetHistory(m meta.Store, repoName string) ([]CleanupRun, error) {
 		return runs[i].Timestamp.After(runs[j].Timestamp)
 	})
 	return runs, nil
+}
+
+// FreedLast30d sums the freed bytes from all non-dry-run cleanup runs across
+// every repo during the last 30 days.
+func FreedLast30d(m meta.Store, repos *repo.Manager) int64 {
+	cutoff := time.Now().Add(-30 * 24 * time.Hour)
+	var total int64
+	for _, r := range repos.All() {
+		history, _ := GetHistory(m, r.Name)
+		for _, run := range history {
+			if !run.DryRun && run.Timestamp.After(cutoff) {
+				total += run.FreedBytes
+			}
+		}
+	}
+	return total
 }
 
 func trimHistory(m meta.Store, ns string) error {

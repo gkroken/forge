@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -48,6 +49,13 @@ func ociError(w http.ResponseWriter, code, message string, status int) {
 // exhausting disk/S3 capacity. Override with Server.MaxUpload.
 const defaultMaxUpload = 5 << 30
 
+// BlobSizes is a cached snapshot of blob storage usage.
+type BlobSizes struct {
+	TotalBytes int64
+	ByFormat   map[string]int64
+	ComputedAt time.Time
+}
+
 type Server struct {
 	Repos     *repo.Manager
 	Handlers  *format.Registry
@@ -64,6 +72,9 @@ type Server struct {
 	reg       prometheus.Gatherer
 	client    *http.Client
 	oidcKey   []byte // HMAC key for signing OIDC state cookies; set by WithOIDC
+
+	blobMu    sync.RWMutex
+	blobSizes BlobSizes
 }
 
 func New(m *repo.Manager, reg *format.Registry, b blob.Store, mt meta.Store, a auth.Store) *Server {
@@ -110,6 +121,54 @@ func (s *Server) WithCleanup(pm *cleanup.PolicyManager) *Server {
 func (s *Server) WithAuditLog(al *obs.AuditLog) *Server {
 	s.AuditLog = al
 	return s
+}
+
+// WithBlobWalker starts a background goroutine that periodically computes
+// blob storage sizes. Call before Routes().
+func (s *Server) WithBlobWalker(ctx context.Context) *Server {
+	go func() {
+		s.walkBlobSizes()
+		tick := time.NewTicker(5 * time.Minute)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				s.walkBlobSizes()
+			}
+		}
+	}()
+	return s
+}
+
+func (s *Server) walkBlobSizes() {
+	byFmt := map[string]int64{}
+	total := int64(0)
+	for _, rp := range s.Repos.All() {
+		keys, err := s.Blob.List(rp.Name + "/")
+		if err != nil {
+			continue
+		}
+		for _, k := range keys {
+			info, ok, err := s.Blob.Stat(k)
+			if err != nil || !ok {
+				continue
+			}
+			total += info.Size
+			byFmt[rp.Format] += info.Size
+		}
+	}
+	s.blobMu.Lock()
+	s.blobSizes = BlobSizes{TotalBytes: total, ByFormat: byFmt, ComputedAt: time.Now()}
+	s.blobMu.Unlock()
+}
+
+// GetBlobSizes returns the most recent cached blob size snapshot.
+func (s *Server) GetBlobSizes() BlobSizes {
+	s.blobMu.RLock()
+	defer s.blobMu.RUnlock()
+	return s.blobSizes
 }
 
 func (s *Server) Routes() http.Handler {
@@ -384,6 +443,8 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 		if s.Metrics != nil {
 			s.Metrics.HTTPRequests.WithLabelValues(r.Method, route, strconv.Itoa(status)).Inc()
 			s.Metrics.HTTPDuration.WithLabelValues(r.Method, route).Observe(dur.Seconds())
+			s.Metrics.Latency.Observe(dur)
+			s.Metrics.Throughput.Inc()
 		}
 
 	})
