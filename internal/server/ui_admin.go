@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,6 +32,23 @@ type adminFormPage struct {
 	Formats     []string
 	Kinds       []string
 	PolicyNames []string // named cleanup policies available for selection
+}
+
+type repoConfigPage struct {
+	Title          string
+	ActiveNav      string
+	Repo           repo.Repository
+	KindStr        string
+	Error          string
+	Flash          string
+	Formats        []string
+	Kinds          []string
+	PolicyNames    []string
+	ActiveTab      string // "settings" | "content" | "access" | "activity"
+	ArtifactCount  int
+	SizeBytes      int64
+	StoragePct     int
+	RecentActivity []auditRow
 }
 
 // ── access view types ─────────────────────────────────────────────────────────
@@ -182,14 +200,67 @@ func (s *Server) uiAdminEditRepo(w http.ResponseWriter, r *http.Request, name st
 		s.processRepoForm(w, r, name, true)
 		return
 	}
-	render(w, tmplAdminForm, "base.html", adminFormPage{
-		Title:       "Admin — Edit " + name,
-		Repo:        rp,
-		KindStr:     string(rp.Kind),
-		IsEdit:      true,
-		Formats:     allFormats,
-		Kinds:       allKinds,
-		PolicyNames: s.policyNames(),
+	tab := r.URL.Query().Get("tab")
+	if tab == "" {
+		tab = "settings"
+	}
+	s.renderRepoConfig(w, rp, tab, "", r.URL.Query().Get("flash"))
+}
+
+func (s *Server) renderRepoConfig(w http.ResponseWriter, rp repo.Repository, tab, errMsg, flash string) {
+	bsizes := s.GetBlobSizes()
+	sizeBytes := bsizes.ByRepo[rp.Name]
+	storagePct := 0
+	if bsizes.TotalBytes > 0 {
+		storagePct = int(float64(sizeBytes) / float64(bsizes.TotalBytes) * 100)
+	}
+
+	var activity []auditRow
+	if s.AuditLog != nil {
+		needle := "/" + rp.Name
+		methodVerbs := map[string]string{
+			"POST": "Published", "PUT": "Uploaded",
+			"DELETE": "Deleted", "PATCH": "Updated", "GET": "Downloaded",
+		}
+		for _, e := range s.AuditLog.Recent(100) {
+			if !strings.Contains(e.Path, needle) {
+				continue
+			}
+			action := methodVerbs[e.Method]
+			if action == "" {
+				action = e.Method
+			}
+			if e.Status >= 400 {
+				action = "Denied"
+			}
+			activity = append(activity, auditRow{
+				Time:   e.Timestamp.UTC().Format("15:04:05"),
+				Actor:  e.Actor,
+				Action: action,
+				Status: strconv.Itoa(e.Status),
+				OK:     e.Status < 400,
+			})
+			if len(activity) == 5 {
+				break
+			}
+		}
+	}
+
+	render(w, tmplRepoConfig, "admin_shell.html", repoConfigPage{
+		Title:          rp.Name + " — Settings",
+		ActiveNav:      "repos",
+		Repo:           rp,
+		KindStr:        string(rp.Kind),
+		Error:          errMsg,
+		Flash:          flash,
+		Formats:        allFormats,
+		Kinds:          allKinds,
+		PolicyNames:    s.policyNames(),
+		ActiveTab:      tab,
+		ArtifactCount:  bsizes.CountByRepo[rp.Name],
+		SizeBytes:      sizeBytes,
+		StoragePct:     storagePct,
+		RecentActivity: activity,
 	})
 }
 
@@ -270,11 +341,11 @@ func (s *Server) processRepoForm(w http.ResponseWriter, r *http.Request, existin
 		return
 	}
 
-	action := "Created"
 	if isEdit {
-		action = "Updated"
+		http.Redirect(w, r, "/ui/admin/repos/"+name+"/edit?tab=settings&flash=Saved", http.StatusSeeOther) // #nosec G710
+		return
 	}
-	http.Redirect(w, r, "/ui/admin/?flash="+action+"+repository+"+name, http.StatusSeeOther) // #nosec G710 -- target is a hardcoded /ui/admin/ prefix
+	http.Redirect(w, r, "/ui/admin/?flash=Created+repository+"+name, http.StatusSeeOther) // #nosec G710
 }
 
 func (s *Server) reRenderForm(w http.ResponseWriter, r *http.Request, name string, isEdit bool, errMsg string) {
@@ -298,15 +369,14 @@ func (s *Server) reRenderForm(w http.ResponseWriter, r *http.Request, name strin
 	rp.AnonymousRead = r.FormValue("anonymousRead") == "on"
 	rp.CleanupPolicyName = strings.TrimSpace(r.FormValue("cleanupPolicyName"))
 
-	title := "Admin — New repository"
 	if isEdit {
-		title = "Admin — Edit " + name
+		s.renderRepoConfig(w, rp, "settings", errMsg, "")
+		return
 	}
 	render(w, tmplAdminForm, "base.html", adminFormPage{
-		Title:       title,
+		Title:       "Admin — New repository",
 		Repo:        rp,
 		KindStr:     string(rp.Kind),
-		IsEdit:      isEdit,
 		Error:       errMsg,
 		Formats:     allFormats,
 		Kinds:       allKinds,

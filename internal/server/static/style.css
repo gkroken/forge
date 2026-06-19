@@ -960,6 +960,31 @@ td a:hover { text-decoration: underline; }
 .pill-info   { background: var(--accent-subtle);  color: var(--accent); }
 .pill-err    { background: var(--danger-bg);       color: var(--danger); }
 
+/* ── repo config layout ──────────────────────────────────────────────────── */
+.repo-config-layout { display: grid; grid-template-columns: 1fr 272px; gap: 20px; align-items: start; }
+.repo-config-rail   { display: flex; flex-direction: column; gap: 14px; }
+.repo-config-main   { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.card { border: 1px solid var(--border); border-radius: 10px; background: var(--bg); }
+
+/* right rail cards */
+.rail-card          { border: 1px solid var(--border); border-radius: 10px; background: var(--bg); padding: 14px 16px; }
+.rail-card-title    { font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 12px; }
+.rail-stat-row      { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.rail-stat-row:last-of-type { border-bottom: none; }
+.rail-stat-label    { font-size: 12px; color: var(--text-muted); }
+.rail-stat-val      { font-size: 13px; font-weight: 600; font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+.rail-progress-bar  { height: 4px; border-radius: 2px; background: var(--border); margin-top: 10px; overflow: hidden; }
+.rail-progress-fill { height: 100%; background: var(--accent); border-radius: 2px; }
+.rail-activity-row  { display: flex; align-items: center; gap: 6px; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 11.5px; }
+.rail-activity-row:last-child { border-bottom: none; }
+.rail-activity-time   { color: var(--text-muted); font-family: 'IBM Plex Mono', ui-monospace, monospace; flex-shrink: 0; }
+.rail-activity-action { flex: 1; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.badge-ok  { background: var(--alert-ok-bg);  color: var(--alert-ok-fg);  border-radius: 4px; }
+.badge-err { background: var(--alert-err-bg); color: var(--alert-err-fg); border-radius: 4px; }
+
+/* stub panels for unimplemented tabs */
+.stub-panel { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 60px 24px; color: var(--text-muted); font-size: 14px; }
+
 /* ── admin tables ────────────────────────────────────────────────────────── */
 .admin-table-wrap { border: 1px solid var(--border); border-radius: 10px; background: var(--bg); overflow: hidden; }
 .admin-table      { width: 100%; border-collapse: collapse; }

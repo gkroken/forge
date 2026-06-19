@@ -1,0 +1,208 @@
+{{define "content"}}
+<!-- sub-header with tabs -->
+<div class="admin-subheader">
+  <div class="admin-subheader-row">
+    <div>
+      <div class="admin-subheader-title">{{.Repo.Name}}</div>
+      <div class="admin-subheader-sub" style="display:flex;align-items:center;gap:.5rem;margin-top:4px">
+        <span class="badge fmt-{{.Repo.Format}} fmt-mono">{{formatIcon .Repo.Format}}{{.Repo.Format}}</span>
+        <span class="badge kind-{{.Repo.Kind}}">{{.Repo.Kind}}</span>
+        {{if .Repo.Upstream}}<span style="font-size:11px;color:var(--text-muted)">↑ {{.Repo.Upstream}}</span>{{end}}
+      </div>
+    </div>
+    <div style="margin-left:auto;display:flex;gap:.5rem;align-items:center">
+      <a href="/ui/repos/{{.Repo.Name}}" class="btn btn-sm">Browse</a>
+    </div>
+  </div>
+  <div class="admin-tabs">
+    <a href="?tab=settings"  class="admin-tab{{if eq .ActiveTab "settings"}} active{{end}}">Settings</a>
+    <a href="?tab=content"   class="admin-tab{{if eq .ActiveTab "content"}}  active{{end}}">Content</a>
+    <a href="?tab=access"    class="admin-tab{{if eq .ActiveTab "access"}}   active{{end}}">Access</a>
+    <a href="?tab=activity"  class="admin-tab{{if eq .ActiveTab "activity"}} active{{end}}">Activity</a>
+  </div>
+</div>
+
+<div class="admin-content">
+  {{if .Flash}}<div class="alert alert-success">{{.Flash}}</div>{{end}}
+
+  <div class="repo-config-layout">
+
+    <!-- ── tab panels ── -->
+    <div class="repo-config-main">
+
+      {{if eq .ActiveTab "settings"}}
+      {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+      <div class="card" style="padding:20px 24px">
+        <form method="POST" class="repo-form">
+          <div class="form-group">
+            <label for="f-name">Name</label>
+            <input id="f-name" type="text" name="name" value="{{.Repo.Name}}" readonly>
+            <p class="form-hint">Repository name cannot be changed.</p>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="f-format">Format</label>
+              <select id="f-format" name="format">
+                {{range .Formats}}
+                <option value="{{.}}"{{if eq . $.Repo.Format}} selected{{end}}>{{.}}</option>
+                {{end}}
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="f-kind">Kind</label>
+              <select id="f-kind" name="kind" onchange="syncKind()">
+                {{range .Kinds}}
+                <option value="{{.}}"{{if eq . $.KindStr}} selected{{end}}>{{.}}</option>
+                {{end}}
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group" id="g-upstream">
+            <label for="f-upstream">Upstream URL</label>
+            <input id="f-upstream" type="text" name="upstream" value="{{.Repo.Upstream}}"
+                   placeholder="https://repo1.maven.org/maven2">
+          </div>
+
+          <div class="form-group" id="g-members">
+            <label for="f-members">Members <span class="form-hint-inline">comma-separated, in priority order</span></label>
+            <input id="f-members" type="text" name="members" value="{{join .Repo.Members ", "}}"
+                   placeholder="my-hosted, my-proxy">
+          </div>
+
+          <div class="form-row" id="g-proxy-extra">
+            <div class="form-group">
+              <label for="f-ttl">Proxy TTL</label>
+              <input id="f-ttl" type="text" name="proxyTTL" value="{{durStr .Repo.ProxyTTL}}"
+                     placeholder="24h">
+            </div>
+            <div class="form-group">
+              <label for="f-auth">Proxy Auth</label>
+              <input id="f-auth" type="text" name="proxyAuth" value="{{.Repo.ProxyAuth}}"
+                     placeholder="Bearer …  or  Basic …">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" name="anonymousRead"{{if .Repo.AnonymousRead}} checked{{end}}>
+              Allow anonymous read access
+            </label>
+          </div>
+
+          <fieldset id="g-cleanup">
+            <legend>Cleanup policy <span class="form-hint-inline">(hosted only)</span></legend>
+            <div class="form-group">
+              <label for="f-cleanup-policy-name">Policy</label>
+              {{if .PolicyNames}}
+              <select id="f-cleanup-policy-name" name="cleanupPolicyName">
+                <option value="">— none —</option>
+                {{range .PolicyNames}}
+                <option value="{{.}}"{{if eq . $.Repo.CleanupPolicyName}} selected{{end}}>{{.}}</option>
+                {{end}}
+              </select>
+              {{else}}
+              <input id="f-cleanup-policy-name" type="text" name="cleanupPolicyName"
+                     value="{{.Repo.CleanupPolicyName}}"
+                     placeholder="e.g. keep-5-versions (leave blank for none)">
+              {{end}}
+              <span class="form-hint">Manage policies on the <a href="/ui/admin/cleanup-policies">Cleanup</a> page.</span>
+            </div>
+            <div class="form-group" style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
+              <button type="button" class="btn btn-sm"
+                      onclick="runCleanup('{{.Repo.Name}}', this)">Run cleanup now</button>
+              <a href="/ui/admin/repos/{{.Repo.Name}}/cleanup" class="btn btn-sm">Dry-run &amp; history</a>
+              <span id="cleanup-result" style="font-size:.85em"></span>
+            </div>
+          </fieldset>
+
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Save changes</button>
+            <a href="/ui/admin/" class="btn">Cancel</a>
+          </div>
+        </form>
+      </div>
+
+      <script>
+      function syncKind() {
+        var k = document.getElementById('f-kind').value;
+        document.getElementById('g-upstream').style.display    = k === 'proxy'  ? '' : 'none';
+        document.getElementById('g-proxy-extra').style.display = k === 'proxy'  ? '' : 'none';
+        document.getElementById('g-members').style.display     = k === 'group'  ? '' : 'none';
+        document.getElementById('g-cleanup').style.display     = k === 'hosted' ? '' : 'none';
+      }
+      syncKind();
+      function runCleanup(name, btn) {
+        btn.disabled = true;
+        var el = document.getElementById('cleanup-result');
+        el.textContent = 'Running…';
+        fetch('/api/v1/repos/' + name + '/cleanup', {method: 'POST'})
+          .then(function(r) { return r.json(); })
+          .then(function(d) { el.textContent = 'Done: ' + d.deleted + ' artifact(s) deleted, ' + (d.freed_bytes / 1048576).toFixed(2) + ' MB freed'; })
+          .catch(function(e) { el.textContent = 'Error: ' + e; })
+          .finally(function() { btn.disabled = false; });
+      }
+      </script>
+
+      {{else if eq .ActiveTab "content"}}
+      <div class="card stub-panel">
+        <span class="ms" style="font-size:32px;color:var(--text-muted)">inventory_2</span>
+        <p>Content management — coming soon.</p>
+      </div>
+
+      {{else if eq .ActiveTab "access"}}
+      <div class="card stub-panel">
+        <span class="ms" style="font-size:32px;color:var(--text-muted)">lock</span>
+        <p>Per-repo access control — coming soon.</p>
+      </div>
+
+      {{else}}
+      <div class="card stub-panel">
+        <span class="ms" style="font-size:32px;color:var(--text-muted)">history</span>
+        <p>Repository activity log — coming soon.</p>
+      </div>
+      {{end}}
+
+    </div><!-- /repo-config-main -->
+
+    <!-- ── right rail ── -->
+    <aside class="repo-config-rail">
+
+      <div class="rail-card">
+        <div class="rail-card-title"><span class="ms" style="font-size:15px;vertical-align:middle;margin-right:5px">storage</span>Storage</div>
+        <div class="rail-stat-row">
+          <span class="rail-stat-label">Artifacts</span>
+          <span class="rail-stat-val">{{.ArtifactCount}}</span>
+        </div>
+        <div class="rail-stat-row">
+          <span class="rail-stat-label">Stored</span>
+          <span class="rail-stat-val">{{if gt .SizeBytes 0}}{{fmtBytes .SizeBytes}}{{else}}—{{end}}</span>
+        </div>
+        {{if gt .StoragePct 0}}
+        <div class="rail-stat-row">
+          <span class="rail-stat-label">% of total</span>
+          <span class="rail-stat-val">{{.StoragePct}}%</span>
+        </div>
+        <div class="rail-progress-bar"><div class="rail-progress-fill" style="width:{{.StoragePct}}%"></div></div>
+        {{end}}
+      </div>
+
+      {{if .RecentActivity}}
+      <div class="rail-card">
+        <div class="rail-card-title"><span class="ms" style="font-size:15px;vertical-align:middle;margin-right:5px">receipt_long</span>Recent activity</div>
+        {{range .RecentActivity}}
+        <div class="rail-activity-row">
+          <span class="rail-activity-time">{{.Time}}</span>
+          <span class="rail-activity-action">{{.Action}}</span>
+          <span class="badge {{if .OK}}badge-ok{{else}}badge-err{{end}}" style="padding:1px 5px;font-size:10px">{{.Status}}</span>
+        </div>
+        {{end}}
+      </div>
+      {{end}}
+
+    </aside><!-- /repo-config-rail -->
+
+  </div><!-- /repo-config-layout -->
+</div><!-- /admin-content -->
+{{end}}
