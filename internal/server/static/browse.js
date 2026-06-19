@@ -183,8 +183,24 @@ async function toggleTreeFolder(node) {
 function selectTreeLeaf(node) {
   document.querySelectorAll('.browse-tree-node').forEach(n => n.classList.remove('active'));
   node.classList.add('active');
-  // Use the leaf path as the package identifier for the versions endpoint.
-  selectPkg(node.dataset.path, null);
+  selectPkg(mavenComponentFromPath(node.dataset.path), null);
+}
+
+// Convert a Maven blob path to a groupId:artifactId component name, matching
+// the same heuristic used in BrowseRepo on the server side. The first path
+// segment that starts with a digit is the version; the segment before it is
+// the artifactId; everything before that forms the dotted groupId.
+// e.g. "com/google/guava/guava/33.0.0/guava-33.0.0.jar" → "com.google.guava:guava"
+function mavenComponentFromPath(path) {
+  const parts = path.split('/').filter(Boolean);
+  let verIdx = -1;
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i] && parts[i][0] >= '0' && parts[i][0] <= '9') { verIdx = i; break; }
+  }
+  if (verIdx < 2) return path; // not a versioned artifact path — pass through
+  const groupId    = parts.slice(0, verIdx - 1).join('.');
+  const artifactId = parts[verIdx - 1];
+  return groupId + ':' + artifactId;
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
