@@ -159,9 +159,9 @@ func TestUIRepo_HasFilterInput(t *testing.T) {
 	h := newUIServer(t).Routes()
 	rw := uiGet(t, h, "/ui/repos/npm-hosted")
 	body := rw.Body.String()
-	// 3-panel: filter is a client-side search input driven by JS
+	// 3-panel: filter is a client-side search input; JS is in external browse.js (CSP)
 	assertContains(t, body, `id="pkg-search"`)
-	assertContains(t, body, `filterPkgs`)
+	assertContains(t, body, `/ui/static/browse.js`)
 }
 
 func TestUIRepo_EmptyRepo(t *testing.T) {

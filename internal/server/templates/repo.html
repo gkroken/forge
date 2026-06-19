@@ -1,5 +1,5 @@
 {{define "content"}}
-<div class="browse-shell">
+<div class="browse-shell" data-repo="{{.Repo.Name}}">
 
   <!-- ── Left: package list ───────────────────────────────────────────────── -->
   <div class="browse-left">
@@ -9,7 +9,7 @@
       {{if eq .Repo.Kind "hosted"}}<a href="/ui/repos/{{.Repo.Name}}/upload" class="btn btn-sm" style="margin-left:auto">↑</a>{{end}}
     </div>
     <div class="browse-search-wrap">
-      <input type="search" id="pkg-search" placeholder="Filter packages…" autocomplete="off" oninput="filterPkgs(this.value)">
+      <input type="search" id="pkg-search" placeholder="Filter packages…" autocomplete="off">
     </div>
     <div id="pkg-list" class="browse-item-list">
       <div class="browse-msg">Loading…</div>
@@ -33,120 +33,5 @@
   </div>
 
 </div>
-
-<script>
-const REPO = "{{.Repo.Name}}";
-let allPkgs = [];
-
-// ── Package list ──────────────────────────────────────────────────────────────
-async function loadPkgs() {
-  try {
-    const res = await fetch('/api/v1/repos/' + REPO + '/components?limit=200');
-    const d = await res.json();
-    allPkgs = d.components || [];
-    renderPkgs(allPkgs);
-  } catch (e) {
-    document.getElementById('pkg-list').innerHTML = '<div class="browse-msg browse-err">Failed to load.</div>';
-  }
-}
-
-function renderPkgs(pkgs) {
-  const el = document.getElementById('pkg-list');
-  if (!pkgs.length) {
-    el.innerHTML = '<div class="browse-msg">No packages in this repository.</div>';
-    return;
-  }
-  el.innerHTML = pkgs.map(p =>
-    '<div class="browse-pkg" onclick="selectPkg(' + JSON.stringify(p.name) + ',this)">' +
-    '<span class="ms browse-pkg-icon">package_2</span>' +
-    '<span class="browse-pkg-name">' + esc(p.name) + '</span>' +
-    '<span class="browse-pkg-ver">' + esc((p.versions && p.versions[0]) || '') + '</span>' +
-    '</div>'
-  ).join('');
-}
-
-function filterPkgs(q) {
-  const ql = q.toLowerCase();
-  renderPkgs(ql ? allPkgs.filter(p => p.name.toLowerCase().includes(ql)) : allPkgs);
-}
-
-// ── Versions ──────────────────────────────────────────────────────────────────
-async function selectPkg(pkg, el) {
-  document.querySelectorAll('.browse-pkg').forEach(i => i.classList.remove('active'));
-  if (el) el.classList.add('active');
-  const cp = document.getElementById('center-pane');
-  cp.innerHTML = '<div class="browse-msg">Loading…</div>';
-  document.getElementById('detail-pane').innerHTML =
-    '<div class="browse-placeholder"><span class="ms" style="font-size:40px;color:var(--text-muted)">info</span><p>Select a version.</p></div>';
-  try {
-    const res = await fetch('/ui/browse/' + REPO + '/versions?pkg=' + encodeURIComponent(pkg));
-    const d = await res.json();
-    renderVersions(d);
-  } catch (e) {
-    cp.innerHTML = '<div class="browse-msg browse-err">Failed to load versions.</div>';
-  }
-}
-
-function renderVersions(d) {
-  const cp = document.getElementById('center-pane');
-  if (!d.versions || !d.versions.length) {
-    cp.innerHTML = '<div class="browse-msg">No versions found.</div>';
-    return;
-  }
-  let h = '<div class="browse-ver-title">' + esc(d.name) + '</div>';
-  h += '<table class="browse-ver-tbl"><thead><tr><th>Version</th><th>Published</th></tr></thead><tbody>';
-  for (const v of d.versions) {
-    h += '<tr class="browse-ver-row" onclick="selectVer(' + JSON.stringify(d.pkg) + ',' + JSON.stringify(v.version) + ',this)">';
-    h += '<td class="col-mono">' + esc(v.version) + '</td>';
-    h += '<td class="col-date">' + (v.published_at ? v.published_at.substring(0, 10) : '—') + '</td>';
-    h += '</tr>';
-  }
-  h += '</tbody></table>';
-  cp.innerHTML = h;
-}
-
-// ── Asset detail ──────────────────────────────────────────────────────────────
-async function selectVer(pkg, ver, el) {
-  document.querySelectorAll('.browse-ver-row').forEach(r => r.classList.remove('active'));
-  if (el) el.classList.add('active');
-  const dp = document.getElementById('detail-pane');
-  dp.innerHTML = '<div class="browse-msg">Loading…</div>';
-  try {
-    const res = await fetch('/ui/browse/' + REPO + '/detail?pkg=' + encodeURIComponent(pkg) + '&ver=' + encodeURIComponent(ver));
-    const d = await res.json();
-    renderDetail(d);
-  } catch (e) {
-    dp.innerHTML = '<div class="browse-msg browse-err">Failed to load detail.</div>';
-  }
-}
-
-function renderDetail(d) {
-  let h = '<div class="browse-detail">';
-  h += '<div class="browse-detail-ver">' + esc(d.version) + '</div>';
-  h += '<div class="browse-detail-pkg">' + esc(d.name) + '</div>';
-  if (d.download_url) {
-    h += '<div class="browse-detail-actions">';
-    h += '<a href="' + d.download_url + '" class="btn btn-sm">↓ Download</a>';
-    h += '<button class="btn btn-sm" onclick="navigator.clipboard.writeText(' + JSON.stringify(d.download_url) + ')">Copy URL</button>';
-    h += '</div>';
-  }
-  const rows = [
-    ['Format',      d.format],
-    ['Repository',  d.repo],
-    ['Published',   d.published_at ? d.published_at.substring(0, 10) : null],
-  ];
-  h += '<dl class="browse-meta">';
-  for (const [k, v] of rows) {
-    if (v) h += '<dt>' + esc(k) + '</dt><dd>' + esc(String(v)) + '</dd>';
-  }
-  h += '</dl></div>';
-  document.getElementById('detail-pane').innerHTML = h;
-}
-
-function esc(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-loadPkgs();
-</script>
+<script src="/ui/static/browse.js"></script>
 {{end}}
