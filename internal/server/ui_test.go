@@ -613,14 +613,11 @@ func TestUIAdminHome_HasBreadcrumb(t *testing.T) {
 	h := newUIServer(t).Routes()
 	rw := uiGet(t, h, "/ui/admin/")
 	body := rw.Body.String()
+	// Sidebar nav always contains a link back to Browse (/)
 	assertContains(t, body, `href="/ui/"`)
-	assertContains(t, body, "Admin")
-	// Breadcrumb must precede the page-header
-	breadcrumbIdx := strings.Index(body, "breadcrumb")
-	headerIdx := strings.Index(body, "page-header")
-	if breadcrumbIdx < 0 || headerIdx < 0 || breadcrumbIdx > headerIdx {
-		t.Error("breadcrumb missing or appearing after page-header")
-	}
+	// Page title shown in admin-subheader
+	assertContains(t, body, "Repositories")
+	assertContains(t, body, "admin-subheader")
 }
 
 // ── /ui/admin/access ─────────────────────────────────────────────────────────
@@ -656,12 +653,6 @@ func TestUIAccess_UnauthenticatedRedirects(t *testing.T) {
 	if rw.Code != http.StatusSeeOther {
 		t.Errorf("expected 303, got %d", rw.Code)
 	}
-}
-
-func TestUIAdminHome_AccessLink(t *testing.T) {
-	h := newUIServer(t).Routes()
-	rw := uiGet(t, h, "/ui/admin/")
-	assertContains(t, rw.Body.String(), "/ui/admin/access")
 }
 
 // ── /ui/repos/{name}/upload ───────────────────────────────────────────────────

@@ -1,55 +1,55 @@
 {{define "content"}}
-<div class="breadcrumb">
-  <a href="/ui/">Repositories</a><span>/</span>Admin
-</div>
-<div class="page-header">
-  <h1>Repositories</h1>
-  <div style="display:flex;gap:.5rem">
-    <a href="/ui/admin/access" class="btn">Access</a>
-    <a href="/ui/admin/tokens" class="btn">API Tokens</a>
-    <a href="/ui/admin/repos/new" class="btn btn-primary">+ New repository</a>
+<div class="admin-subheader">
+  <div class="admin-subheader-row">
+    <div>
+      <div class="admin-subheader-title">Repositories</div>
+      <div class="admin-subheader-sub">Manage hosted, proxy, and group repositories</div>
+    </div>
+    <div style="margin-left:auto">
+      <a href="/ui/admin/repos/new" class="btn btn-primary">+ New repository</a>
+    </div>
   </div>
 </div>
 
-{{if .Flash}}
-<div class="alert alert-success">{{.Flash}}</div>
-{{end}}
+<div class="admin-content">
+  {{if .Flash}}<div class="alert alert-success">{{.Flash}}</div>{{end}}
 
-<div class="table-wrap">
-  <table>
-    <thead>
-      <tr>
-        <th>Name</th>
-        <th>Format</th>
-        <th>Kind</th>
-        <th>Upstream / Members</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {{range .Repos}}
-      <tr>
-        <td class="col-name"><a href="/ui/repos/{{.Name}}">{{.Name}}</a></td>
-        <td><span class="badge fmt-{{.Format}}">{{formatIcon .Format}}{{.Format}}</span></td>
-        <td><span class="badge kind-{{.Kind}}">{{.Kind}}</span></td>
-        <td class="col-count">
-          {{if .Upstream}}{{.Upstream}}
-          {{else if .Members}}{{join .Members ", "}}
-          {{else}}—{{end}}
-        </td>
-        <td class="col-actions">
-          <a href="/ui/admin/repos/{{.Name}}/edit" class="btn btn-sm">Edit</a>
-          <button class="btn btn-sm btn-danger"
-                  hx-delete="/ui/admin/repos/{{.Name}}"
-                  hx-confirm="Delete «{{.Name}}»? This cannot be undone.">
-            Delete
-          </button>
-        </td>
-      </tr>
-      {{else}}
-      <tr><td colspan="5" class="empty">No repositories. <a href="/ui/admin/repos/new">Create one</a>.</td></tr>
-      {{end}}
-    </tbody>
-  </table>
+  <div class="admin-table-wrap">
+    <table class="admin-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Format</th>
+          <th>Type</th>
+          <th>Upstream / Members</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Repos}}
+        <tr>
+          <td class="col-name"><a href="/ui/repos/{{.Name}}">{{.Name}}</a></td>
+          <td><span class="badge fmt-{{.Format}} fmt-mono">{{formatIcon .Format}}{{.Format}}</span></td>
+          <td><span class="badge kind-{{.Kind}}">{{.Kind}}</span></td>
+          <td class="col-count col-mono">
+            {{if .Upstream}}{{.Upstream}}
+            {{else if .Members}}{{join .Members ", "}}
+            {{else}}—{{end}}
+          </td>
+          <td class="col-actions">
+            <a href="/ui/admin/repos/{{.Name}}/edit" class="btn btn-sm">Settings</a>
+            <button class="btn btn-sm btn-danger"
+                    hx-delete="/ui/admin/repos/{{.Name}}"
+                    hx-confirm="Delete «{{.Name}}»? This cannot be undone.">
+              Delete
+            </button>
+          </td>
+        </tr>
+        {{else}}
+        <tr><td colspan="5" class="empty">No repositories. <a href="/ui/admin/repos/new">Create one</a>.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
 </div>
 {{end}}

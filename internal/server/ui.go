@@ -124,7 +124,7 @@ var (
 	tmplHome             = parseUITmpl("templates/base.html", "templates/home.html")
 	tmplRepo             = parseUITmpl("templates/base.html", "templates/repo.html")
 	tmplSearch           = parseUITmpl("templates/base.html", "templates/search.html")
-	tmplAdminRepos       = parseUITmpl("templates/base.html", "templates/admin_repos.html")
+	tmplAdminRepos       = parseUITmpl("templates/admin_shell.html", "templates/admin_repos.html")
 	tmplAdminForm        = parseUITmpl("templates/base.html", "templates/admin_repo_form.html")
 	tmplLogin            = parseUITmpl("templates/base.html", "templates/login.html")
 	tmplComponent        = parseUITmpl("templates/base.html", "templates/component.html")

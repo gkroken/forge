@@ -18,9 +18,10 @@ var (
 // ── page data types ───────────────────────────────────────────────────────────
 
 type adminReposPage struct {
-	Title string
-	Repos []repo.Repository
-	Flash string
+	Title     string
+	ActiveNav string
+	Repos     []repo.Repository
+	Flash     string
 }
 
 type adminFormPage struct {
@@ -162,10 +163,11 @@ func (s *Server) handleUIAdmin(w http.ResponseWriter, r *http.Request, sub strin
 // ── handlers ──────────────────────────────────────────────────────────────────
 
 func (s *Server) uiAdminHome(w http.ResponseWriter, r *http.Request) {
-	render(w, tmplAdminRepos, "base.html", adminReposPage{
-		Title: "Admin — Repositories",
-		Repos: s.Repos.All(),
-		Flash: r.URL.Query().Get("flash"),
+	render(w, tmplAdminRepos, "admin_shell.html", adminReposPage{
+		Title:     "Repositories",
+		ActiveNav: "repos",
+		Repos:     s.Repos.All(),
+		Flash:     r.URL.Query().Get("flash"),
 	})
 }
 
