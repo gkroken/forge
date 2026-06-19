@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
+	"fmt"
 	"html/template"
 	"io/fs"
 	"net/http"
@@ -56,6 +57,23 @@ var uiFuncs = template.FuncMap{
 			return ss
 		}
 		return ss[:3]
+	},
+	"fmtBytes": func(b int64) string {
+		const (
+			KB = int64(1024)
+			MB = 1024 * KB
+			GB = 1024 * MB
+		)
+		switch {
+		case b >= GB:
+			return fmt.Sprintf("%.1f GB", float64(b)/float64(GB))
+		case b >= MB:
+			return fmt.Sprintf("%.1f MB", float64(b)/float64(MB))
+		case b >= KB:
+			return fmt.Sprintf("%.0f KB", float64(b)/float64(KB))
+		default:
+			return fmt.Sprintf("%d B", b)
+		}
 	},
 	"durStr": func(d time.Duration) string {
 		if d == 0 {
@@ -145,11 +163,12 @@ type homePage struct {
 }
 
 type repoRow struct {
-	Name       string
-	Format     string
-	Kind       string
-	Count      int  // -1 = browse not supported for this format
-	UpstreamOK *bool // nil = no data yet; true = healthy; false = error
+	Name          string
+	Format        string
+	Kind          string
+	ArtifactCount int    // blob count from BlobSizes.CountByRepo
+	SizeBytes     int64  // from BlobSizes.ByRepo
+	Health        string // "ok" | "down" | "" (non-proxy repos)
 }
 
 type repoPage struct {
@@ -222,27 +241,18 @@ func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 // ── handlers ──────────────────────────────────────────────────────────────────
 
 func (s *Server) uiHome(w http.ResponseWriter, r *http.Request) {
+	bsizes := s.GetBlobSizes()
 	var rows []repoRow
 	for _, rp := range s.Repos.All() {
-		count := -1
-		if h, ok := s.Handlers.For(rp.Format); ok {
-			if b, ok := h.(format.Browsable); ok {
-				c := s.browseCtx(rp)
-				if entries, err := b.BrowseRepo(c); err == nil {
-					count = len(entries)
-				}
-			}
-		}
 		row := repoRow{
-			Name: rp.Name, Format: rp.Format,
-			Kind: string(rp.Kind), Count: count,
+			Name:          rp.Name,
+			Format:        rp.Format,
+			Kind:          string(rp.Kind),
+			ArtifactCount: bsizes.CountByRepo[rp.Name],
+			SizeBytes:     bsizes.ByRepo[rp.Name],
 		}
-		if rp.Kind == repo.Proxy {
-			var hr proxy.HealthRecord
-			c := s.browseCtx(rp)
-			if ok, _ := c.Meta.GetJSON(rp.Name+":proxy", proxy.HealthKey, &hr); ok {
-				row.UpstreamOK = &hr.OK
-			}
+		if rp.Kind == repo.Proxy && rp.Upstream != "" {
+			row.Health = proxy.HealthOf(rp.Upstream)
 		}
 		rows = append(rows, row)
 	}
@@ -260,15 +270,10 @@ func (s *Server) uiHome(w http.ResponseWriter, r *http.Request) {
 				less = rows[i].Format < rows[j].Format
 			case "kind":
 				less = rows[i].Kind < rows[j].Kind
-			case "count":
-				ci, cj := rows[i].Count, rows[j].Count
-				if ci < 0 {
-					ci = -1
-				}
-				if cj < 0 {
-					cj = -1
-				}
-				less = ci < cj
+			case "artifacts":
+				less = rows[i].ArtifactCount < rows[j].ArtifactCount
+			case "size":
+				less = rows[i].SizeBytes < rows[j].SizeBytes
 			default: // "name"
 				sortCol = "name"
 				less = rows[i].Name < rows[j].Name
