@@ -747,8 +747,8 @@ td a:hover { text-decoration: underline; }
 .section-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 11px; }
 
 /* ── dashboard mid/bottom grids ─────────────────────────────────────────── */
-.mid-grid-3    { display: grid; grid-template-columns: 1.1fr 1.5fr 1fr; gap: 14px; }
-.mid-grid-2    { display: grid; grid-template-columns: 1.7fr 1fr;       gap: 14px; }
+.mid-grid-3    { display: grid; grid-template-columns: 1.1fr 1.5fr 1fr; gap: 14px; min-height: 200px; }
+.mid-grid-2    { display: grid; grid-template-columns: 1.7fr 1fr;       gap: 14px; min-height: 200px; }
 .bottom-grid-2 { display: grid; grid-template-columns: 1.5fr 1fr;       gap: 14px; }
 
 /* ── status dots ──────────────────────────────────────────────────────────── */
