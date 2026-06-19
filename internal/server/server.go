@@ -51,9 +51,11 @@ const defaultMaxUpload = 5 << 30
 
 // BlobSizes is a cached snapshot of blob storage usage.
 type BlobSizes struct {
-	TotalBytes int64
-	ByFormat   map[string]int64
-	ComputedAt time.Time
+	TotalBytes  int64
+	ByFormat    map[string]int64
+	ByRepo      map[string]int64 // bytes per repo name
+	CountByRepo map[string]int   // artifact (blob) count per repo name
+	ComputedAt  time.Time
 }
 
 type Server struct {
@@ -74,8 +76,9 @@ type Server struct {
 	client    *http.Client
 	oidcKey   []byte // HMAC key for signing OIDC state cookies; set by WithOIDC
 
-	blobMu    sync.RWMutex
-	blobSizes BlobSizes
+	blobMu      sync.RWMutex
+	blobSizes   BlobSizes
+	walkTrigger chan struct{} // non-blocking send kicks off an immediate re-walk
 }
 
 func New(m *repo.Manager, reg *format.Registry, b blob.Store, mt meta.Store, a auth.Store) *Server {
@@ -132,6 +135,7 @@ func (s *Server) WithAuditLog(al *obs.AuditLog) *Server {
 // WithBlobWalker starts a background goroutine that periodically computes
 // blob storage sizes. Call before Routes().
 func (s *Server) WithBlobWalker(ctx context.Context) *Server {
+	s.walkTrigger = make(chan struct{}, 1)
 	go func() {
 		s.walkBlobSizes()
 		tick := time.NewTicker(5 * time.Minute)
@@ -142,6 +146,8 @@ func (s *Server) WithBlobWalker(ctx context.Context) *Server {
 				return
 			case <-tick.C:
 				s.walkBlobSizes()
+			case <-s.walkTrigger:
+				s.walkBlobSizes()
 			}
 		}
 	}()
@@ -150,6 +156,8 @@ func (s *Server) WithBlobWalker(ctx context.Context) *Server {
 
 func (s *Server) walkBlobSizes() {
 	byFmt := map[string]int64{}
+	byRepo := map[string]int64{}
+	countByRepo := map[string]int{}
 	total := int64(0)
 	for _, rp := range s.Repos.All() {
 		keys, err := s.Blob.List(rp.Name + "/")
@@ -163,10 +171,18 @@ func (s *Server) walkBlobSizes() {
 			}
 			total += info.Size
 			byFmt[rp.Format] += info.Size
+			byRepo[rp.Name] += info.Size
+			countByRepo[rp.Name]++
 		}
 	}
 	s.blobMu.Lock()
-	s.blobSizes = BlobSizes{TotalBytes: total, ByFormat: byFmt, ComputedAt: time.Now()}
+	s.blobSizes = BlobSizes{
+		TotalBytes:  total,
+		ByFormat:    byFmt,
+		ByRepo:      byRepo,
+		CountByRepo: countByRepo,
+		ComputedAt:  time.Now(),
+	}
 	s.blobMu.Unlock()
 }
 
@@ -451,6 +467,24 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			s.Metrics.HTTPDuration.WithLabelValues(r.Method, route).Observe(dur.Seconds())
 			s.Metrics.Latency.Observe(dur)
 			s.Metrics.Throughput.Inc()
+
+			// Download counter: GET 200 on a repository artifact path.
+			if r.Method == http.MethodGet && status == http.StatusOK &&
+				strings.HasPrefix(r.URL.Path, "/repository/") {
+				rest := strings.TrimPrefix(r.URL.Path, "/repository/")
+				if repoName, _, ok := strings.Cut(rest, "/"); ok && repoName != "" {
+					s.Metrics.Downloads.WithLabelValues(repoName).Inc()
+				}
+			}
+		}
+
+		// Trigger a blob-size re-walk after any successful write to a repository.
+		if isWriteMethod(r.Method) && status < 300 &&
+			strings.HasPrefix(r.URL.Path, "/repository/") && s.walkTrigger != nil {
+			select {
+			case s.walkTrigger <- struct{}{}:
+			default: // walk already queued; skip
+			}
 		}
 
 	})

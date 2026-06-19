@@ -22,6 +22,9 @@ type Metrics struct {
 	// Index regen queue
 	QueueJobsTotal *prometheus.CounterVec // {type, result}
 
+	// Artifact downloads per repo
+	Downloads *prometheus.CounterVec // {repo}
+
 	// In-process latency + throughput (not Prometheus instruments)
 	Latency    *LatencyTracker
 	Throughput *ThroughputTracker
@@ -56,6 +59,11 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "forge_queue_jobs_total",
 			Help: "Index-regeneration jobs processed by the background worker.",
 		}, []string{"type", "result"}),
+
+		Downloads: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "forge_artifact_downloads_total",
+			Help: "Successful artifact GET responses (HTTP 200) per repository.",
+		}, []string{"repo"}),
 	}
 
 	m.Latency = NewLatencyTracker(1000)
@@ -71,6 +79,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.CacheHits,
 		m.CacheMisses,
 		m.QueueJobsTotal,
+		m.Downloads,
 	)
 	return m
 }
