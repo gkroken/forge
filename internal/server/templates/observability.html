@@ -4,24 +4,36 @@
   <!-- KPI row -->
   <div class="kpi-grid">
     <div class="kpi-card">
-      <div class="kpi-label">Total requests</div>
-      <div class="kpi-value">{{if .TotalRequests}}{{.TotalRequests}}<span class="kpi-unit">req</span>{{else}}—{{end}}</div>
-      <div class="kpi-sub">since startup</div>
+      <div class="kpi-icon-row"><span class="ms">timer</span><span class="kpi-label">Latency P50</span></div>
+      <div class="kpi-value">{{if .LatencyP50Ms}}{{.LatencyP50Ms}}<span class="kpi-unit">ms</span>{{else}}—{{end}}</div>
+      <div class="kpi-trend">
+        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
+        <span class="kpi-trend-sub">median response time</span>
+      </div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-label">Cache hits</div>
-      <div class="kpi-value">{{if .CacheHits}}{{.CacheHits}}{{else}}—{{end}}</div>
-      <div class="kpi-sub">proxy repositories</div>
+      <div class="kpi-icon-row"><span class="ms">speed</span><span class="kpi-label">Latency P95</span></div>
+      <div class="kpi-value">{{if .LatencyP95Ms}}{{.LatencyP95Ms}}<span class="kpi-unit">ms</span>{{else}}—{{end}}</div>
+      <div class="kpi-trend">
+        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
+        <span class="kpi-trend-sub">95th percentile</span>
+      </div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-label">Cache misses</div>
-      <div class="kpi-value">{{if .CacheMisses}}{{.CacheMisses}}{{else}}—{{end}}</div>
-      <div class="kpi-sub">upstream fetches</div>
+      <div class="kpi-icon-row"><span class="ms">trending_up</span><span class="kpi-label">Throughput</span></div>
+      <div class="kpi-value">{{if .ThroughputRPS}}{{printf "%.1f" .ThroughputRPS}}<span class="kpi-unit">req/s</span>{{else}}—{{end}}</div>
+      <div class="kpi-trend">
+        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
+        <span class="kpi-trend-sub">rolling 60s window</span>
+      </div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-label">Error rate</div>
+      <div class="kpi-icon-row"><span class="ms">error_outline</span><span class="kpi-label">Error rate</span></div>
       <div class="kpi-value">{{if .ErrorPct}}{{printf "%.2f" .ErrorPct}}<span class="kpi-unit">%</span>{{else}}—{{end}}</div>
-      <div class="kpi-sub">5xx responses</div>
+      <div class="kpi-trend">
+        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
+        <span class="kpi-trend-sub">5xx responses</span>
+      </div>
     </div>
   </div>
 
@@ -88,29 +100,34 @@
       <table class="admin-table">
         <thead>
           <tr>
-            <th style="width:120px;">Time</th>
-            <th>Actor</th>
-            <th>Method</th>
-            <th>Path</th>
-            <th>Status</th>
+            <th style="width:100px;">Time</th>
+            <th style="width:160px;">Actor</th>
+            <th style="width:110px;">Action</th>
+            <th>Target</th>
+            <th style="width:80px;">Status</th>
           </tr>
         </thead>
         <tbody>
           {{range .AuditLog}}
           <tr>
             <td class="col-mono">{{.Time}}</td>
-            <td style="color:var(--text);">{{.Actor}}</td>
-            <td class="col-mono" style="color:{{.MethodColor}};">{{.Method}}</td>
-            <td class="col-mono" style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{.Path}}</td>
             <td>
-              <span class="status-pill {{if .OK}}pill-ok{{else}}pill-err{{end}}">{{.Status}}</span>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span class="audit-avatar">{{.Initials}}</span>
+                <span style="color:var(--text);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100px;">{{.Actor}}</span>
+              </div>
+            </td>
+            <td style="font-size:12.5px;color:var(--text);">{{.Action}}</td>
+            <td class="col-mono" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-muted);">{{.Target}}</td>
+            <td>
+              <span class="status-pill {{if .OK}}pill-ok{{else}}pill-err{{end}}">{{if .OK}}OK{{else}}DENY{{end}}</span>
             </td>
           </tr>
           {{end}}
           {{if eq (len .AuditLog) 0}}
           <tr>
             <td colspan="5" style="text-align:center;color:var(--text-muted);padding:2rem;">
-              Audit events are logged to stderr. No in-memory log yet.
+              No audit events yet. Audit log captures write and auth events.
             </td>
           </tr>
           {{end}}

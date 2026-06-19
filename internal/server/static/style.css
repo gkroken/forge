@@ -947,6 +947,7 @@ td a:hover { text-decoration: underline; }
 
 /* ── status pills ────────────────────────────────────────────────────────── */
 .status-pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 5px; font-size: 11px; font-weight: 600; }
+.audit-avatar { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; background: var(--accent-subtle); color: var(--accent); font-size: 10px; font-weight: 700; flex-shrink: 0; font-family: 'IBM Plex Sans', sans-serif; letter-spacing: .3px; }
 .pill-ok     { background: var(--alert-ok-bg);   color: var(--alert-ok-fg); }
 .pill-warn   { background: var(--alert-warn-bg);  color: var(--alert-warn-fg); }
 .pill-muted  { background: var(--bg-hover);       color: var(--text-muted); }

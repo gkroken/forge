@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 // ── page types ────────────────────────────────────────────────────────────────
@@ -60,6 +61,9 @@ type observabilityPage struct {
 	CacheHits       int64
 	CacheMisses     int64
 	ErrorPct        float64
+	LatencyP50Ms    int64
+	LatencyP95Ms    int64
+	ThroughputRPS   float64
 	RateBars        []rateBar
 	StatusBreakdown []statusSlice
 	AuditLog        []auditRow
@@ -80,6 +84,9 @@ type statusSlice struct {
 type auditRow struct {
 	Time        string
 	Actor       string
+	Initials    string // up to 2 chars derived from Actor
+	Action      string // semantic verb: Published, Uploaded, Deleted, …
+	Target      string // short path excerpt
 	Method      string
 	MethodColor string
 	Path        string
@@ -266,9 +273,22 @@ func (s *Server) uiObservability(w http.ResponseWriter, r *http.Request) {
 		add("5", "5xx", "Server error", "#c0503f")
 	}
 
+	var latP50, latP95 int64
+	var rps float64
+	if s.Metrics != nil {
+		latP50 = s.Metrics.Latency.P50()
+		latP95 = s.Metrics.Latency.P95()
+		rps = s.Metrics.Throughput.RatePerSec()
+	}
+
 	methodColors := map[string]string{
 		"POST": "var(--dot-ok)", "PUT": "#c08a2d",
 		"DELETE": "#c0503f", "PATCH": "#c08a2d",
+	}
+	methodVerbs := map[string]string{
+		"POST": "Published", "PUT": "Uploaded",
+		"DELETE": "Deleted", "PATCH": "Updated",
+		"GET": "Downloaded",
 	}
 	var auditEntries []auditRow
 	if s.AuditLog != nil {
@@ -277,9 +297,20 @@ func (s *Server) uiObservability(w http.ResponseWriter, r *http.Request) {
 			if color == "" {
 				color = "var(--text-muted)"
 			}
+			action := methodVerbs[e.Method]
+			if action == "" {
+				action = e.Method
+			}
+			if e.Status >= 400 {
+				action = "Denied"
+			}
+			target := auditTarget(e.Path)
 			auditEntries = append(auditEntries, auditRow{
 				Time:        e.Timestamp.UTC().Format("15:04:05"),
 				Actor:       e.Actor,
+				Initials:    actorInitials(e.Actor),
+				Action:      action,
+				Target:      target,
 				Method:      e.Method,
 				MethodColor: color,
 				Path:        e.Path,
@@ -296,6 +327,9 @@ func (s *Server) uiObservability(w http.ResponseWriter, r *http.Request) {
 		CacheHits:       cacheHits,
 		CacheMisses:     cacheMisses,
 		ErrorPct:        errPct,
+		LatencyP50Ms:    latP50,
+		LatencyP95Ms:    latP95,
+		ThroughputRPS:   rps,
 		RateBars:        buildRepresentativeBars32(),
 		StatusBreakdown: breakdown,
 		AuditLog:        auditEntries,
@@ -352,6 +386,48 @@ func (s *Server) gatherCounterByLabelPrefix(name, labelName, prefix string) int6
 		}
 	}
 	return int64(total)
+}
+
+// ── audit helpers ─────────────────────────────────────────────────────────────
+
+// actorInitials derives up to 2 uppercase initials from a token description.
+// "ci-publish-token" → "CP", "anonymous" → "AN", "Alice B" → "AB".
+func actorInitials(actor string) string {
+	if actor == "" {
+		return "??"
+	}
+	// split on spaces and dashes
+	words := strings.FieldsFunc(actor, func(r rune) bool { return r == ' ' || r == '-' || r == '_' })
+	if len(words) >= 2 {
+		return strings.ToUpper(string([]rune(words[0])[:1]) + string([]rune(words[1])[:1]))
+	}
+	runes := []rune(actor)
+	if len(runes) >= 2 {
+		return strings.ToUpper(string(runes[:2]))
+	}
+	return strings.ToUpper(actor)
+}
+
+// auditTarget extracts a short human-readable target from a request path.
+// "/repository/releases/com/example/app/1.0/app-1.0.jar" → "app-1.0.jar"
+func auditTarget(path string) string {
+	if path == "" {
+		return "—"
+	}
+	// strip trailing slash
+	path = strings.TrimRight(path, "/")
+	idx := strings.LastIndexByte(path, '/')
+	if idx >= 0 && idx < len(path)-1 {
+		leaf := path[idx+1:]
+		if len(leaf) > 48 {
+			return leaf[:45] + "…"
+		}
+		return leaf
+	}
+	if len(path) > 48 {
+		return path[:45] + "…"
+	}
+	return path
 }
 
 // ── chart helpers ─────────────────────────────────────────────────────────────
