@@ -20,12 +20,13 @@ import (
 )
 
 type uploadPage struct {
-	Title   string
-	Repo    repo.Repository
-	RepoURL string
-	RepoHost string
-	Error   string
-	Flash   string
+	Title     string
+	ActiveNav string
+	Repo      repo.Repository
+	RepoURL   string
+	RepoHost  string
+	Error     string
+	Flash     string
 }
 
 const maxUploadSize = 512 << 20 // 512 MiB
@@ -43,10 +44,11 @@ func (s *Server) uiUpload(w http.ResponseWriter, r *http.Request, repoName strin
 
 	base := publicBase(r)
 	page := uploadPage{
-		Title:    "Upload — " + repoName,
-		Repo:     rp,
-		RepoURL:  base + "/repository/" + repoName + "/",
-		RepoHost: r.Host,
+		Title:     "Upload — " + repoName,
+		ActiveNav: "repos",
+		Repo:      rp,
+		RepoURL:   base + "/repository/" + repoName + "/",
+		RepoHost:  r.Host,
 	}
 
 	if r.Method == http.MethodPost {
@@ -54,21 +56,21 @@ func (s *Server) uiUpload(w http.ResponseWriter, r *http.Request, repoName strin
 		return
 	}
 
-	render(w, tmplUpload, "base.html", page)
+	render(w, tmplUpload, "admin_shell.html", page)
 }
 
 func (s *Server) processUpload(w http.ResponseWriter, r *http.Request, rp repo.Repository, page uploadPage) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
 	if err := r.ParseMultipartForm(32 << 20); err != nil { // #nosec G120 -- body already bounded by MaxBytesReader above
 		page.Error = "could not parse upload: " + err.Error()
-		render(w, tmplUpload, "base.html", page)
+		render(w, tmplUpload, "admin_shell.html", page)
 		return
 	}
 
 	f, hdr, err := r.FormFile("file")
 	if err != nil {
 		page.Error = "no file in upload"
-		render(w, tmplUpload, "base.html", page)
+		render(w, tmplUpload, "admin_shell.html", page)
 		return
 	}
 	defer f.Close()
@@ -76,7 +78,7 @@ func (s *Server) processUpload(w http.ResponseWriter, r *http.Request, rp repo.R
 	data, err := io.ReadAll(f)
 	if err != nil {
 		page.Error = "failed to read upload"
-		render(w, tmplUpload, "base.html", page)
+		render(w, tmplUpload, "admin_shell.html", page)
 		return
 	}
 
@@ -90,18 +92,18 @@ func (s *Server) processUpload(w http.ResponseWriter, r *http.Request, rp repo.R
 		uploadErr = s.uploadNPM(r, rp, data)
 	default:
 		page.Error = "browser upload not supported for " + rp.Format
-		render(w, tmplUpload, "base.html", page)
+		render(w, tmplUpload, "admin_shell.html", page)
 		return
 	}
 
 	if uploadErr != nil {
 		page.Error = uploadErr.Error()
-		render(w, tmplUpload, "base.html", page)
+		render(w, tmplUpload, "admin_shell.html", page)
 		return
 	}
 
 	page.Flash = "Upload successful."
-	render(w, tmplUpload, "base.html", page)
+	render(w, tmplUpload, "admin_shell.html", page)
 }
 
 // callHandler constructs a synthetic request and dispatches it through the
@@ -241,4 +243,3 @@ func readNPMPackageJSON(r io.Reader) (name, version string, err error) {
 	}
 	return "", "", fmt.Errorf("package.json with name and version not found in tarball")
 }
-

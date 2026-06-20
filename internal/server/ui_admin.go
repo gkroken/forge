@@ -37,6 +37,7 @@ type adminReposPage struct {
 
 type adminFormPage struct {
 	Title       string
+	ActiveNav   string
 	Repo        repo.Repository
 	KindStr     string // string(Repo.Kind) — avoids named-type comparison in templates
 	IsEdit      bool
@@ -80,6 +81,7 @@ type accessRow struct {
 
 type adminAccessPage struct {
 	Title       string
+	ActiveNav   string
 	AuthEnabled bool
 	Rows        []accessRow
 }
@@ -146,7 +148,7 @@ type roleCard struct {
 type adminTokensV2Page struct {
 	adminTokensPage
 	ActiveNav string
-	ActiveTab string     // "tokens" | "users" | "roles"
+	ActiveTab string // "tokens" | "users" | "roles"
 	Users     []userRow
 	Roles     []roleCard
 }
@@ -222,8 +224,9 @@ func (s *Server) uiAdminNewRepo(w http.ResponseWriter, r *http.Request) {
 		s.processRepoForm(w, r, "", false)
 		return
 	}
-	render(w, tmplAdminForm, "base.html", adminFormPage{
+	render(w, tmplAdminForm, "admin_shell.html", adminFormPage{
 		Title:       "Admin — New repository",
+		ActiveNav:   "repos",
 		Repo:        repo.Repository{Kind: repo.Hosted},
 		KindStr:     "hosted",
 		Formats:     allFormats,
@@ -490,8 +493,9 @@ func (s *Server) reRenderForm(w http.ResponseWriter, r *http.Request, name strin
 		s.renderRepoConfig(w, rp, "settings", errMsg, "")
 		return
 	}
-	render(w, tmplAdminForm, "base.html", adminFormPage{
+	render(w, tmplAdminForm, "admin_shell.html", adminFormPage{
 		Title:       "Admin — New repository",
+		ActiveNav:   "repos",
 		Repo:        rp,
 		KindStr:     string(rp.Kind),
 		Error:       errMsg,
@@ -908,6 +912,7 @@ func (s *Server) uiAdminAccess(w http.ResponseWriter, r *http.Request) {
 
 	page := adminAccessPage{
 		Title:       "Admin — Access",
+		ActiveNav:   "tokens",
 		AuthEnabled: s.Auth != nil,
 	}
 
@@ -935,5 +940,5 @@ func (s *Server) uiAdminAccess(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	render(w, tmplAccess, "base.html", page)
+	render(w, tmplAccess, "admin_shell.html", page)
 }
