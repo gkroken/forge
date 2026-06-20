@@ -264,13 +264,13 @@ function renderDetail(d) {
   h += '<div class="browse-detail-asset-label">Selected asset</div>';
   h += '<div class="browse-detail-filename">' + esc(fname) + '</div>';
 
-  // Actions row
+  // Actions row — Browse is read-only (consume surface); mutation lives in the
+  // repo Content tab. Download + copy only, no delete here.
   h += '<div class="browse-detail-actions">';
   if (d.download_url) {
     h += '<a href="' + esc(d.download_url) + '" class="btn btn-sm btn-primary" style="flex:1;text-align:center;">↓ Download</a>';
     h += '<button class="btn btn-sm btn-icon" id="copy-url-btn" title="Copy URL">⧉</button>';
   }
-  h += '<button class="btn btn-sm btn-icon btn-danger" id="delete-ver-btn" title="Delete version">🗑</button>';
   h += '</div>';
 
   // Metadata grid
@@ -307,36 +307,6 @@ function renderDetail(d) {
 
   const copyBtn = document.getElementById('copy-url-btn');
   if (copyBtn) copyBtn.addEventListener('click', () => navigator.clipboard.writeText(d.download_url));
-
-  const delBtn = document.getElementById('delete-ver-btn');
-  if (delBtn) delBtn.addEventListener('click', () => deleteVersion(d));
-}
-
-async function deleteVersion(d) {
-  if (!confirm('Delete ' + d.name + ' ' + d.version + ' from ' + d.repo + '?')) return;
-  let url, method = 'DELETE';
-  if (d.is_proxy) {
-    // Expire proxy cache entry
-    url = '/api/v1/repos/' + encodeURIComponent(d.repo) + '/cache/' +
-          encodeURIComponent(d.name) + '/' + encodeURIComponent(d.version);
-  } else {
-    // Delete the artifact blob directly
-    url = d.download_url.replace(/^https?:\/\/[^/]+/, '');
-  }
-  try {
-    const res = await fetch(url, {method});
-    if (res.ok) {
-      document.getElementById('detail-pane').innerHTML =
-        '<div class="browse-placeholder"><span class="ms" style="font-size:40px;color:var(--dot-ok)">check_circle</span>' +
-        '<p style="color:var(--dot-ok)">Deleted.</p></div>';
-      // Refresh the center pane versions list
-      selectPkg(currentRepo, d.name);
-    } else {
-      alert('Delete failed: HTTP ' + res.status);
-    }
-  } catch (e) {
-    alert('Delete failed: ' + e);
-  }
 }
 
 // ── Unified event delegation for the left pane ────────────────────────────────
