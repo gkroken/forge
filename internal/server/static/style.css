@@ -809,7 +809,11 @@ td a:hover { text-decoration: underline; }
   background: var(--bg); cursor: text; flex-shrink: 0;
 }
 .topbar-search-icon { font-size: 17px; color: var(--text-muted); }
-.topbar-search-hint { font-size: 13px; color: var(--text-light); user-select: none; }
+.topbar-search-input {
+  flex: 1; min-width: 0; border: none; background: transparent; outline: none;
+  font-size: 13px; color: var(--text); font-family: inherit;
+}
+.topbar-search-input::placeholder { color: var(--text-light); }
 .topbar-icon-group { margin-left: auto; display: flex; align-items: center; gap: 2px; }
 .topbar-icon-btn {
   width: 32px; height: 32px; border: none; background: none; cursor: pointer;

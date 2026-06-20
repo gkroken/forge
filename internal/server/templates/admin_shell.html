@@ -48,10 +48,12 @@
   <div class="admin-main">
     <div class="admin-topbar">
       <span class="admin-topbar-title">{{.Title}}</span>
-      <div class="topbar-search">
+      <form action="/ui/search" method="get" class="topbar-search" role="search" hx-boost="true">
         <span class="ms topbar-search-icon">search</span>
-        <span class="topbar-search-hint">Search repositories &amp; artifacts</span>
-      </div>
+        <input type="search" name="q" class="topbar-search-input" autocomplete="off"
+               placeholder="Search repositories &amp; artifacts"
+               value="{{if eq .Title "Search"}}{{.Query}}{{end}}">
+      </form>
       <div class="topbar-icon-group">
         <button class="topbar-icon-btn" type="button" title="Notifications"><span class="ms">notifications</span></button>
         <button class="topbar-icon-btn" type="button" title="Help"><span class="ms">help</span></button>
