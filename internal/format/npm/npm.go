@@ -652,13 +652,7 @@ func (h *Handler) tarball(w http.ResponseWriter, c *format.Context, sub string) 
 	}
 	// Proxy: use the shared Fetcher (TTL, ETag, stale-on-error, retries, auth).
 	upURL := strings.TrimRight(c.Repo.Upstream, "/") + "/" + sub
-	tcfg := proxy.ConfigForRepo(c.Repo)
-	if c.Metrics != nil {
-		m, rname := c.Metrics, c.Repo.Name
-		tcfg.RecordHit = func() { m.CacheHits.WithLabelValues(rname).Inc() }
-		tcfg.RecordMiss = func() { m.CacheMisses.WithLabelValues(rname).Inc() }
-	}
-	f := proxy.New(c.HTTP, tcfg)
+	f := proxy.New(c.HTTP, c.ProxyConfig())
 	rc, _, err := f.Fetch(key, c.Repo.Name+":proxy", upURL, c.Blob, c.Meta)
 	if errors.Is(err, proxy.ErrNotFound) {
 		http.NotFound(w, nil)
@@ -682,13 +676,7 @@ func (h *Handler) groupTarball(w http.ResponseWriter, c *format.Context, sub str
 		key := mc.Key(sub)
 		if mc.Repo.Kind == repo.Proxy {
 			upURL := strings.TrimRight(mc.Repo.Upstream, "/") + "/" + sub
-			gcfg := proxy.ConfigForRepo(mc.Repo)
-			if mc.Metrics != nil {
-				m, rname := mc.Metrics, mc.Repo.Name
-				gcfg.RecordHit = func() { m.CacheHits.WithLabelValues(rname).Inc() }
-				gcfg.RecordMiss = func() { m.CacheMisses.WithLabelValues(rname).Inc() }
-			}
-			f := proxy.New(mc.HTTP, gcfg)
+			f := proxy.New(mc.HTTP, mc.ProxyConfig())
 			rc, _, err := f.Fetch(key, mc.Repo.Name+":proxy", upURL, mc.Blob, mc.Meta)
 			if err == nil {
 				defer rc.Close()

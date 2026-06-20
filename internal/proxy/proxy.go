@@ -116,6 +116,14 @@ type Config struct {
 	// May be nil.
 	RecordMiss func()
 
+	// RecordRevalidation is called when a conditional GET returned 304 Not Modified.
+	// May be nil.
+	RecordRevalidation func()
+
+	// RecordNegative is called when a negative-cached 404 is served without
+	// contacting upstream. May be nil.
+	RecordNegative func()
+
 	// Timeout is the per-request deadline for upstream HTTP calls.
 	// Zero means no deadline beyond what the http.Client sets.
 	Timeout time.Duration
@@ -328,6 +336,9 @@ func (f *Fetcher) Fetch(blobKey, cacheNS, upURL string, blobs blob.Store, metas 
 
 	// ── 1. Negative cache ──────────────────────────────────────────────────
 	if !f.cfg.DisableNegativeCache && hasMeta && entry.NotFound && now.Sub(entry.FetchedAt) < f.cfg.negativeTTL() {
+		if f.cfg.RecordNegative != nil {
+			f.cfg.RecordNegative()
+		}
 		return nil, "", ErrNotFound
 	}
 
@@ -390,8 +401,8 @@ func (f *Fetcher) Fetch(blobKey, cacheNS, upURL string, blobs blob.Store, metas 
 		metas.PutJSON(cacheNS, blobKey, entry)
 		metas.PutJSON(cacheNS, HealthKey, HealthRecord{OK: true, CheckedAt: now}) //nolint:errcheck
 		if rc, err := blobs.Get(blobKey); err == nil {
-			if f.cfg.RecordHit != nil {
-				f.cfg.RecordHit()
+			if f.cfg.RecordRevalidation != nil {
+				f.cfg.RecordRevalidation()
 			}
 			return rc, entry.ContentType, nil
 		}

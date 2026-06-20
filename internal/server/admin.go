@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"forge/internal/cleanup"
+	"forge/internal/obs"
+	"forge/internal/proxy"
 	"forge/internal/repo"
 )
 
@@ -164,6 +166,24 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleCleanup(w, r, repoName)
+		return
+	}
+
+	// /api/v1/repos/{name}/cache-stats — hourly hit/miss ring buffer (admin only).
+	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "cache-stats" {
+		if !s.Enforcer.RequireAdmin(w, r) {
+			return
+		}
+		s.handleCacheStats(w, r, repoName)
+		return
+	}
+
+	// /api/v1/repos/{name}/invalidate — flush proxy cache for one repo (admin only).
+	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "invalidate" {
+		if !s.Enforcer.RequireAdmin(w, r) {
+			return
+		}
+		s.handleInvalidate(w, r, repoName)
 		return
 	}
 
@@ -411,4 +431,62 @@ func (s *Server) handleCleanupPolicyByName(w http.ResponseWriter, r *http.Reques
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handleCacheStats serves GET /api/v1/repos/{name}/cache-stats.
+func (s *Server) handleCacheStats(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	rp, ok := s.Repos.Get(name)
+	if !ok {
+		http.Error(w, "repository not found: "+name, http.StatusNotFound)
+		return
+	}
+	if rp.Kind != repo.Proxy {
+		http.Error(w, "cache stats only available for proxy repositories", http.StatusBadRequest)
+		return
+	}
+	var snap obs.StatsSnapshot
+	if v, loaded := s.repoStats.Load(name); loaded {
+		snap = v.(*obs.RepoStats).Snapshot()
+	} else {
+		snap = obs.StatsSnapshot{Hourly: make([]obs.HourlyBucket, 24)}
+		for i := range snap.Hourly {
+			snap.Hourly[i].Hour = i
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(snap) //nolint:errcheck
+}
+
+// handleInvalidate serves POST /api/v1/repos/{name}/invalidate.
+// Deletes all proxy-cached blobs and their meta entries for the named repo.
+func (s *Server) handleInvalidate(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if _, ok := s.Repos.Get(name); !ok {
+		http.Error(w, "repository not found: "+name, http.StatusNotFound)
+		return
+	}
+	cacheNS := name + ":proxy"
+	keys, err := s.Meta.List(cacheNS)
+	if err != nil {
+		http.Error(w, "failed to list cache entries: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var deleted int
+	for _, key := range keys {
+		if key == proxy.HealthKey {
+			continue
+		}
+		s.Blob.Delete(key)          //nolint:errcheck
+		s.Meta.Delete(cacheNS, key) //nolint:errcheck
+		deleted++
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]int{"deleted": deleted}) //nolint:errcheck
 }

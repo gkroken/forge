@@ -81,6 +81,8 @@ type Server struct {
 	blobMu      sync.RWMutex
 	blobSizes   BlobSizes
 	walkTrigger chan struct{} // non-blocking send kicks off an immediate re-walk
+
+	repoStats sync.Map // map[string]*obs.RepoStats; lazy-init per proxy repo
 }
 
 func New(m *repo.Manager, reg *format.Registry, b blob.Store, mt meta.Store, a auth.Store) *Server {
@@ -293,10 +295,23 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no handler for format: "+rp.Format, http.StatusNotImplemented)
 		return
 	}
+	var repoStats *obs.RepoStats
+	if rp.Kind == repo.Proxy {
+		v, _ := s.repoStats.LoadOrStore(rp.Name, &obs.RepoStats{})
+		repoStats = v.(*obs.RepoStats)
+	}
 	h.Serve(w, r, &format.Context{
 		Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: s.client, Sub: sub,
 		Repos: s.Repos, Queue: s.Queue, Metrics: s.Metrics,
+		RepoStats: repoStats, RepoStatsFn: s.lookupRepoStats,
 	})
+}
+
+func (s *Server) lookupRepoStats(name string) *obs.RepoStats {
+	if v, ok := s.repoStats.Load(name); ok {
+		return v.(*obs.RepoStats)
+	}
+	return nil
 }
 
 func (s *Server) handleOCI(w http.ResponseWriter, r *http.Request) {

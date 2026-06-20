@@ -12,6 +12,7 @@ import (
 	"forge/internal/blob"
 	"forge/internal/meta"
 	"forge/internal/obs"
+	"forge/internal/proxy"
 	"forge/internal/queue"
 	"forge/internal/repo"
 )
@@ -26,6 +27,11 @@ type Context struct {
 	Repos   *repo.Manager   // non-nil; used by group handlers to look up members
 	Queue   queue.Queue     // may be nil; if set, handlers enqueue async regen jobs
 	Metrics *obs.Metrics    // may be nil; used to record per-repo cache counters
+
+	// RepoStats is the per-repo hourly ring buffer (nil for non-proxy repos).
+	RepoStats *obs.RepoStats
+	// RepoStatsFn looks up per-repo stats by name; used by group handlers.
+	RepoStatsFn func(string) *obs.RepoStats
 }
 
 // Key namespaces a blob key under the repo so repos never collide in storage.
@@ -42,7 +48,51 @@ func (c *Context) MemberCtx(name string) (*Context, bool) {
 	if !ok || r.Kind == repo.Group {
 		return nil, false
 	}
-	return &Context{Repo: r, Blob: c.Blob, Meta: c.Meta, HTTP: c.HTTP, Sub: c.Sub, Repos: c.Repos, Queue: c.Queue, Metrics: c.Metrics}, true
+	var memberStats *obs.RepoStats
+	if c.RepoStatsFn != nil {
+		memberStats = c.RepoStatsFn(r.Name)
+	}
+	return &Context{
+		Repo: r, Blob: c.Blob, Meta: c.Meta, HTTP: c.HTTP, Sub: c.Sub,
+		Repos: c.Repos, Queue: c.Queue, Metrics: c.Metrics,
+		RepoStats: memberStats, RepoStatsFn: c.RepoStatsFn,
+	}, true
+}
+
+// ProxyConfig builds a proxy.Config for this repo, wiring Prometheus counters
+// (from Metrics) and per-repo ring-buffer callbacks (from RepoStats).
+func (c *Context) ProxyConfig() proxy.Config {
+	cfg := proxy.ConfigForRepo(c.Repo)
+	if c.Metrics != nil {
+		m, rname := c.Metrics, c.Repo.Name
+		cfg.RecordHit = func() { m.CacheHits.WithLabelValues(rname).Inc() }
+		cfg.RecordRevalidation = func() { m.CacheHits.WithLabelValues(rname).Inc() }
+		cfg.RecordMiss = func() { m.CacheMisses.WithLabelValues(rname).Inc() }
+	}
+	if c.RepoStats != nil {
+		s := c.RepoStats
+		prevHit, prevReval, prevMiss := cfg.RecordHit, cfg.RecordRevalidation, cfg.RecordMiss
+		cfg.RecordHit = func() {
+			if prevHit != nil {
+				prevHit()
+			}
+			s.RecordHit()
+		}
+		cfg.RecordRevalidation = func() {
+			if prevReval != nil {
+				prevReval()
+			}
+			s.RecordRevalidation()
+		}
+		cfg.RecordMiss = func() {
+			if prevMiss != nil {
+				prevMiss()
+			}
+			s.RecordMiss()
+		}
+		cfg.RecordNegative = s.RecordNegative
+	}
+	return cfg
 }
 
 // Handler implements one package format.
@@ -80,6 +130,7 @@ type ComponentDetail struct {
 type VersionInfo struct {
 	Version     string
 	DownloadURL string
+	PublishedAt time.Time // zero = unknown
 }
 
 // Dep is one entry in a component's dependency list.
