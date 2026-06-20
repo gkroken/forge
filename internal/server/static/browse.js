@@ -212,13 +212,35 @@ async function selectPkg(repo, pkg) {
   }
 }
 
+// browseBreadcrumb renders the location trail above the version list:
+//   {repo} / {group} / {path} / {artifact}   (maven, component "group.path:artifact")
+//   {repo} / {name}                           (flat formats — npm/helm/cran/oci)
+// The final segment (the component itself) is emphasised.
+function browseBreadcrumb(repo, name) {
+  let segs;
+  const colon = name.indexOf(':');
+  if (colon !== -1) {
+    const group = name.slice(0, colon).split('.').filter(Boolean);
+    segs = group.concat([name.slice(colon + 1)]);
+  } else {
+    segs = [name];
+  }
+  let h = '<div class="browse-breadcrumb"><span class="browse-bc-seg">' + esc(repo) + '</span>';
+  segs.forEach((s, i) => {
+    h += '<span class="browse-bc-sep">/</span>';
+    const cls = i === segs.length - 1 ? 'browse-bc-cur' : 'browse-bc-seg';
+    h += '<span class="' + cls + '">' + esc(s) + '</span>';
+  });
+  return h + '</div>';
+}
+
 function renderVersions(d) {
   const cp = document.getElementById('center-pane');
   if (!d.versions || !d.versions.length) {
     cp.innerHTML = '<div class="browse-msg">No versions found.</div>';
     return;
   }
-  let h = '<div class="browse-ver-title">' + esc(d.name) + '</div>';
+  let h = browseBreadcrumb(currentRepo, d.name);
   h += '<table class="browse-ver-tbl"><thead><tr>' +
        '<th>Version</th><th>Size</th><th>Modified</th>' +
        '</tr></thead><tbody>';
