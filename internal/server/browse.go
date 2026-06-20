@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"forge/internal/format"
+	"forge/internal/repo"
 )
 
 // uiBrowseTree serves GET /ui/browse/{repo}/tree?prefix=
@@ -242,6 +243,7 @@ func (s *Server) uiBrowseVersions(w http.ResponseWriter, r *http.Request, repoNa
 			resp.Versions = append(resp.Versions, browseVersionRow{
 				Version:     v.Version,
 				PublishedAt: v.PublishedAt,
+				SizeBytes:   v.SizeBytes,
 			})
 		}
 	} else if b, ok := h.(format.Browsable); ok {
@@ -301,16 +303,27 @@ func (s *Server) uiBrowseDetail(w http.ResponseWriter, r *http.Request, repoName
 		return
 	}
 
+	blobStore := rp.BlobStore
+	if blobStore == "" {
+		blobStore = "default"
+	}
 	resp := browseDetailResponse{
-		Name:    pkg,
-		Version: ver,
-		Format:  rp.Format,
-		Repo:    repoName,
+		Name:      pkg,
+		Version:   ver,
+		Format:    rp.Format,
+		Repo:      repoName,
+		BlobStore: blobStore,
+		IsProxy:   rp.Kind == repo.Proxy,
 	}
 	for _, v := range detail.Versions {
 		if v.Version == ver {
 			resp.PublishedAt = v.PublishedAt
 			resp.DownloadURL = v.DownloadURL
+			resp.SizeBytes = v.SizeBytes
+			resp.SHA256 = v.SHA256
+			resp.SHA1 = v.SHA1
+			resp.ContentType = v.ContentType
+			resp.FileName = v.FileName
 			break
 		}
 	}
@@ -331,6 +344,7 @@ type browseVersionsResponse struct {
 type browseVersionRow struct {
 	Version     string    `json:"version"`
 	PublishedAt time.Time `json:"published_at,omitempty"`
+	SizeBytes   int64     `json:"size_bytes,omitempty"`
 }
 
 type browseDetailResponse struct {
@@ -338,8 +352,15 @@ type browseDetailResponse struct {
 	Version     string    `json:"version"`
 	Format      string    `json:"format"`
 	Repo        string    `json:"repo"`
+	BlobStore   string    `json:"blob_store,omitempty"`
+	IsProxy     bool      `json:"is_proxy"`
 	PublishedAt time.Time `json:"published_at,omitempty"`
 	DownloadURL string    `json:"download_url"`
+	SizeBytes   int64     `json:"size_bytes,omitempty"`
+	SHA256      string    `json:"sha256,omitempty"`
+	SHA1        string    `json:"sha1,omitempty"`
+	ContentType string    `json:"content_type,omitempty"`
+	FileName    string    `json:"file_name,omitempty"`
 }
 
 // treeNode is one entry in the browse-tree API response.

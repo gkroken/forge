@@ -11,7 +11,7 @@
     <div id="pkg-list" class="browse-item-list">
       {{range .Repos}}
       <div class="browse-repo-node{{if eq .Name $.SelectedRepo}} auto-expand{{end}}"
-           data-repo="{{.Name}}" data-format="{{.Format}}">
+           data-repo="{{.Name}}" data-format="{{.Format}}" data-kind="{{.Kind}}">
         <div class="browse-repo-hdr">
           <span class="ms browse-tree-toggle">chevron_right</span>
           <span class="badge fmt-{{.Format}} fmt-mono" style="font-size:10px">{{formatIcon .Format}}{{.Format}}</span>

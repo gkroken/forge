@@ -157,6 +157,11 @@ type VersionInfo struct {
 	Version     string
 	DownloadURL string
 	PublishedAt time.Time // zero = unknown
+	SizeBytes   int64     // 0 = unknown
+	SHA256      string
+	SHA1        string
+	ContentType string // e.g. "application/java-archive"
+	FileName    string // e.g. "spring-core-6.2.7.jar"
 }
 
 // Dep is one entry in a component's dependency list.

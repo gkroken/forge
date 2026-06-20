@@ -802,15 +802,17 @@ func (h *Handler) Inspect(c *format.Context, baseURL, comp string) (format.Compo
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(allVersions)))
 
-	// Map version → first blob key to stat for ModTime (upload timestamp proxy).
+	// Map version → blob key to stat; prefer .jar over .pom for size accuracy.
 	versionKey := make(map[string]string, len(allVersions))
 	for _, k := range keys {
 		rel := strings.TrimPrefix(k, blobPrefix)
 		ver, _, ok := strings.Cut(rel, "/")
-		if ok && len(ver) > 0 && ver[0] >= '0' && ver[0] <= '9' {
-			if _, seen := versionKey[ver]; !seen {
-				versionKey[ver] = k
-			}
+		if !ok || len(ver) == 0 || ver[0] < '0' || ver[0] > '9' {
+			continue
+		}
+		existing, seen := versionKey[ver]
+		if !seen || (strings.HasSuffix(k, ".jar") && !strings.HasSuffix(existing, ".jar")) {
+			versionKey[ver] = k
 		}
 	}
 
@@ -824,6 +826,17 @@ func (h *Handler) Inspect(c *format.Context, baseURL, comp string) (format.Compo
 		if key, ok := versionKey[ver]; ok {
 			if info, exists, err := c.Blob.Stat(key); err == nil && exists {
 				vi.PublishedAt = info.ModTime
+				vi.SizeBytes = info.Size
+				vi.SHA256 = info.SHA256
+				vi.SHA1 = info.SHA1
+			}
+			fname := key[strings.LastIndex(key, "/")+1:]
+			vi.FileName = fname
+			switch {
+			case strings.HasSuffix(fname, ".jar"), strings.HasSuffix(fname, ".war"), strings.HasSuffix(fname, ".ear"):
+				vi.ContentType = "application/java-archive"
+			case strings.HasSuffix(fname, ".pom"):
+				vi.ContentType = "application/xml"
 			}
 		}
 		versions[i] = vi

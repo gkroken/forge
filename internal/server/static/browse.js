@@ -45,12 +45,13 @@ function toggleRepo(node) {
 async function loadRepoContent(repoNode, content) {
   const repo   = repoNode.dataset.repo;
   const format = repoNode.dataset.format;
+  const kind   = repoNode.dataset.kind || '';
   content.innerHTML = '<div class="browse-msg">Loading…</div>';
   try {
     if (format === 'maven') {
       await loadTreeLevel(repo, '', 0, content);
     } else {
-      await loadFlatPkgs(repo, content);
+      await loadFlatPkgs(repo, content, kind);
     }
     content.dataset.loaded = '1';
   } catch (e) {
@@ -60,26 +61,26 @@ async function loadRepoContent(repoNode, content) {
 
 // ── Flat browse (npm / helm / cran / oci) ────────────────────────────────────
 
-async function loadFlatPkgs(repo, container) {
+async function loadFlatPkgs(repo, container, kind) {
   const res = await fetch('/api/v1/repos/' + repo + '/components?limit=200');
   if (!res.ok) throw new Error('HTTP ' + res.status);
   const d = await res.json();
   const pkgs = d.components || [];
-
-  if (!pkgs.length) {
-    container.innerHTML = '<div class="browse-msg">No packages.</div>';
-    return;
-  }
 
   // Search input + list wrapper
   container.innerHTML =
     '<div class="browse-search-wrap" style="border-bottom:1px solid var(--border)">' +
     '<input type="search" class="repo-pkg-search" placeholder="Filter…" autocomplete="off">' +
     '</div>' +
-    '<div class="repo-pkg-list"></div>';
+    '<div class="repo-pkg-list"></div>' +
+    (kind === 'proxy'
+      ? '<div class="browse-proxy-lookup">' +
+        '<input type="text" class="proxy-pkg-input" placeholder="Look up any package…" autocomplete="off">' +
+        '<button class="btn btn-sm proxy-pkg-go">Go</button>' +
+        '</div>'
+      : '');
 
   const listEl = container.querySelector('.repo-pkg-list');
-  const allPkgs = pkgs;
 
   function render(items) {
     listEl.innerHTML = items.length
@@ -90,14 +91,28 @@ async function loadFlatPkgs(repo, container) {
           '<span class="browse-pkg-ver">' + esc((p.versions && p.versions[0]) || '') + '</span>' +
           '</div>'
         ).join('')
-      : '<div class="browse-msg">No match.</div>';
+      : '<div class="browse-msg" style="font-size:12px;padding:8px 12px;">' +
+        (kind === 'proxy' ? 'No cached packages. Use "Look up" below.' : 'No packages.') +
+        '</div>';
   }
-  render(allPkgs);
+  render(pkgs);
 
   container.querySelector('.repo-pkg-search').addEventListener('input', function() {
     const q = this.value.toLowerCase();
-    render(q ? allPkgs.filter(p => p.name.toLowerCase().includes(q)) : allPkgs);
+    render(q ? pkgs.filter(p => p.name.toLowerCase().includes(q)) : pkgs);
   });
+
+  // Proxy: direct lookup input
+  const goBtn = container.querySelector('.proxy-pkg-go');
+  const input = container.querySelector('.proxy-pkg-input');
+  if (goBtn && input) {
+    const lookup = () => {
+      const name = input.value.trim();
+      if (name) selectPkg(repo, name);
+    };
+    goBtn.addEventListener('click', lookup);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') lookup(); });
+  }
 }
 
 // ── Tree browse (maven) ───────────────────────────────────────────────────────
@@ -200,11 +215,15 @@ function renderVersions(d) {
     return;
   }
   let h = '<div class="browse-ver-title">' + esc(d.name) + '</div>';
-  h += '<table class="browse-ver-tbl"><thead><tr><th>Version</th><th>Published</th></tr></thead><tbody>';
+  h += '<table class="browse-ver-tbl"><thead><tr>' +
+       '<th>Version</th><th>Size</th><th>Modified</th>' +
+       '</tr></thead><tbody>';
   for (const v of d.versions) {
+    const pub = v.published_at && !v.published_at.startsWith('0001') ? v.published_at.substring(0, 10) : '—';
     h += '<tr class="browse-ver-row" data-pkg="' + esc(d.pkg) + '" data-ver="' + esc(v.version) + '">';
     h += '<td class="col-mono">' + esc(v.version) + '</td>';
-    h += '<td class="col-date">' + (v.published_at ? v.published_at.substring(0, 10) : '—') + '</td>';
+    h += '<td class="col-mono">' + (v.size_bytes ? fmtBytes(v.size_bytes) : '—') + '</td>';
+    h += '<td class="col-date">' + pub + '</td>';
     h += '</tr>';
   }
   h += '</tbody></table>';
@@ -236,29 +255,84 @@ async function selectVer(pkg, ver, el) {
 }
 
 function renderDetail(d) {
+  const fname = d.file_name || (d.name + '-' + d.version);
   let h = '<div class="browse-detail">';
-  h += '<div class="browse-detail-ver">' + esc(d.version) + '</div>';
-  h += '<div class="browse-detail-pkg">' + esc(d.name) + '</div>';
+  h += '<div class="browse-detail-asset-label">Selected asset</div>';
+  h += '<div class="browse-detail-filename">' + esc(fname) + '</div>';
+
+  // Actions row
+  h += '<div class="browse-detail-actions">';
   if (d.download_url) {
-    h += '<div class="browse-detail-actions">';
-    h += '<a href="' + esc(d.download_url) + '" class="btn btn-sm">↓ Download</a>';
-    h += '<button class="btn btn-sm" id="copy-url-btn">⧉ Copy URL</button>';
-    h += '</div>';
+    h += '<a href="' + esc(d.download_url) + '" class="btn btn-sm btn-primary" style="flex:1;text-align:center;">↓ Download</a>';
+    h += '<button class="btn btn-sm btn-icon" id="copy-url-btn" title="Copy URL">⧉</button>';
   }
-  const rows = [
-    ['Format',     d.format],
-    ['Repository', d.repo],
-    ['Published',  d.published_at ? d.published_at.substring(0, 10) : null],
+  h += '<button class="btn btn-sm btn-icon btn-danger" id="delete-ver-btn" title="Delete version">🗑</button>';
+  h += '</div>';
+
+  // Metadata grid
+  const pub = d.published_at && !d.published_at.startsWith('0001') ? d.published_at.substring(0, 10) : null;
+  const meta = [
+    ['Format',       d.format],
+    ['Repository',   d.repo],
+    ['Blob store',   d.blob_store],
+    ['Size',         d.size_bytes ? fmtBytes(d.size_bytes) : null],
+    ['Content-type', d.content_type],
+    ['Published',    pub],
   ];
   h += '<dl class="browse-meta">';
-  for (const [k, v] of rows) {
-    if (v) h += '<dt>' + esc(k) + '</dt><dd>' + esc(String(v)) + '</dd>';
+  for (const [k, v] of meta) {
+    if (v) h += '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>';
   }
-  h += '</dl></div>';
+  h += '</dl>';
+
+  // Checksums
+  if (d.sha256) {
+    h += '<div class="browse-checksum">' +
+         '<div class="browse-cksum-label">SHA-256</div>' +
+         '<div class="browse-cksum-val">' + esc(d.sha256) + '</div>' +
+         '</div>';
+  }
+  if (d.sha1) {
+    h += '<div class="browse-checksum">' +
+         '<div class="browse-cksum-label">SHA-1</div>' +
+         '<div class="browse-cksum-val">' + esc(d.sha1) + '</div>' +
+         '</div>';
+  }
+  h += '</div>';
   document.getElementById('detail-pane').innerHTML = h;
 
   const copyBtn = document.getElementById('copy-url-btn');
   if (copyBtn) copyBtn.addEventListener('click', () => navigator.clipboard.writeText(d.download_url));
+
+  const delBtn = document.getElementById('delete-ver-btn');
+  if (delBtn) delBtn.addEventListener('click', () => deleteVersion(d));
+}
+
+async function deleteVersion(d) {
+  if (!confirm('Delete ' + d.name + ' ' + d.version + ' from ' + d.repo + '?')) return;
+  let url, method = 'DELETE';
+  if (d.is_proxy) {
+    // Expire proxy cache entry
+    url = '/api/v1/repos/' + encodeURIComponent(d.repo) + '/cache/' +
+          encodeURIComponent(d.name) + '/' + encodeURIComponent(d.version);
+  } else {
+    // Delete the artifact blob directly
+    url = d.download_url.replace(/^https?:\/\/[^/]+/, '');
+  }
+  try {
+    const res = await fetch(url, {method});
+    if (res.ok) {
+      document.getElementById('detail-pane').innerHTML =
+        '<div class="browse-placeholder"><span class="ms" style="font-size:40px;color:var(--dot-ok)">check_circle</span>' +
+        '<p style="color:var(--dot-ok)">Deleted.</p></div>';
+      // Refresh the center pane versions list
+      selectPkg(currentRepo, d.name);
+    } else {
+      alert('Delete failed: HTTP ' + res.status);
+    }
+  } catch (e) {
+    alert('Delete failed: ' + e);
+  }
 }
 
 // ── Unified event delegation for the left pane ────────────────────────────────
@@ -318,4 +392,10 @@ if (autoNode) toggleRepo(autoNode);
 // ── Shared util ───────────────────────────────────────────────────────────────
 function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function fmtBytes(n) {
+  if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(2) + ' MB';
+  if (n >= 1024)        return (n / 1024).toFixed(1) + ' KB';
+  return n + ' B';
 }
