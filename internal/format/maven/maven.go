@@ -298,7 +298,7 @@ func (h *Handler) groupMetadataBytes(c *format.Context) ([]byte, bool) {
 
 func (h *Handler) proxyFetch(w http.ResponseWriter, r *http.Request, c *format.Context, key string) {
 	upURL := strings.TrimRight(c.Repo.Upstream, "/") + "/" + c.Sub
-	cfg := proxy.Config{TTL: c.Repo.ProxyTTL, Auth: c.Repo.ProxyAuth}
+	cfg := proxy.ConfigForRepo(c.Repo)
 	if c.Metrics != nil {
 		m, repo := c.Metrics, c.Repo.Name
 		cfg.RecordHit = func() { m.CacheHits.WithLabelValues(repo).Inc() }

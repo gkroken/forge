@@ -188,7 +188,7 @@ func (h *Handler) groupDownload(w http.ResponseWriter, c *format.Context) {
 func (h *Handler) proxy(w http.ResponseWriter, c *format.Context) {
 	upURL := strings.TrimRight(c.Repo.Upstream, "/") + "/" + c.Sub
 	key := c.Key(c.Sub)
-	cfg := proxy.Config{TTL: c.Repo.ProxyTTL, Auth: c.Repo.ProxyAuth}
+	cfg := proxy.ConfigForRepo(c.Repo)
 	if c.Metrics != nil {
 		m, repo := c.Metrics, c.Repo.Name
 		cfg.RecordHit = func() { m.CacheHits.WithLabelValues(repo).Inc() }
@@ -280,8 +280,7 @@ func (h *Handler) groupPkgRecords(c *format.Context) []pkgRecord {
 func (h *Handler) upstreamPkgRecords(mc *format.Context) []pkgRecord {
 	key := mc.Key("src/contrib/PACKAGES")
 	upURL := strings.TrimRight(mc.Repo.Upstream, "/") + "/src/contrib/PACKAGES"
-	cfg := proxy.Config{TTL: mc.Repo.ProxyTTL, Auth: mc.Repo.ProxyAuth}
-	f := proxy.New(mc.HTTP, cfg)
+	f := proxy.New(mc.HTTP, proxy.ConfigForRepo(mc.Repo))
 	rc, _, err := f.Fetch(key, mc.Repo.Name+":proxy", upURL, mc.Blob, mc.Meta)
 	if err != nil {
 		return nil
@@ -787,8 +786,7 @@ func (h *Handler) upstreamBinPkgRecords(mc *format.Context, platform, rver strin
 	sub := "bin/" + platform + "/contrib/" + rver + "/PACKAGES"
 	key := mc.Key(sub)
 	upURL := strings.TrimRight(mc.Repo.Upstream, "/") + "/" + sub
-	cfg := proxy.Config{TTL: mc.Repo.ProxyTTL, Auth: mc.Repo.ProxyAuth}
-	f := proxy.New(mc.HTTP, cfg)
+	f := proxy.New(mc.HTTP, proxy.ConfigForRepo(mc.Repo))
 	rc, _, err := f.Fetch(key, mc.Repo.Name+":proxy", upURL, mc.Blob, mc.Meta)
 	if err != nil {
 		return nil

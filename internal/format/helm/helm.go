@@ -164,7 +164,7 @@ func (h *Handler) records(c *format.Context) []chartRecord {
 func (h *Handler) upstreamRecords(c *format.Context) []chartRecord {
 	key := c.Key("index.yaml")
 	upURL := strings.TrimRight(c.Repo.Upstream, "/") + "/index.yaml"
-	cfg := proxy.Config{TTL: c.Repo.ProxyTTL, Auth: c.Repo.ProxyAuth}
+	cfg := proxy.ConfigForRepo(c.Repo)
 	f := proxy.New(c.HTTP, cfg)
 	rc, _, err := f.Fetch(key, c.Repo.Name+":proxy", upURL, c.Blob, c.Meta)
 	if err != nil {

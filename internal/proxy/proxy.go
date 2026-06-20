@@ -41,6 +41,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -51,6 +52,7 @@ import (
 
 	"forge/internal/blob"
 	"forge/internal/meta"
+	"forge/internal/repo"
 )
 
 // Sentinel errors returned by Fetcher.Fetch.
@@ -113,6 +115,14 @@ type Config struct {
 	// RecordMiss is called when a full upstream 200 OK fetch was required.
 	// May be nil.
 	RecordMiss func()
+
+	// Timeout is the per-request deadline for upstream HTTP calls.
+	// Zero means no deadline beyond what the http.Client sets.
+	Timeout time.Duration
+
+	// DisableNegativeCache prevents serving cached 404 responses.
+	// When true, every not-found request is forwarded to upstream.
+	DisableNegativeCache bool
 }
 
 const (
@@ -140,6 +150,32 @@ func (c Config) maxRetries() int {
 		return c.MaxRetries
 	}
 	return DefaultMaxRetries
+}
+
+// ConfigForRepo builds a Config from per-repo settings, preferring the newer
+// ContentMaxAge/MetadataMaxAge/Retries/TimeoutSecs fields over the legacy ProxyTTL.
+func ConfigForRepo(r repo.Repository) Config {
+	cfg := Config{Auth: r.ProxyAuth}
+
+	switch {
+	case r.ContentMaxAge != nil:
+		cfg.TTL = *r.ContentMaxAge
+	case r.ProxyTTL != 0:
+		cfg.TTL = r.ProxyTTL
+	default:
+		cfg.TTL = DefaultTTL
+	}
+
+	if r.NegativeCache != nil && !*r.NegativeCache {
+		cfg.DisableNegativeCache = true
+	}
+	if r.Retries != nil {
+		cfg.MaxRetries = *r.Retries
+	}
+	if r.TimeoutSecs != nil && *r.TimeoutSecs > 0 {
+		cfg.Timeout = time.Duration(*r.TimeoutSecs) * time.Second
+	}
+	return cfg
 }
 
 // ── Circuit breaker ──────────────────────────────────────────────────────────
@@ -291,7 +327,7 @@ func (f *Fetcher) Fetch(blobKey, cacheNS, upURL string, blobs blob.Store, metas 
 	_, blobExists, _ := blobs.Stat(blobKey)
 
 	// ── 1. Negative cache ──────────────────────────────────────────────────
-	if hasMeta && entry.NotFound && now.Sub(entry.FetchedAt) < f.cfg.negativeTTL() {
+	if !f.cfg.DisableNegativeCache && hasMeta && entry.NotFound && now.Sub(entry.FetchedAt) < f.cfg.negativeTTL() {
 		return nil, "", ErrNotFound
 	}
 
@@ -425,7 +461,13 @@ func (f *Fetcher) fetchUpstream(upURL string, condHeaders map[string]string) (*u
 }
 
 func (f *Fetcher) doRequest(upURL string, condHeaders map[string]string) (*upstreamResult, error) {
-	req, err := http.NewRequest(http.MethodGet, upURL, nil)
+	ctx := context.Background()
+	if f.cfg.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, f.cfg.Timeout)
+		defer cancel()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, upURL, nil)
 	if err != nil {
 		return nil, err
 	}

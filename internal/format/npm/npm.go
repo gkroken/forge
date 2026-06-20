@@ -459,10 +459,7 @@ func (h *Handler) fetchPackument(baseURL string, c *format.Context, pkg string) 
 		}
 		var ce proxy.CacheEntry
 		hasCE, _ := c.Meta.GetJSON(h.proxyNS(c), pkg, &ce)
-		ttl := c.Repo.ProxyTTL
-		if ttl == 0 {
-			ttl = proxy.DefaultTTL
-		}
+		ttl := proxy.ConfigForRepo(c.Repo).TTL
 		if hasCE && time.Since(ce.FetchedAt) < ttl {
 			if c.Metrics != nil {
 				c.Metrics.CacheHits.WithLabelValues(c.Repo.Name).Inc()
@@ -655,7 +652,7 @@ func (h *Handler) tarball(w http.ResponseWriter, c *format.Context, sub string) 
 	}
 	// Proxy: use the shared Fetcher (TTL, ETag, stale-on-error, retries, auth).
 	upURL := strings.TrimRight(c.Repo.Upstream, "/") + "/" + sub
-	tcfg := proxy.Config{TTL: c.Repo.ProxyTTL, Auth: c.Repo.ProxyAuth}
+	tcfg := proxy.ConfigForRepo(c.Repo)
 	if c.Metrics != nil {
 		m, rname := c.Metrics, c.Repo.Name
 		tcfg.RecordHit = func() { m.CacheHits.WithLabelValues(rname).Inc() }
@@ -685,7 +682,7 @@ func (h *Handler) groupTarball(w http.ResponseWriter, c *format.Context, sub str
 		key := mc.Key(sub)
 		if mc.Repo.Kind == repo.Proxy {
 			upURL := strings.TrimRight(mc.Repo.Upstream, "/") + "/" + sub
-			gcfg := proxy.Config{TTL: mc.Repo.ProxyTTL, Auth: mc.Repo.ProxyAuth}
+			gcfg := proxy.ConfigForRepo(mc.Repo)
 			if mc.Metrics != nil {
 				m, rname := mc.Metrics, mc.Repo.Name
 				gcfg.RecordHit = func() { m.CacheHits.WithLabelValues(rname).Inc() }
