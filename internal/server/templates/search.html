@@ -57,8 +57,8 @@
       <tbody>
         {{range .Results}}
         <tr>
-          <td class="col-name">{{.Name}}</td>
-          <td><a href="/ui/repos/{{.Repo}}">{{.Repo}}</a></td>
+          <td class="col-name"><a href="/ui/browse/{{.Repo}}?pkg={{.Name}}">{{.Name}}</a></td>
+          <td><a href="/ui/browse/{{.Repo}}">{{.Repo}}</a></td>
           <td><span class="badge fmt-{{.Format}}">{{formatIcon .Format}}{{.Format}}</span></td>
           <td class="col-latest">{{if .Versions}}{{index .Versions 0}}{{end}}</td>
           <td class="col-count">{{len .Versions}} version{{if ne (len .Versions) 1}}s{{end}}</td>

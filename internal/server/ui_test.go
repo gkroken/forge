@@ -195,6 +195,16 @@ func TestUISearch_WithQuery(t *testing.T) {
 	assertContains(t, body, "npm-hosted")
 }
 
+func TestUISearch_ResultDeepLinksToBrowse(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiGet(t, h, "/ui/search?q=lodash")
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status %d", rw.Code)
+	}
+	// The result name links into the Browse surface, pre-selecting the component.
+	assertContains(t, rw.Body.String(), `href="/ui/browse/npm-hosted?pkg=lodash"`)
+}
+
 func TestUISearch_EmptyQuery(t *testing.T) {
 	h := newUIServer(t).Routes()
 	rw := uiGet(t, h, "/ui/search")

@@ -347,8 +347,15 @@ document.getElementById('pkg-list').addEventListener('click', function(e) {
 });
 
 // ── Auto-expand repo from URL ─────────────────────────────────────────────────
+// /ui/browse/{repo}           → expand that repo
+// /ui/browse/{repo}?pkg={c}   → expand + load that component's versions/detail
+// (the deep-link target from the global Search page)
 const autoNode = document.querySelector('.browse-repo-node.auto-expand');
-if (autoNode) toggleRepo(autoNode);
+if (autoNode) {
+  const pkg = new URLSearchParams(window.location.search).get('pkg');
+  toggleRepo(autoNode);
+  if (pkg) selectPkg(autoNode.dataset.repo, pkg);
+}
 
 // ── Shared util ───────────────────────────────────────────────────────────────
 function esc(s) {
