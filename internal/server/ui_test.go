@@ -126,10 +126,10 @@ func TestUIHome_FullPage(t *testing.T) {
 	h := newUIServer(t).Routes()
 	rw := uiGet(t, h, "/ui/")
 	body := rw.Body.String()
-	// Full page has the HTML shell
+	// Full page renders in the Foundry admin shell (sidebar nav).
 	assertContains(t, body, "<!DOCTYPE html>")
 	assertContains(t, body, "<nav")
-	assertContains(t, body, "Admin")
+	assertContains(t, body, "sidebar-nav-item")
 }
 
 // ── /ui/repos/{name} ──────────────────────────────────────────────────────────
@@ -597,10 +597,12 @@ func TestUISearch_HtmxBoosted_ReturnsFullPage(t *testing.T) {
 	assertContains(t, body, "lodash")
 }
 
-func TestUISearch_NavForm_HasHxBoost(t *testing.T) {
+func TestUIHome_RendersInAdminShell(t *testing.T) {
+	// Home (post-login landing) now uses the Foundry admin shell, with the
+	// Repositories nav item active — not the legacy base.html chrome.
 	h := newUIServer(t).Routes()
 	rw := uiGet(t, h, "/ui/")
-	assertContains(t, rw.Body.String(), "hx-boost")
+	assertContains(t, rw.Body.String(), "admin-sidebar")
 }
 
 func TestUIAdminHome_HasBreadcrumb(t *testing.T) {

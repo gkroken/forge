@@ -150,13 +150,13 @@ func parseUITmpl(files ...string) *template.Template {
 }
 
 var (
-	tmplHome             = parseUITmpl("templates/base.html", "templates/home.html")
+	tmplHome             = parseUITmpl("templates/admin_shell.html", "templates/home.html")
 	tmplBrowsePage       = parseUITmpl("templates/admin_shell.html", "templates/browse_page.html")
 	tmplSearch           = parseUITmpl("templates/admin_shell.html", "templates/search.html")
 	tmplAdminRepos       = parseUITmpl("templates/admin_shell.html", "templates/admin_repos.html")
 	tmplAdminForm        = parseUITmpl("templates/base.html", "templates/admin_repo_form.html")
 	tmplLogin            = parseUITmpl("templates/base.html", "templates/login.html")
-	tmplComponent        = parseUITmpl("templates/base.html", "templates/component.html")
+	tmplComponent        = parseUITmpl("templates/admin_shell.html", "templates/component.html")
 	tmplTokens           = parseUITmpl("templates/base.html", "templates/tokens.html")
 	tmplAccess           = parseUITmpl("templates/base.html", "templates/access.html")
 	tmplUpload           = parseUITmpl("templates/base.html", "templates/upload.html")
@@ -173,9 +173,10 @@ var (
 // ── page data types ───────────────────────────────────────────────────────────
 
 type componentPage struct {
-	Title  string
-	Repo   repo.Repository
-	Detail format.ComponentDetail
+	Title     string
+	ActiveNav string
+	Repo      repo.Repository
+	Detail    format.ComponentDetail
 }
 
 type loginPage struct {
@@ -187,8 +188,9 @@ type loginPage struct {
 }
 
 type homePage struct {
-	Title string
-	Repos []repoRow
+	Title     string
+	ActiveNav string
+	Repos     []repoRow
 	Sort  string // active sort column: "name"|"format"|"kind"|"count"
 	Dir   string // "asc"|"desc"
 }
@@ -335,8 +337,8 @@ func (s *Server) uiHome(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	render(w, tmplHome, "base.html", homePage{
-		Title: "Repositories", Repos: rows,
+	render(w, tmplHome, "admin_shell.html", homePage{
+		Title: "Repositories", ActiveNav: "repos", Repos: rows,
 		Sort: sortCol, Dir: sortDir,
 	})
 }
@@ -377,10 +379,11 @@ func (s *Server) uiComponent(w http.ResponseWriter, r *http.Request, repoName, c
 			http.NotFound(w, r)
 			return
 		}
-		render(w, tmplComponent, "base.html", componentPage{
-			Title:  component + " — " + repoName,
-			Repo:   rp,
-			Detail: detail,
+		render(w, tmplComponent, "admin_shell.html", componentPage{
+			Title:     component + " — " + repoName,
+			ActiveNav: "browse",
+			Repo:      rp,
+			Detail:    detail,
 		})
 		return
 	}
@@ -411,10 +414,11 @@ func (s *Server) uiComponent(w http.ResponseWriter, r *http.Request, repoName, c
 		return
 	}
 	detail.InstallSnippet = base + "/repository/" + repoName + "/"
-	render(w, tmplComponent, "base.html", componentPage{
-		Title:  component + " — " + repoName,
-		Repo:   rp,
-		Detail: detail,
+	render(w, tmplComponent, "admin_shell.html", componentPage{
+		Title:     component + " — " + repoName,
+		ActiveNav: "browse",
+		Repo:      rp,
+		Detail:    detail,
 	})
 }
 
