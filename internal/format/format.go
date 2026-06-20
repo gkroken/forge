@@ -7,6 +7,7 @@ package format
 import (
 	"net/http"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"forge/internal/blob"
@@ -32,6 +33,11 @@ type Context struct {
 	RepoStats *obs.RepoStats
 	// RepoStatsFn looks up per-repo stats by name; used by group handlers.
 	RepoStatsFn func(string) *obs.RepoStats
+
+	// GlobalStats accumulates server-wide request and cache metrics.
+	GlobalStats *obs.GlobalStats
+	// RetryGauge is a shared atomic counter of in-flight proxy retries.
+	RetryGauge *atomic.Int32
 }
 
 // Key namespaces a blob key under the repo so repos never collide in storage.
@@ -56,13 +62,17 @@ func (c *Context) MemberCtx(name string) (*Context, bool) {
 		Repo: r, Blob: c.Blob, Meta: c.Meta, HTTP: c.HTTP, Sub: c.Sub,
 		Repos: c.Repos, Queue: c.Queue, Metrics: c.Metrics,
 		RepoStats: memberStats, RepoStatsFn: c.RepoStatsFn,
+		GlobalStats: c.GlobalStats, RetryGauge: c.RetryGauge,
 	}, true
 }
 
 // ProxyConfig builds a proxy.Config for this repo, wiring Prometheus counters
-// (from Metrics) and per-repo ring-buffer callbacks (from RepoStats).
+// (from Metrics), per-repo ring buffer (from RepoStats), global stats
+// (from GlobalStats), and the shared retry gauge (from RetryGauge).
 func (c *Context) ProxyConfig() proxy.Config {
 	cfg := proxy.ConfigForRepo(c.Repo)
+	cfg.RetryGauge = c.RetryGauge
+
 	if c.Metrics != nil {
 		m, rname := c.Metrics, c.Repo.Name
 		cfg.RecordHit = func() { m.CacheHits.WithLabelValues(rname).Inc() }
@@ -91,6 +101,22 @@ func (c *Context) ProxyConfig() proxy.Config {
 			s.RecordMiss()
 		}
 		cfg.RecordNegative = s.RecordNegative
+	}
+	if c.GlobalStats != nil {
+		gs := c.GlobalStats
+		prevHit, prevMiss := cfg.RecordHit, cfg.RecordMiss
+		cfg.RecordHit = func() {
+			if prevHit != nil {
+				prevHit()
+			}
+			gs.RecordCacheHit()
+		}
+		cfg.RecordMiss = func() {
+			if prevMiss != nil {
+				prevMiss()
+			}
+			gs.RecordCacheMiss()
+		}
 	}
 	return cfg
 }

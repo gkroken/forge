@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -82,7 +83,11 @@ type Server struct {
 	blobSizes   BlobSizes
 	walkTrigger chan struct{} // non-blocking send kicks off an immediate re-walk
 
-	repoStats sync.Map // map[string]*obs.RepoStats; lazy-init per proxy repo
+	repoStats  sync.Map // map[string]*obs.RepoStats; lazy-init per proxy repo
+	retryGauge atomic.Int32
+
+	GlobalStats *obs.GlobalStats
+	TaskRing    *queue.TaskRing
 }
 
 func New(m *repo.Manager, reg *format.Registry, b blob.Store, mt meta.Store, a auth.Store) *Server {
@@ -113,11 +118,19 @@ func (s *Server) WithOIDC(p *oidc.Provider) *Server {
 	return s
 }
 
+// WithGlobalStats attaches the server-wide metrics collector.
+// Call before Routes() so the middleware and format contexts can record stats.
+func (s *Server) WithGlobalStats(gs *obs.GlobalStats) *Server {
+	s.GlobalStats = gs
+	return s
+}
+
 // WithQueue attaches a queue to the server and starts the indexer worker in
 // a background goroutine that runs until ctx is cancelled.
 func (s *Server) WithQueue(ctx context.Context, q queue.Queue) *Server {
 	s.Queue = q
-	go indexer.New(s.Meta).WithMetrics(s.Metrics).Work(ctx, q) //nolint:errcheck
+	s.TaskRing = queue.NewTaskRing(10)
+	go indexer.New(s.Meta).WithMetrics(s.Metrics).WithTaskRing(s.TaskRing).Work(ctx, q) //nolint:errcheck
 	return s
 }
 
@@ -225,6 +238,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/v1/repos", s.handleAdminRepos)
 	mux.HandleFunc("/api/v1/repos/", s.handleAdminRepos)
 	mux.HandleFunc("/api/v1/search", s.handleSearch)
+	mux.HandleFunc("/api/v1/system/", s.handleSystemAPI)
 	if s.OIDC != nil && s.Auth != nil {
 		mux.HandleFunc("/auth/oidc/login", s.handleOIDCLogin)
 		mux.HandleFunc("/auth/oidc/callback", s.handleOIDCCallback)
@@ -304,6 +318,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: s.client, Sub: sub,
 		Repos: s.Repos, Queue: s.Queue, Metrics: s.Metrics,
 		RepoStats: repoStats, RepoStatsFn: s.lookupRepoStats,
+		GlobalStats: s.GlobalStats, RetryGauge: &s.retryGauge,
 	})
 }
 
@@ -500,6 +515,10 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 					Status:    status,
 				})
 			}
+		}
+
+		if s.GlobalStats != nil {
+			s.GlobalStats.RecordRequest(status, dur.Milliseconds())
 		}
 
 		if s.Metrics != nil {

@@ -162,6 +162,10 @@ func main() {
 		}
 	}
 
+	// Global stats collector — wraps metaStore to capture latency EMA.
+	globalStats := obs.NewGlobalStats()
+	metaStore = obs.NewLatencyStore(metaStore, globalStats.MetaLatencyMS)
+
 	// Prometheus metrics — one registry per process.
 	promReg := prometheus.NewRegistry()
 	metrics := obs.NewMetrics(promReg)
@@ -188,6 +192,7 @@ func main() {
 
 	forgeSrv := server.New(mgr, reg, blobStore, metaStore, authStore).
 		WithMetrics(metrics, promReg).
+		WithGlobalStats(globalStats).
 		WithQueue(workerCtx, q).
 		WithCleanup(cleanupPolicies).
 		WithScheduler(cleanupScheduler).

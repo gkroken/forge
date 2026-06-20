@@ -48,6 +48,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"forge/internal/blob"
@@ -131,6 +132,11 @@ type Config struct {
 	// DisableNegativeCache prevents serving cached 404 responses.
 	// When true, every not-found request is forwarded to upstream.
 	DisableNegativeCache bool
+
+	// RetryGauge is incremented while a retry is in flight and decremented
+	// when fetchUpstream returns. Shared across all Fetchers on the server.
+	// May be nil.
+	RetryGauge *atomic.Int32
 }
 
 const (
@@ -453,9 +459,14 @@ type upstreamResult struct {
 // fetchUpstream performs the upstream GET, retrying on network errors and 5xx.
 func (f *Fetcher) fetchUpstream(upURL string, condHeaders map[string]string) (*upstreamResult, error) {
 	var lastErr error
+	var retrying bool // true once the first retry starts; used to manage RetryGauge
 	for attempt := 0; attempt <= f.cfg.maxRetries(); attempt++ {
 		if attempt > 0 {
 			time.Sleep(time.Duration(1<<uint(attempt-1)) * 100 * time.Millisecond)
+			if f.cfg.RetryGauge != nil && !retrying {
+				f.cfg.RetryGauge.Add(1)
+				retrying = true
+			}
 		}
 		result, err := f.doRequest(upURL, condHeaders)
 		if err != nil {
@@ -466,9 +477,26 @@ func (f *Fetcher) fetchUpstream(upURL string, condHeaders map[string]string) (*u
 			lastErr = fmt.Errorf("upstream returned %d", result.statusCode)
 			continue
 		}
+		if retrying && f.cfg.RetryGauge != nil {
+			f.cfg.RetryGauge.Add(-1)
+		}
 		return result, nil
 	}
+	if retrying && f.cfg.RetryGauge != nil {
+		f.cfg.RetryGauge.Add(-1)
+	}
 	return nil, lastErr
+}
+
+// AllHealth returns a snapshot of the circuit-breaker state for every upstream
+// host that has been contacted. Values are "ok" or "down".
+func AllHealth() map[string]string {
+	out := map[string]string{}
+	globalHealth.Range(func(k, v any) bool {
+		out[k.(string)] = v.(string)
+		return true
+	})
+	return out
 }
 
 func (f *Fetcher) doRequest(upURL string, condHeaders map[string]string) (*upstreamResult, error) {

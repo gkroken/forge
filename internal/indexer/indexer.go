@@ -30,8 +30,9 @@ type RegenPayload struct {
 // Worker processes index-regeneration jobs from a Queue.
 // It must be long-lived — create one and call Work in a background goroutine.
 type Worker struct {
-	meta    meta.Store
-	metrics *obs.Metrics
+	meta     meta.Store
+	metrics  *obs.Metrics
+	taskRing *queue.TaskRing
 }
 
 // New returns a Worker backed by the given meta store.
@@ -44,10 +45,17 @@ func (w *Worker) WithMetrics(metrics *obs.Metrics) *Worker {
 	return w
 }
 
+// WithTaskRing attaches a TaskRing so recent job completions are surfaced via
+// the system tasks API.
+func (w *Worker) WithTaskRing(tr *queue.TaskRing) *Worker {
+	w.taskRing = tr
+	return w
+}
+
 // Work drains q until ctx is cancelled, dispatching each job to the
 // appropriate regeneration function.
 func (w *Worker) Work(ctx context.Context, q queue.Queue) error {
-	return q.Work(ctx, func(ctx context.Context, j queue.Job) error {
+	fn := func(ctx context.Context, j queue.Job) error {
 		err := w.dispatch(j)
 		if w.metrics != nil {
 			result := "success"
@@ -57,7 +65,11 @@ func (w *Worker) Work(ctx context.Context, q queue.Queue) error {
 			w.metrics.QueueJobsTotal.WithLabelValues(j.Type, result).Inc()
 		}
 		return err
-	})
+	}
+	if w.taskRing != nil {
+		fn = w.taskRing.Wrap(fn)
+	}
+	return q.Work(ctx, fn)
 }
 
 func (w *Worker) dispatch(j queue.Job) error {

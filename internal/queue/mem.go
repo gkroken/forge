@@ -61,3 +61,6 @@ func (m *Mem) Work(ctx context.Context, fn func(context.Context, Job) error) err
 // Drain blocks until all jobs that have been Enqueued are processed.
 // Used in tests to synchronise after a burst of publishes.
 func (m *Mem) Drain() { m.wg.Wait() }
+
+// Depth returns the number of jobs currently waiting in the channel buffer.
+func (m *Mem) Depth() int { return len(m.ch) }

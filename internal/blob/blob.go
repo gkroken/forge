@@ -33,3 +33,9 @@ type Store interface {
 	// Delete removes key. No error if absent.
 	Delete(key string) error
 }
+
+// Capacitor is an optional extension to Store for reporting disk/bucket usage.
+// Implementations that cannot determine capacity should return -1, -1, nil.
+type Capacitor interface {
+	Capacity() (used, total int64, err error)
+}

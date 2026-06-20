@@ -20,6 +20,7 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"time"
 )
 
 // Job is one unit of dequeued work.
@@ -31,6 +32,20 @@ type Job struct {
 
 // UnmarshalPayload JSON-decodes the job's payload into v.
 func (j Job) UnmarshalPayload(v any) error { return json.Unmarshal(j.Payload, v) }
+
+// DepthReader is an optional extension to Queue that exposes pending job count.
+// Type-assert the Queue to this interface before calling.
+type DepthReader interface {
+	Depth() int
+}
+
+// TaskInfo describes one job that has been processed (or is currently running).
+type TaskInfo struct {
+	Name      string    `json:"name"`
+	Status    string    `json:"status"` // "running" | "done" | "failed"
+	StartedAt time.Time `json:"started_at"`
+	DoneAt    time.Time `json:"done_at,omitempty"`
+}
 
 // Queue is the core interface: enqueue work, drain it via Work.
 // Implementations must be safe for concurrent use.
