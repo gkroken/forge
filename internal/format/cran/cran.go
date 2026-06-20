@@ -44,7 +44,7 @@ import (
 
 type Handler struct{}
 
-func New() *Handler            { return &Handler{} }
+func New() *Handler               { return &Handler{} }
 func (h *Handler) Format() string { return "cran" }
 
 func (h *Handler) ns(c *format.Context) string { return c.Repo.Name + "+cran" }
@@ -400,9 +400,9 @@ func buildPackagesRDS(recs []pkgRecord) []byte {
 
 	var w rdsWriter
 	w.raw([]byte("X\n"))
-	w.i32(2)           // serialization version 2
-	w.i32(0x00030603)  // written by R 3.6.3
-	w.i32(0x00020300)  // readable by R >= 2.3.0
+	w.i32(2)          // serialization version 2
+	w.i32(0x00030603) // written by R 3.6.3
+	w.i32(0x00020300) // readable by R >= 2.3.0
 
 	// STRSXP with HAS_ATTR: column-major matrix data.
 	const (
@@ -492,7 +492,7 @@ func (w *rdsWriter) i32(v int32) {
 
 // charsxpRaw writes a CHARSXP with the given (non-empty) string.
 func (w *rdsWriter) charsxpRaw(s string) {
-	w.i32(9) // CHARSXP, CE_NATIVE encoding
+	w.i32(9)             // CHARSXP, CE_NATIVE encoding
 	w.i32(int32(len(s))) // #nosec G115 -- string length bounded by CRAN field sizes
 	w.buf.WriteString(s)
 }
@@ -921,16 +921,32 @@ func parseDescriptionFromZip(data []byte) (pkgRecord, error) {
 // by package name; versions are deduplicated so a package published for multiple
 // platforms appears once per version.
 func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
-	// Source packages (group-aware via allPkgRecords).
 	byName := map[string]map[string]bool{}
 	byNameTime := map[string]time.Time{}
-	for _, r := range h.allPkgRecords(c) {
-		if byName[r.Package] == nil {
-			byName[r.Package] = map[string]bool{}
+	addRec := func(pkg, ver string, t time.Time) {
+		if byName[pkg] == nil {
+			byName[pkg] = map[string]bool{}
 		}
-		byName[r.Package][r.Version] = true
-		if r.UploadedAt.After(byNameTime[r.Package]) {
-			byNameTime[r.Package] = r.UploadedAt
+		byName[pkg][ver] = true
+		if t.After(byNameTime[pkg]) {
+			byNameTime[pkg] = t
+		}
+	}
+
+	// Source packages. The browse/list view shows what is present *locally*: for
+	// a proxy repo that is the cached subset, NOT the full upstream catalogue
+	// (CRAN has ~22k packages — listing all of them is unusable here). The
+	// PACKAGES index endpoint still serves the complete upstream list; see
+	// allPkgRecords. Hosted repos read their meta records as before.
+	addSrc := func(rc *format.Context) {
+		if rc.Repo.Kind == repo.Proxy {
+			for _, r := range h.cachedSrcRecords(rc) {
+				addRec(r.Package, r.Version, r.UploadedAt)
+			}
+		} else {
+			for _, r := range h.pkgRecords(rc) {
+				addRec(r.Package, r.Version, r.UploadedAt)
+			}
 		}
 	}
 
@@ -948,19 +964,19 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 			if !ok {
 				continue
 			}
-			if byName[pkg] == nil {
-				byName[pkg] = map[string]bool{}
-			}
-			byName[pkg][ver] = true
+			addRec(pkg, ver, time.Time{})
 		}
 	}
+
 	if c.Repo.Kind == repo.Group {
 		for _, name := range c.Repo.Members {
 			if mc, ok := c.MemberCtx(name); ok {
+				addSrc(mc)
 				scanBinBlobs(mc.Repo.Name)
 			}
 		}
 	} else {
+		addSrc(c)
 		scanBinBlobs(c.Repo.Name)
 	}
 
@@ -975,6 +991,32 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	return entries, nil
+}
+
+// cachedSrcRecords lists the source packages physically cached in a repo's blob
+// store under src/contrib/ (the subset actually pulled through the proxy), as
+// opposed to allPkgRecords which, for proxies, parses the full upstream
+// catalogue. Filenames follow {pkg}_{ver}.tar.gz.
+func (h *Handler) cachedSrcRecords(c *format.Context) []pkgRecord {
+	prefix := c.Repo.Name + "/src/contrib/"
+	keys, _ := c.Blob.List(prefix)
+	var recs []pkgRecord
+	for _, key := range keys {
+		file := strings.TrimPrefix(key, prefix)
+		if file == "" || strings.Contains(file, "/") {
+			continue // only direct files under src/contrib/
+		}
+		if !strings.HasSuffix(file, ".tar.gz") {
+			continue // skip PACKAGES, PACKAGES.gz, .rds, etc.
+		}
+		base := strings.TrimSuffix(file, ".tar.gz")
+		idx := strings.LastIndex(base, "_")
+		if idx < 0 {
+			continue
+		}
+		recs = append(recs, pkgRecord{Package: base[:idx], Version: base[idx+1:]})
+	}
+	return recs
 }
 
 // Inspect implements format.Inspectable for the component detail page.

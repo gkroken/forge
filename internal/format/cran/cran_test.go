@@ -491,6 +491,50 @@ func TestBrowseRepo_CRAN(t *testing.T) {
 	}
 }
 
+// TestBrowseRepo_CRAN_ProxyCachedOnly verifies a proxy's browse/list view shows
+// only packages pulled through (cached) locally, never the full upstream
+// catalogue — the PACKAGES index endpoint still serves the complete upstream
+// list separately.
+func TestBrowseRepo_CRAN_ProxyCachedOnly(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "mock-tarball")
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	c := &format.Context{
+		Repo: repo.Repository{
+			Name: "cran-proxy", Format: "cran", Kind: repo.Proxy,
+			Upstream: upstream.URL,
+		},
+		Blob: b, Meta: m,
+		HTTP: upstream.Client(),
+	}
+
+	// Nothing pulled yet → empty browse (not the upstream catalogue).
+	if entries, _ := New().BrowseRepo(c); len(entries) != 0 {
+		t.Fatalf("expected 0 entries before caching, got %d: %v", len(entries), entries)
+	}
+
+	// Pull one package through the proxy; this caches its blob.
+	if rw := cranServe(c, http.MethodGet, "src/contrib/cached.pkg_2.1.0.tar.gz", nil); rw.Code != http.StatusOK {
+		t.Fatalf("proxy download: got %d", rw.Code)
+	}
+
+	entries, err := New().BrowseRepo(c)
+	if err != nil {
+		t.Fatalf("BrowseRepo: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name != "cached.pkg" {
+		t.Fatalf("expected only the cached package, got %v", entries)
+	}
+	if len(entries[0].Versions) != 1 || entries[0].Versions[0] != "2.1.0" {
+		t.Fatalf("expected version 2.1.0, got %v", entries[0].Versions)
+	}
+}
+
 func TestServe_CRAN_UnsupportedMethod(t *testing.T) {
 	// DELETE is only allowed on hosted repos; proxy should reject with 405.
 	c := newCRANCtx(t)
@@ -601,18 +645,18 @@ func TestGroup_BinPackagesMerge_WithProxy(t *testing.T) {
 
 func TestParseBinPath(t *testing.T) {
 	cases := []struct {
-		sub              string
-		platform, rver   string
-		file             string
-		ok               bool
+		sub            string
+		platform, rver string
+		file           string
+		ok             bool
 	}{
-		{"bin/windows/contrib/4.4/PACKAGES",             "windows",         "4.4", "PACKAGES",           true},
-		{"bin/windows/contrib/4.4/mypackage_1.0.0.zip",  "windows",         "4.4", "mypackage_1.0.0.zip", true},
-		{"bin/macosx/x86_64/contrib/4.4/pkg_1.0.0.tgz", "macosx/x86_64",   "4.4", "pkg_1.0.0.tgz",      true},
-		{"bin/macosx/big-sur-arm64/contrib/4.4/PACKAGES","macosx/big-sur-arm64","4.4","PACKAGES",         true},
-		{"bin/macosx/contrib/4.2/pkg_1.0.0.tgz",        "macosx",          "4.2", "pkg_1.0.0.tgz",      true},
-		{"src/contrib/pkg_1.0.0.tar.gz",                 "",                "",    "",                   false},
-		{"bin/windows/contrib/4.4",                      "windows",         "4.4", "",                   false},
+		{"bin/windows/contrib/4.4/PACKAGES", "windows", "4.4", "PACKAGES", true},
+		{"bin/windows/contrib/4.4/mypackage_1.0.0.zip", "windows", "4.4", "mypackage_1.0.0.zip", true},
+		{"bin/macosx/x86_64/contrib/4.4/pkg_1.0.0.tgz", "macosx/x86_64", "4.4", "pkg_1.0.0.tgz", true},
+		{"bin/macosx/big-sur-arm64/contrib/4.4/PACKAGES", "macosx/big-sur-arm64", "4.4", "PACKAGES", true},
+		{"bin/macosx/contrib/4.2/pkg_1.0.0.tgz", "macosx", "4.2", "pkg_1.0.0.tgz", true},
+		{"src/contrib/pkg_1.0.0.tar.gz", "", "", "", false},
+		{"bin/windows/contrib/4.4", "windows", "4.4", "", false},
 	}
 	for _, tc := range cases {
 		platform, rver, file, ok := parseBinPath(tc.sub)
@@ -626,14 +670,14 @@ func TestParseBinPath(t *testing.T) {
 
 func TestParsePkgFilename(t *testing.T) {
 	cases := []struct {
-		file       string
-		pkg, ver   string
-		ok         bool
+		file     string
+		pkg, ver string
+		ok       bool
 	}{
-		{"mypackage_1.0.0.zip",   "mypackage", "1.0.0", true},
-		{"mypackage_1.0.0.tgz",   "mypackage", "1.0.0", true},
-		{"my_pkg_2.1.0.zip",      "my_pkg",    "2.1.0", true},
-		{"nounderscore.zip",       "",          "",      false},
+		{"mypackage_1.0.0.zip", "mypackage", "1.0.0", true},
+		{"mypackage_1.0.0.tgz", "mypackage", "1.0.0", true},
+		{"my_pkg_2.1.0.zip", "my_pkg", "2.1.0", true},
+		{"nounderscore.zip", "", "", false},
 	}
 	for _, tc := range cases {
 		pkg, ver, ok := parsePkgFilename(tc.file)
@@ -1117,7 +1161,7 @@ func TestInspect_Hosted(t *testing.T) {
 	dir := t.TempDir()
 	m, _ := meta.NewFS(filepath.Join(dir, "m"))
 	ns := "cran-hosted+cran"
-	m.PutJSON(ns, "mathutils_0.1.0", pkgRecord{Package: "mathutils", Version: "0.1.0", License: "MIT", Title: "Math Utilities"})                                 //nolint:errcheck
+	m.PutJSON(ns, "mathutils_0.1.0", pkgRecord{Package: "mathutils", Version: "0.1.0", License: "MIT", Title: "Math Utilities"})                                          //nolint:errcheck
 	m.PutJSON(ns, "mathutils_0.2.0", pkgRecord{Package: "mathutils", Version: "0.2.0", License: "MIT", Title: "Math Utilities", Imports: "stats", Depends: "R (>= 4.0)"}) //nolint:errcheck
 
 	c := &format.Context{
