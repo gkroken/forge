@@ -108,10 +108,36 @@ type adminTokensPage struct {
 	Flash       string
 }
 
+// userRow is a display-ready snapshot of one user for the template.
+type userRow struct {
+	Username     string
+	DisplayName  string
+	Role         string
+	RoleClass    string // CSS badge class
+	CreatedStr   string
+	LastLoginStr string
+	StatusClass  string
+	StatusLabel  string
+	Disabled     bool
+}
+
+// roleCard is a display-ready snapshot of one role for the template.
+type roleCard struct {
+	Name         string
+	Description  string
+	BaseRole     string
+	RoleClass    string // CSS badge class
+	MemberCount  int
+	IsPredefined bool
+}
+
 // adminTokensV2Page wraps adminTokensPage for the sidebar (Foundry) layout.
 type adminTokensV2Page struct {
 	adminTokensPage
 	ActiveNav string
+	ActiveTab string     // "tokens" | "users" | "roles"
+	Users     []userRow
+	Roles     []roleCard
 }
 
 // ── dispatcher ────────────────────────────────────────────────────────────────
@@ -135,6 +161,12 @@ func (s *Server) handleUIAdmin(w http.ResponseWriter, r *http.Request, sub strin
 		s.uiAdminDeleteRepo(w, r, name)
 	case sub == "/tokens":
 		s.uiAdminTokens(w, r)
+	case strings.HasPrefix(sub, "/tokens/users/") && r.Method == http.MethodDelete:
+		username := strings.TrimPrefix(sub, "/tokens/users/")
+		s.uiAdminDeleteUser(w, r, username)
+	case strings.HasPrefix(sub, "/tokens/users/") && strings.HasSuffix(sub, "/disable"):
+		username := strings.TrimSuffix(strings.TrimPrefix(sub, "/tokens/users/"), "/disable")
+		s.uiAdminToggleUser(w, r, username)
 	case strings.HasPrefix(sub, "/tokens/") && r.Method == http.MethodDelete:
 		id := strings.TrimPrefix(sub, "/tokens/")
 		s.uiAdminRevokeToken(w, r, id)
@@ -393,12 +425,91 @@ func (s *Server) uiAdminTokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tab := r.URL.Query().Get("tab")
+	if tab == "" {
+		tab = "tokens"
+	}
+
 	if r.Method == http.MethodPost {
-		s.processTokenFormV2(w, r)
+		switch tab {
+		case "users":
+			s.processUserInviteForm(w, r)
+		case "roles":
+			s.processRoleCreateForm(w, r)
+		default:
+			s.processTokenFormV2(w, r)
+		}
 		return
 	}
 
-	render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("", "", tokenForm{Repo: "*", Role: "read"}))
+	page := s.buildTokensPageV2("", "", tokenForm{Repo: "*", Role: "read"})
+	page.ActiveTab = tab
+	if tab == "users" || tab == "roles" {
+		page.Users = s.buildUsersTabData()
+		page.Roles = s.buildRolesTabData()
+	}
+	render(w, tmplAdminTokens, "admin_shell.html", page)
+}
+
+func (s *Server) processUserInviteForm(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if s.Users == nil {
+		s.renderTokensTab(w, "users", "User management not enabled.", "")
+		return
+	}
+	username := strings.TrimSpace(r.FormValue("username"))
+	password := r.FormValue("password")
+	role := r.FormValue("role")
+	if role == "" {
+		role = "Reader"
+	}
+	if username == "" || password == "" {
+		s.renderTokensTab(w, "users", "Username and password are required.", "")
+		return
+	}
+	if _, err := s.Users.Create(username, password, role); err != nil {
+		s.renderTokensTab(w, "users", err.Error(), "")
+		return
+	}
+	s.renderTokensTab(w, "users", "", "User "+username+" created.")
+}
+
+func (s *Server) processRoleCreateForm(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	if s.Roles == nil {
+		s.renderTokensTab(w, "roles", "Role management not enabled.", "")
+		return
+	}
+	role := auth.CustomRole{
+		Name:        strings.TrimSpace(r.FormValue("name")),
+		Description: strings.TrimSpace(r.FormValue("description")),
+		BaseRole:    r.FormValue("baseRole"),
+	}
+	if role.Name == "" {
+		s.renderTokensTab(w, "roles", "Role name is required.", "")
+		return
+	}
+	if err := s.Roles.Create(role); err != nil {
+		s.renderTokensTab(w, "roles", err.Error(), "")
+		return
+	}
+	s.renderTokensTab(w, "roles", "", "Role "+role.Name+" created.")
+}
+
+func (s *Server) renderTokensTab(w http.ResponseWriter, tab, errMsg, flash string) {
+	page := s.buildTokensPageV2("", "", tokenForm{Repo: "*", Role: "read"})
+	page.ActiveTab = tab
+	page.Error = errMsg
+	page.Flash = flash
+	page.Users = s.buildUsersTabData()
+	page.Roles = s.buildRolesTabData()
+	render(w, tmplAdminTokens, "admin_shell.html", page)
 }
 
 func (s *Server) uiAdminRevokeToken(w http.ResponseWriter, r *http.Request, id string) {
@@ -412,6 +523,36 @@ func (s *Server) uiAdminRevokeToken(w http.ResponseWriter, r *http.Request, id s
 	s.Auth.Revoke(id) //nolint:errcheck
 	// htmx swaps out the row; return empty 200 (the row disappears).
 	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) uiAdminDeleteUser(w http.ResponseWriter, r *http.Request, username string) {
+	if !s.Enforcer.RequireAdminUI(w, r) {
+		return
+	}
+	if s.Users == nil {
+		http.Error(w, "user management not enabled", http.StatusNotImplemented)
+		return
+	}
+	s.Users.Delete(username) //nolint:errcheck
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) uiAdminToggleUser(w http.ResponseWriter, r *http.Request, username string) {
+	if !s.Enforcer.RequireAdminUI(w, r) {
+		return
+	}
+	if s.Users == nil {
+		http.Error(w, "user management not enabled", http.StatusNotImplemented)
+		return
+	}
+	u, ok, _ := s.Users.Get(username)
+	if !ok {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+	s.Users.SetDisabled(username, !u.Disabled) //nolint:errcheck
+	// Redirect back to the users tab.
+	http.Redirect(w, r, "/ui/admin/tokens?tab=users", http.StatusSeeOther) // #nosec G710
 }
 
 func (s *Server) processTokenForm(w http.ResponseWriter, r *http.Request) {
@@ -519,7 +660,91 @@ func (s *Server) buildTokensPage(errMsg, newSecret string, form tokenForm) admin
 func (s *Server) buildTokensPageV2(errMsg, newSecret string, form tokenForm) adminTokensV2Page {
 	base := s.buildTokensPage(errMsg, newSecret, form)
 	base.Title = "Tokens & Access"
-	return adminTokensV2Page{adminTokensPage: base, ActiveNav: "tokens"}
+	return adminTokensV2Page{adminTokensPage: base, ActiveNav: "tokens", ActiveTab: "tokens"}
+}
+
+// buildUsersPage populates the Users tab.
+func (s *Server) buildUsersTabData() []userRow {
+	if s.Users == nil {
+		return nil
+	}
+	users, _ := s.Users.List()
+	rows := make([]userRow, 0, len(users))
+	for _, u := range users {
+		lastLogin := "never"
+		if u.LastLogin != nil {
+			lastLogin = u.LastLogin.UTC().Format("2006-01-02 15:04")
+		}
+		statusClass, statusLabel := "dot-ok", "Active"
+		if u.Disabled {
+			statusClass, statusLabel = "dot-err", "Disabled"
+		}
+		rows = append(rows, userRow{
+			Username:     u.Username,
+			DisplayName:  u.DisplayName,
+			Role:         u.Role,
+			RoleClass:    roleClass(u.Role),
+			CreatedStr:   u.CreatedAt.UTC().Format("2006-01-02"),
+			LastLoginStr: lastLogin,
+			StatusClass:  statusClass,
+			StatusLabel:  statusLabel,
+			Disabled:     u.Disabled,
+		})
+	}
+	return rows
+}
+
+// buildRolesTabData populates the Roles tab with predefined + custom roles,
+// computing member counts from the user list.
+func (s *Server) buildRolesTabData() []roleCard {
+	// Count users per role name.
+	memberCount := map[string]int{}
+	if s.Users != nil {
+		if users, err := s.Users.List(); err == nil {
+			for _, u := range users {
+				memberCount[u.Role]++
+			}
+		}
+	}
+
+	var cards []roleCard
+	for _, p := range auth.PredefinedRoles {
+		cards = append(cards, roleCard{
+			Name:         p.Name,
+			Description:  p.Description,
+			BaseRole:     p.BaseRole,
+			RoleClass:    roleClass(p.Name),
+			MemberCount:  memberCount[p.Name],
+			IsPredefined: true,
+		})
+	}
+	if s.Roles != nil {
+		if custom, err := s.Roles.List(); err == nil {
+			for _, r := range custom {
+				cards = append(cards, roleCard{
+					Name:         r.Name,
+					Description:  r.Description,
+					BaseRole:     r.BaseRole,
+					RoleClass:    roleClass(r.Name),
+					MemberCount:  memberCount[r.Name],
+					IsPredefined: false,
+				})
+			}
+		}
+	}
+	return cards
+}
+
+func roleClass(name string) string {
+	switch auth.BaseRoleFor(name) {
+	case auth.RoleRead:
+		return "scope-read"
+	case auth.RoleWrite:
+		return "scope-write"
+	case auth.RoleAdmin:
+		return "scope-admin"
+	}
+	return "scope-read"
 }
 
 // processTokenFormV2 handles POST for the sidebar tokens page.

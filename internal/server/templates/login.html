@@ -4,11 +4,30 @@
   {{if .Error}}
   <div class="alert alert-error">{{.Error}}</div>
   {{end}}
+  {{if .UsersEnabled}}
+  <form method="POST" class="login-form">
+    {{if .Next}}<input type="hidden" name="next" value="{{.Next}}">{{end}}
+    <div class="form-group">
+      <label for="f-username">Username</label>
+      <input id="f-username" type="text" name="username" autofocus autocomplete="username"
+             placeholder="username">
+    </div>
+    <div class="form-group">
+      <label for="f-password">Password</label>
+      <input id="f-password" type="password" name="password" autocomplete="current-password"
+             placeholder="password">
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">Sign in</button>
+    </div>
+  </form>
+  <div class="login-divider"><span>or sign in with token</span></div>
+  {{end}}
   <form method="POST" class="login-form">
     {{if .Next}}<input type="hidden" name="next" value="{{.Next}}">{{end}}
     <div class="form-group">
       <label for="f-token">API token</label>
-      <input id="f-token" type="password" name="token" autofocus required
+      <input id="f-token" type="password" name="token"{{if not .UsersEnabled}} autofocus{{end}}
              placeholder="forge_…">
       <p class="form-hint">Enter an admin API token. Tokens are created via <code>POST /api/v1/tokens</code>.</p>
     </div>

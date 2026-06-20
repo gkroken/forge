@@ -7,22 +7,39 @@
       <div class="admin-subheader-sub">Personal &amp; CI tokens, scoped by role and repository</div>
     </div>
     <div style="margin-left:auto;display:flex;align-items:center;gap:9px;">
-      {{if .AuthEnabled}}
-      <a href="/ui/admin/tokens" class="btn" style="height:34px;padding:0 13px;font-size:12.5px;">New token</a>
+      {{if and .AuthEnabled (eq .ActiveTab "tokens")}}
+      <a href="#create-token" class="btn" style="height:34px;padding:0 13px;font-size:12.5px;">New token</a>
+      {{end}}
+      {{if and .AuthEnabled (eq .ActiveTab "users")}}
+      <a href="#invite-user" class="btn" style="height:34px;padding:0 13px;font-size:12.5px;">Invite user</a>
+      {{end}}
+      {{if and .AuthEnabled (eq .ActiveTab "roles")}}
+      <a href="#create-role" class="btn" style="height:34px;padding:0 13px;font-size:12.5px;">New role</a>
       {{end}}
     </div>
   </div>
   <div class="admin-tabs">
-    <a class="admin-tab active">Tokens</a>
-    <a class="admin-tab">Users</a>
-    <a class="admin-tab">Roles</a>
+    <a href="?tab=tokens" class="admin-tab{{if eq .ActiveTab "tokens"}} active{{end}}">Tokens</a>
+    <a href="?tab=users"  class="admin-tab{{if eq .ActiveTab "users"}}  active{{end}}">Users</a>
+    <a href="?tab=roles"  class="admin-tab{{if eq .ActiveTab "roles"}}  active{{end}}">Roles</a>
   </div>
 </div>
 
 <div class="admin-content">
   {{if not .AuthEnabled}}
-  <div class="alert alert-error">Authentication is not enabled. Start forge with <code>-auth</code> to manage tokens.</div>
+  <div class="alert alert-error">Authentication is not enabled. Start forge with <code>-auth</code> to manage tokens and users.</div>
   {{else}}
+
+  {{if .Error}}
+  <div class="alert alert-error">{{.Error}}</div>
+  {{end}}
+
+  {{if .Flash}}
+  <div class="alert alert-success">{{.Flash}}</div>
+  {{end}}
+
+  <!-- ── Tokens tab ───────────────────────────────────────────────────────── -->
+  {{if eq .ActiveTab "tokens"}}
 
   {{if .NewSecret}}
   <div class="alert alert-success secret-reveal">
@@ -34,14 +51,6 @@
   </div>
   {{end}}
 
-  {{if .Error}}
-  <div class="alert alert-error">{{.Error}}</div>
-  {{end}}
-
-  {{if .Flash}}
-  <div class="alert alert-success">{{.Flash}}</div>
-  {{end}}
-
   <!-- filter row -->
   <div style="display:flex;align-items:center;gap:10px;">
     <div style="display:flex;align-items:center;gap:8px;width:280px;height:34px;padding:0 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);">
@@ -51,7 +60,6 @@
     <div style="margin-left:auto;font-size:12.5px;color:var(--text-muted);">{{len .Tokens}} token{{if ne (len .Tokens) 1}}s{{end}}</div>
   </div>
 
-  <!-- token table -->
   {{if .Tokens}}
   <div class="admin-table-wrap">
     <table class="admin-table">
@@ -133,6 +141,7 @@
     <div class="section-title">New token</div>
     <div class="panel-card" style="max-width:640px;">
       <form method="POST" class="repo-form" style="max-width:none;">
+        <input type="hidden" name="tab" value="tokens">
         <div class="form-group">
           <label for="t-desc">Description</label>
           <input id="t-desc" type="text" name="description" required
@@ -169,6 +178,192 @@
     </div>
   </div>
 
+  {{end}}{{/* end tokens tab */}}
+
+  <!-- ── Users tab ────────────────────────────────────────────────────────── -->
+  {{if eq .ActiveTab "users"}}
+
+  <!-- filter row -->
+  <div style="display:flex;align-items:center;gap:10px;">
+    <div style="display:flex;align-items:center;gap:8px;width:280px;height:34px;padding:0 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="var(--text-muted)"><path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.099zm-5.242.656a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/></svg>
+      <span style="font-size:13px;color:var(--text-muted);">Filter users…</span>
+    </div>
+    <div style="margin-left:auto;font-size:12.5px;color:var(--text-muted);">{{len .Users}} user{{if ne (len .Users) 1}}s{{end}}</div>
+  </div>
+
+  {{if .Users}}
+  <div class="admin-table-wrap">
+    <table class="admin-table">
+      <thead>
+        <tr>
+          <th>User</th>
+          <th>Role</th>
+          <th>Created</th>
+          <th>Last login</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Users}}
+        <tr>
+          <td>
+            <div class="token-name-cell">
+              <span class="token-desc">{{.Username}}</span>
+              {{if .DisplayName}}<span style="font-size:11px;color:var(--text-light);">{{.DisplayName}}</span>{{end}}
+            </div>
+          </td>
+          <td><span class="scope-badge {{.RoleClass}}" style="font-size:11px;padding:2px 8px;">{{.Role}}</span></td>
+          <td class="col-mono" style="font-size:12px;color:var(--text-muted);">{{.CreatedStr}}</td>
+          <td class="col-mono" style="font-size:12px;color:var(--text-muted);">{{.LastLoginStr}}</td>
+          <td>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span class="status-dot {{.StatusClass}}"></span>
+              <span style="font-size:12px;color:var(--text-muted);">{{.StatusLabel}}</span>
+            </div>
+          </td>
+          <td class="col-actions" style="display:flex;gap:6px;">
+            <a href="/ui/admin/tokens/users/{{.Username}}/disable"
+               class="btn btn-sm"
+               style="{{if .Disabled}}background:var(--success-light);{{end}}"
+               title="{{if .Disabled}}Enable{{else}}Disable{{end}} user">
+              {{if .Disabled}}Enable{{else}}Disable{{end}}
+            </a>
+            <button class="btn btn-sm btn-danger"
+                    hx-delete="/ui/admin/tokens/users/{{.Username}}"
+                    hx-confirm="Delete user «{{.Username}}»? This cannot be undone."
+                    hx-target="closest tr"
+                    hx-swap="outerHTML">
+              Delete
+            </button>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <div class="empty">No users yet. <a href="#invite-user">Invite one below.</a></div>
   {{end}}
+
+  <!-- invite user form -->
+  <div id="invite-user">
+    <div class="section-title">Invite user</div>
+    <div class="panel-card" style="max-width:640px;">
+      <form method="POST" action="?tab=users" class="repo-form" style="max-width:none;">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="u-name">Username</label>
+            <input id="u-name" type="text" name="username" required placeholder="e.g. alice">
+          </div>
+          <div class="form-group">
+            <label for="u-role">Role</label>
+            <select id="u-role" name="role">
+              <option value="Reader">Reader</option>
+              <option value="Publisher">Publisher</option>
+              <option value="Administrator">Administrator</option>
+              {{if .Roles}}{{range .Roles}}{{if not .IsPredefined}}
+              <option value="{{.Name}}">{{.Name}}</option>
+              {{end}}{{end}}{{end}}
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="u-pw">Initial password</label>
+          <input id="u-pw" type="password" name="password" required autocomplete="new-password">
+          <p class="form-hint">User can change this after their first login.</p>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Create user</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {{end}}{{/* end users tab */}}
+
+  <!-- ── Roles tab ────────────────────────────────────────────────────────── -->
+  {{if eq .ActiveTab "roles"}}
+
+  <div class="section-title">Predefined roles</div>
+  <div class="role-grid-3" style="margin-bottom:2rem;">
+    {{range .Roles}}{{if .IsPredefined}}
+    <div class="role-card">
+      <div class="role-card-hdr">
+        <span class="scope-badge {{.RoleClass}}" style="font-size:12px;padding:3px 10px;">{{.BaseRole}}</span>
+        <span class="role-card-name">{{.Name}}</span>
+      </div>
+      <div class="role-card-desc">{{.Description}}</div>
+      <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">{{.MemberCount}} member{{if ne .MemberCount 1}}s{{end}}</div>
+    </div>
+    {{end}}{{end}}
+  </div>
+
+  {{$hasCustom := false}}
+  {{range .Roles}}{{if not .IsPredefined}}{{$hasCustom = true}}{{end}}{{end}}
+  {{if $hasCustom}}
+  <div class="section-title">Custom roles</div>
+  <div class="admin-table-wrap">
+    <table class="admin-table">
+      <thead>
+        <tr><th>Name</th><th>Base role</th><th>Description</th><th>Members</th><th></th></tr>
+      </thead>
+      <tbody>
+        {{range .Roles}}{{if not .IsPredefined}}
+        <tr>
+          <td><span class="token-desc">{{.Name}}</span></td>
+          <td><span class="scope-badge {{.RoleClass}}" style="font-size:11px;padding:2px 8px;">{{.BaseRole}}</span></td>
+          <td style="font-size:12.5px;color:var(--text-muted);">{{.Description}}</td>
+          <td class="col-mono" style="font-size:12px;">{{.MemberCount}}</td>
+          <td class="col-actions">
+            <button class="btn btn-sm btn-danger"
+                    hx-delete="/api/v1/roles/{{.Name}}"
+                    hx-confirm="Delete role «{{.Name}}»?"
+                    hx-target="closest tr"
+                    hx-swap="outerHTML">
+              Delete
+            </button>
+          </td>
+        </tr>
+        {{end}}{{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  <!-- create role form -->
+  <div id="create-role">
+    <div class="section-title">New custom role</div>
+    <div class="panel-card" style="max-width:640px;">
+      <form method="POST" action="?tab=roles" class="repo-form" style="max-width:none;">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="r-name">Name</label>
+            <input id="r-name" type="text" name="name" required placeholder="e.g. ci-deploy">
+          </div>
+          <div class="form-group">
+            <label for="r-base">Base role</label>
+            <select id="r-base" name="baseRole">
+              <option value="read">read</option>
+              <option value="write">write</option>
+              <option value="admin">admin</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="r-desc">Description</label>
+          <input id="r-desc" type="text" name="description" placeholder="Optional description">
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Create role</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {{end}}{{/* end roles tab */}}
+
+  {{end}}{{/* end AuthEnabled */}}
 </div>
 {{end}}

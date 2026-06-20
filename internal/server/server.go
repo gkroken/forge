@@ -71,6 +71,8 @@ type Server struct {
 	Cleanup   *cleanup.PolicyManager  // nil = cleanup-policies API returns 503
 	Scheduler *cleanup.Scheduler     // nil = no scheduled runs (eval / tests)
 	AuditLog  *obs.AuditLog          // nil = no in-memory audit log
+	Users     auth.UserStore         // nil = user management not configured
+	Roles     auth.RoleStore         // nil = custom roles not configured
 	MaxUpload int64                // per-request body limit; 0 = use defaultMaxUpload
 	reg       prometheus.Gatherer
 	client    *http.Client
@@ -129,6 +131,16 @@ func (s *Server) WithScheduler(sc *cleanup.Scheduler) *Server {
 
 func (s *Server) WithAuditLog(al *obs.AuditLog) *Server {
 	s.AuditLog = al
+	return s
+}
+
+func (s *Server) WithUsers(us auth.UserStore) *Server {
+	s.Users = us
+	return s
+}
+
+func (s *Server) WithRoles(rs auth.RoleStore) *Server {
+	s.Roles = rs
 	return s
 }
 
@@ -202,6 +214,10 @@ func (s *Server) Routes() http.Handler {
 	}
 	mux.HandleFunc("/api/v1/tokens", s.handleTokens)
 	mux.HandleFunc("/api/v1/tokens/", s.handleTokens)
+	mux.HandleFunc("/api/v1/users", s.handleUsers)
+	mux.HandleFunc("/api/v1/users/", s.handleUsers)
+	mux.HandleFunc("/api/v1/roles", s.handleRoles)
+	mux.HandleFunc("/api/v1/roles/", s.handleRoles)
 	mux.HandleFunc("/api/v1/cleanup-policies", s.handleCleanupPolicies)
 	mux.HandleFunc("/api/v1/cleanup-policies/", s.handleCleanupPolicies)
 	mux.HandleFunc("/api/v1/repos", s.handleAdminRepos)

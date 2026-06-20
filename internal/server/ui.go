@@ -154,6 +154,7 @@ type loginPage struct {
 	Error       string
 	Next        string
 	OIDCEnabled bool
+	UsersEnabled bool
 }
 
 type homePage struct {
@@ -461,17 +462,25 @@ func (s *Server) uiLogin(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "bad form", http.StatusBadRequest)
 			return
 		}
-		secret := r.FormValue("token")
 		if n := r.FormValue("next"); n != "" {
 			next = sanitizeNext(n)
 		}
 
+		// Username/password path.
+		if username := strings.TrimSpace(r.FormValue("username")); username != "" {
+			s.loginWithPassword(w, r, username, r.FormValue("password"), next)
+			return
+		}
+
+		// API token path.
+		secret := r.FormValue("token")
 		ok := s.verifyAdminSecret(secret)
 		if !ok {
 			render(w, tmplLogin, "base.html", loginPage{
-				Title: "Sign in",
-				Error: "Invalid token or insufficient permissions.",
-				Next:  next,
+				Title:        "Sign in",
+				Error:        "Invalid token or insufficient permissions.",
+				Next:         next,
+				UsersEnabled: s.Users != nil,
 			})
 			return
 		}
@@ -495,11 +504,53 @@ func (s *Server) uiLogin(w http.ResponseWriter, r *http.Request) {
 		errMsg = "SSO login failed. Please try again or sign in with a token."
 	}
 	render(w, tmplLogin, "base.html", loginPage{
-		Title:       "Sign in",
-		Error:       errMsg,
-		Next:        next,
-		OIDCEnabled: s.OIDC != nil && s.Auth != nil,
+		Title:        "Sign in",
+		Error:        errMsg,
+		Next:         next,
+		OIDCEnabled:  s.OIDC != nil && s.Auth != nil,
+		UsersEnabled: s.Users != nil,
 	})
+}
+
+// loginWithPassword authenticates a user with username/password, creates a
+// 24h session token, and sets the session cookie.
+func (s *Server) loginWithPassword(w http.ResponseWriter, r *http.Request, username, password, next string) {
+	fail := func(msg string) {
+		render(w, tmplLogin, "base.html", loginPage{
+			Title: "Sign in", Error: msg, Next: next,
+			OIDCEnabled: s.OIDC != nil && s.Auth != nil, UsersEnabled: s.Users != nil,
+		})
+	}
+	if s.Users == nil || s.Auth == nil {
+		fail("User authentication is not configured.")
+		return
+	}
+	u, err := s.Users.Authenticate(username, password)
+	if err != nil || u == nil {
+		fail("Invalid username or password.")
+		return
+	}
+	// Issue a 24h session token with the user's base role on all repos.
+	role := auth.BaseRoleFor(u.Role)
+	if role < auth.RoleRead {
+		fail("Account has no permissions.")
+		return
+	}
+	exp := time.Now().UTC().Add(24 * time.Hour)
+	_, secret, err := s.Auth.Create("session:"+username, []auth.Grant{{Repo: "*", Role: role}}, &exp, username)
+	if err != nil {
+		fail("Failed to create session.")
+		return
+	}
+	http.SetCookie(w, &http.Cookie{ // #nosec G124
+		Name:     auth.UISessionCookie,
+		Value:    secret,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   isSecureContext(r),
+		SameSite: http.SameSiteStrictMode,
+	})
+	http.Redirect(w, r, next, http.StatusSeeOther) // #nosec G710
 }
 
 func (s *Server) uiLogout(w http.ResponseWriter, r *http.Request) {

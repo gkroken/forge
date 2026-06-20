@@ -90,7 +90,11 @@ func main() {
 	}
 
 	// Auth store: nil = AllowAll (eval mode); non-nil = token enforcement.
-	var authStore auth.Store
+	var (
+		authStore auth.Store
+		userStore auth.UserStore
+		roleStore auth.RoleStore
+	)
 	if *enableAuth {
 		authStore = auth.NewMetaStore(metaStore)
 		n, err := authStore.Count()
@@ -103,6 +107,8 @@ func main() {
 			slog.Info("auth enabled: bootstrap admin token created", "id", tok.ID, "secret", secret)
 			slog.Warn("store the bootstrap secret; it will not be shown again")
 		}
+		userStore = auth.NewUserStore(metaStore)
+		roleStore = auth.NewRoleStore(metaStore)
 	}
 
 	// Register one handler per format. This is the entire extension surface.
@@ -185,7 +191,9 @@ func main() {
 		WithQueue(workerCtx, q).
 		WithCleanup(cleanupPolicies).
 		WithScheduler(cleanupScheduler).
-		WithAuditLog(auditLog)
+		WithAuditLog(auditLog).
+		WithUsers(userStore).
+		WithRoles(roleStore)
 
 	if oidcCfg, err := oidc.FromEnv(); err != nil {
 		slog.Error("oidc: invalid configuration", "err", err)
