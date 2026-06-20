@@ -131,11 +131,15 @@ function renderTreeNodes(repo, nodes, depth, container, replace) {
   }
   const indent = 12 + depth * 16;
   const html = nodes.map(n => {
-    const icon = n.is_dir ? 'folder' : 'package_2';
+    // A node is either a folder to descend (is_dir) or a terminal artifact
+    // (component set). Artifacts show a package icon and load versions on click.
+    const isComponent = !!n.component;
+    const icon = isComponent ? 'package_2' : 'folder';
     return '<div class="browse-tree-node" ' +
       'data-path="' + esc(n.path) + '" ' +
       'data-repo="' + esc(repo) + '" ' +
       'data-is-dir="' + n.is_dir + '" ' +
+      (isComponent ? 'data-component="' + esc(n.component) + '" ' : '') +
       'data-depth="' + depth + '" ' +
       'style="padding-left:' + indent + 'px">' +
       (n.is_dir
@@ -359,31 +363,18 @@ document.getElementById('pkg-list').addEventListener('click', function(e) {
     return;
   }
 
-  // Maven tree node
+  // Maven tree node: folder → expand; artifact (has component) → load versions.
   const tn = e.target.closest('.browse-tree-node');
   if (tn) {
-    if (tn.dataset.isDir === 'true') {
-      toggleTreeFolder(repo, tn);
-    } else {
+    if (tn.dataset.component) {
       document.querySelectorAll('.browse-tree-node').forEach(n => n.classList.remove('active'));
       tn.classList.add('active');
-      selectPkg(repo, mavenComponentFromPath(tn.dataset.path));
+      selectPkg(repo, tn.dataset.component);
+    } else if (tn.dataset.isDir === 'true') {
+      toggleTreeFolder(repo, tn);
     }
   }
 });
-
-// ── Maven path → groupId:artifactId ──────────────────────────────────────────
-// Mirrors the heuristic in BrowseRepo: first digit-starting segment = version.
-// e.g. "com/google/guava/guava/33.0.0/guava-33.0.0.jar" → "com.google.guava:guava"
-function mavenComponentFromPath(path) {
-  const parts = path.split('/').filter(Boolean);
-  let verIdx = -1;
-  for (let i = 0; i < parts.length; i++) {
-    if (parts[i] && parts[i][0] >= '0' && parts[i][0] <= '9') { verIdx = i; break; }
-  }
-  if (verIdx < 2) return path;
-  return parts.slice(0, verIdx - 1).join('.') + ':' + parts[verIdx - 1];
-}
 
 // ── Auto-expand repo from URL ─────────────────────────────────────────────────
 const autoNode = document.querySelector('.browse-repo-node.auto-expand');

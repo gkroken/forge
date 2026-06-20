@@ -40,9 +40,18 @@ func (s *Server) uiBrowseTree(w http.ResponseWriter, r *http.Request, repoName s
 		return
 	}
 
-	// Collect immediate children (one level deep) deduplicating directories.
-	seen := map[string]bool{}
-	var nodes []treeNode
+	// Collect immediate children (one level deep), classifying each as a folder
+	// (groupId segment, keep descending) or an artifact (its children are
+	// versions, so the tree terminates here). A child is an artifact when any of
+	// its grandchild segments starts with a digit — the same version heuristic
+	// the maven handler uses. Versions never become tree nodes; they live in the
+	// center pane, reached by clicking the artifact's emitted Component.
+	type childInfo struct {
+		isDir      bool
+		hasVersion bool
+	}
+	seen := map[string]*childInfo{}
+	var order []string
 	for _, k := range keys {
 		rel := strings.TrimPrefix(k, blobPrefix)
 		if rel == "" {
@@ -52,21 +61,35 @@ func (s *Server) uiBrowseTree(w http.ResponseWriter, r *http.Request, repoName s
 		if seg == "" {
 			continue
 		}
-		if seen[seg] {
-			continue
+		ci := seen[seg]
+		if ci == nil {
+			ci = &childInfo{}
+			seen[seg] = ci
+			order = append(order, seg)
 		}
-		seen[seg] = true
-		nodePath := prefix
-		if nodePath != "" {
-			nodePath += "/" + seg
-		} else {
-			nodePath = seg
+		if isDir {
+			ci.isDir = true
+			if g, _, _ := strings.Cut(rest, "/"); g != "" && g[0] >= '0' && g[0] <= '9' {
+				ci.hasVersion = true
+			}
 		}
-		_ = rest
-		nodes = append(nodes, treeNode{Name: seg, Path: nodePath, IsDir: isDir})
 	}
-	if nodes == nil {
-		nodes = []treeNode{}
+
+	nodes := make([]treeNode, 0, len(order))
+	for _, seg := range order {
+		ci := seen[seg]
+		nodePath := seg
+		if prefix != "" {
+			nodePath = prefix + "/" + seg
+		}
+		n := treeNode{Name: seg, Path: nodePath}
+		switch {
+		case ci.hasVersion:
+			n.Component = mavenComponent(prefix, seg)
+		case ci.isDir:
+			n.IsDir = true
+		}
+		nodes = append(nodes, n)
 	}
 	writeJSON(w, nodes)
 }
@@ -367,7 +390,22 @@ type browseDetailResponse struct {
 type treeNode struct {
 	Name  string `json:"name"`
 	Path  string `json:"path"`   // repo-relative path (no leading slash)
-	IsDir bool   `json:"is_dir"` // true when the node has children
+	IsDir bool   `json:"is_dir"` // true when the node is a folder to descend into
+	// Component is non-empty for a terminal artifact node ("groupId:artifactId").
+	// The client treats it as a leaf: clicking loads its versions in the center
+	// pane rather than expanding. Mutually exclusive with IsDir.
+	Component string `json:"component,omitempty"`
+}
+
+// mavenComponent builds the "groupId:artifactId" identifier for an artifact
+// directory named artifact sitting under the given repo-relative prefix
+// (groupId path with "/" separators).
+func mavenComponent(prefix, artifact string) string {
+	g := strings.ReplaceAll(prefix, "/", ".")
+	if g == "" {
+		return artifact
+	}
+	return g + ":" + artifact
 }
 
 type componentItem struct {

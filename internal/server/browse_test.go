@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"forge/internal/blob"
@@ -153,6 +154,84 @@ func TestSearch_formatFilter(t *testing.T) {
 	json.NewDecoder(rw.Body).Decode(&resp)
 	if len(resp.Results) != 1 || resp.Results[0].Format != "helm" {
 		t.Errorf("expected 1 helm result, got %+v", resp.Results)
+	}
+}
+
+// newMavenTreeServer wires a server with one maven repo seeded with a couple of
+// artifacts laid out in standard Maven 2 layout, so the tree endpoint has a
+// real groupId → artifactId → version → file hierarchy to classify.
+func newMavenTreeServer(t *testing.T) *Server {
+	t.Helper()
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	mgr := repo.NewManager()
+	reg := format.NewRegistry()
+	mgr.Add(repo.Repository{Name: "maven-releases", Format: "maven", Kind: repo.Hosted}) //nolint:errcheck
+
+	keys := []string{
+		"maven-releases/org/springframework/spring-core/6.2.7/spring-core-6.2.7.jar",
+		"maven-releases/org/springframework/spring-core/6.2.6/spring-core-6.2.6.jar",
+		"maven-releases/org/springframework/spring-core/maven-metadata.xml",
+		"maven-releases/org/springframework/spring-beans/6.2.7/spring-beans-6.2.7.jar",
+	}
+	for _, k := range keys {
+		b.Put(k, strings.NewReader("x")) //nolint:errcheck
+	}
+	return New(mgr, reg, b, m, nil)
+}
+
+func fetchTree(t *testing.T, srv *Server, prefix string) []treeNode {
+	t.Helper()
+	rw := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodGet, "/ui/browse/maven-releases/tree?prefix="+prefix, nil))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("tree(%q): status %d: %s", prefix, rw.Code, rw.Body.String())
+	}
+	var nodes []treeNode
+	if err := json.NewDecoder(rw.Body).Decode(&nodes); err != nil {
+		t.Fatal(err)
+	}
+	return nodes
+}
+
+// TestBrowseTree_terminatesAtArtifact verifies the tree descends through groupId
+// segments as folders but stops at the artifact (the directory whose children are
+// versions), emitting a Component identifier instead of recursing into versions.
+func TestBrowseTree_terminatesAtArtifact(t *testing.T) {
+	srv := newMavenTreeServer(t)
+
+	// Top level: "org" is a plain groupId folder, not an artifact.
+	top := fetchTree(t, srv, "")
+	if len(top) != 1 || top[0].Name != "org" {
+		t.Fatalf("root tree: got %+v, want single folder 'org'", top)
+	}
+	if !top[0].IsDir || top[0].Component != "" {
+		t.Errorf("'org' should be a folder, got %+v", top[0])
+	}
+
+	// org/springframework: both artifacts terminate here (their children are
+	// versions), so each is a Component leaf, not a descendable folder.
+	lvl := fetchTree(t, srv, "org/springframework")
+	byName := map[string]treeNode{}
+	for _, n := range lvl {
+		byName[n.Name] = n
+	}
+	if len(byName) != 2 {
+		t.Fatalf("expected spring-core + spring-beans, got %+v", lvl)
+	}
+	core, ok := byName["spring-core"]
+	if !ok {
+		t.Fatalf("missing spring-core in %+v", lvl)
+	}
+	if core.IsDir {
+		t.Errorf("spring-core should not be a descendable folder: %+v", core)
+	}
+	if core.Component != "org.springframework:spring-core" {
+		t.Errorf("spring-core component: got %q, want org.springframework:spring-core", core.Component)
+	}
+	if beans := byName["spring-beans"]; beans.Component != "org.springframework:spring-beans" {
+		t.Errorf("spring-beans component: got %q", beans.Component)
 	}
 }
 
