@@ -5,6 +5,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"forge/internal/blob"
+	"forge/internal/obs"
+	"forge/internal/proxy"
+	"forge/internal/queue"
 )
 
 // ── page types ────────────────────────────────────────────────────────────────
@@ -20,6 +25,7 @@ type dashboardPage struct {
 	ReqBars         []reqBar
 	RecentActivity  []activityRow
 	BackgroundTasks []taskRow
+	HealthRows      []healthRow
 	StoredGB        float64
 	LatencyP50Ms    int64
 	LatencyP95Ms    int64
@@ -52,6 +58,13 @@ type taskRow struct {
 	Status string
 	Color  string
 	Pct    int
+}
+
+type healthRow struct {
+	DotClass  string // "dot-ok" | "dot-warn" | "dot-err" | "dot-neutral"
+	Label     string
+	Stat      string
+	StatClass string // CSS class for the stat value
 }
 
 type observabilityPage struct {
@@ -155,19 +168,26 @@ func (s *Server) uiDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// ── Request chart + totals from GlobalStats (preferred) ──────────────────
+	var reqBars []reqBar
 	var totalReqs int64
-	var cacheHits, cacheMisses int64
-	if s.reg != nil {
-		totalReqs = s.gatherCounterTotal("forge_http_requests_total")
-		cacheHits = s.gatherCounterTotal("forge_proxy_cache_hits_total")
-		cacheMisses = s.gatherCounterTotal("forge_proxy_cache_misses_total")
-	}
-
 	var hitPct float64
-	if denom := cacheHits + cacheMisses; denom > 0 {
-		hitPct = float64(cacheHits) / float64(denom) * 100
+
+	if s.GlobalStats != nil {
+		snap := s.GlobalStats.RequestChartSnapshot()
+		reqBars, totalReqs, hitPct = buildRequestBars(snap)
+	} else if s.reg != nil {
+		// Fall back to Prometheus counters when GlobalStats is not available.
+		totalReqs = s.gatherCounterTotal("forge_http_requests_total")
+		cacheHits := s.gatherCounterTotal("forge_proxy_cache_hits_total")
+		cacheMisses := s.gatherCounterTotal("forge_proxy_cache_misses_total")
+		if denom := cacheHits + cacheMisses; denom > 0 {
+			hitPct = float64(cacheHits) / float64(denom) * 100
+		}
+		reqBars = buildRepresentativeBars(24)
+	} else {
+		reqBars = buildRepresentativeBars(24)
 	}
-	_ = cacheMisses
 
 	var recentActivity []activityRow
 	if s.AuditLog != nil {
@@ -218,19 +238,21 @@ func (s *Server) uiDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	render(w, tmplDashboard, "admin_shell.html", dashboardPage{
-		Title:          "Dashboard",
-		ActiveNav:      "dashboard",
-		RepoCount:      total,
-		FormatCount:    len(fmtCounts),
-		TotalRequests:  totalReqs,
-		CacheHitPct:    hitPct,
-		ReposByFormat:  fmtStats,
-		ReqBars:        buildRepresentativeBars(24),
-		RecentActivity: recentActivity,
-		StoredGB:       storedGB,
-		LatencyP50Ms:   latP50,
-		LatencyP95Ms:   latP95,
-		ThroughputRPS:  rps,
+		Title:           "Dashboard",
+		ActiveNav:       "dashboard",
+		RepoCount:       total,
+		FormatCount:     len(fmtCounts),
+		TotalRequests:   totalReqs,
+		CacheHitPct:     hitPct,
+		ReposByFormat:   fmtStats,
+		ReqBars:         reqBars,
+		RecentActivity:  recentActivity,
+		BackgroundTasks: buildTaskRows(s),
+		HealthRows:      buildHealthRows(s, latP50),
+		StoredGB:        storedGB,
+		LatencyP50Ms:    latP50,
+		LatencyP95Ms:    latP95,
+		ThroughputRPS:   rps,
 	})
 }
 
@@ -241,36 +263,51 @@ func (s *Server) uiObservability(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var totalReqs, cacheHits, cacheMisses, errReqs int64
-	if s.reg != nil {
+	// ── Status breakdown: prefer GlobalStats (reset-on-restart), fall back to Prometheus ──
+	var breakdown []statusSlice
+	var totalReqs, errReqs int64
+	if s.GlobalStats != nil {
+		colors := map[string]string{"2xx": "#2e8b6f", "304": "#3a6ea5", "4xx": "#c08a2d", "5xx": "#c0503f"}
+		for _, e := range s.GlobalStats.StatusBreakdown() {
+			if e.Count == 0 {
+				continue
+			}
+			totalReqs += int64(e.Count)
+			if e.Code == "5xx" {
+				errReqs += int64(e.Count)
+			}
+			breakdown = append(breakdown, statusSlice{
+				Code: e.Code, Label: e.Label, Pct: e.Pct,
+				PctStr: fmt.Sprintf("%.1f%%", e.Pct), Color: colors[e.Code],
+			})
+		}
+	} else if s.reg != nil {
 		totalReqs = s.gatherCounterTotal("forge_http_requests_total")
-		cacheHits = s.gatherCounterTotal("forge_proxy_cache_hits_total")
-		cacheMisses = s.gatherCounterTotal("forge_proxy_cache_misses_total")
+		cacheHits := s.gatherCounterTotal("forge_proxy_cache_hits_total")
+		_ = cacheHits
 		errReqs = s.gatherCounterByLabelPrefix("forge_http_requests_total", "status", "5")
+		if totalReqs > 0 {
+			add := func(prefix, code, label, color string) {
+				n := s.gatherCounterByLabelPrefix("forge_http_requests_total", "status", prefix)
+				if n == 0 {
+					return
+				}
+				pct := float64(n) / float64(totalReqs) * 100
+				breakdown = append(breakdown, statusSlice{
+					Code: code, Label: label, Pct: pct,
+					PctStr: fmt.Sprintf("%.1f%%", pct), Color: color,
+				})
+			}
+			add("2", "2xx", "Success", "#2e8b6f")
+			add("3", "3xx", "Redirect", "#3a6ea5")
+			add("4", "4xx", "Client error", "#c08a2d")
+			add("5", "5xx", "Server error", "#c0503f")
+		}
 	}
 
 	var errPct float64
 	if totalReqs > 0 {
 		errPct = float64(errReqs) / float64(totalReqs) * 100
-	}
-
-	var breakdown []statusSlice
-	if totalReqs > 0 {
-		add := func(prefix, code, label, color string) {
-			n := s.gatherCounterByLabelPrefix("forge_http_requests_total", "status", prefix)
-			if n == 0 {
-				return
-			}
-			pct := float64(n) / float64(totalReqs) * 100
-			breakdown = append(breakdown, statusSlice{
-				Code: code, Label: label, Pct: pct,
-				PctStr: fmt.Sprintf("%.1f%%", pct), Color: color,
-			})
-		}
-		add("2", "2xx", "Success",      "#2e8b6f")
-		add("3", "3xx", "Redirect",     "#3a6ea5")
-		add("4", "4xx", "Client error", "#c08a2d")
-		add("5", "5xx", "Server error", "#c0503f")
 	}
 
 	var latP50, latP95 int64
@@ -320,17 +357,22 @@ func (s *Server) uiObservability(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var rateBars []rateBar
+	if s.GlobalStats != nil {
+		rateBars = buildMetricsBars(s.GlobalStats.MetricsChartSnapshot())
+	} else {
+		rateBars = buildRepresentativeBars32()
+	}
+
 	render(w, tmplObservability, "admin_shell.html", observabilityPage{
 		Title:           "Observability",
 		ActiveNav:       "observability",
 		TotalRequests:   totalReqs,
-		CacheHits:       cacheHits,
-		CacheMisses:     cacheMisses,
 		ErrorPct:        errPct,
 		LatencyP50Ms:    latP50,
 		LatencyP95Ms:    latP95,
 		ThroughputRPS:   rps,
-		RateBars:        buildRepresentativeBars32(),
+		RateBars:        rateBars,
 		StatusBreakdown: breakdown,
 		AuditLog:        auditEntries,
 	})
@@ -432,7 +474,7 @@ func auditTarget(path string) string {
 
 // ── chart helpers ─────────────────────────────────────────────────────────────
 
-// buildRepresentativeBars returns a 24-bar bell-curve pattern for the 24h chart.
+// buildRepresentativeBars returns a 24-bar placeholder when GlobalStats is unavailable.
 func buildRepresentativeBars(n int) []reqBar {
 	pattern := []int{38, 40, 44, 48, 56, 62, 70, 78, 84, 88, 86, 82, 80, 84, 78, 74, 80, 76, 68, 60, 54, 48, 42, 40}
 	bars := make([]reqBar, n)
@@ -445,7 +487,7 @@ func buildRepresentativeBars(n int) []reqBar {
 	return bars
 }
 
-// buildRepresentativeBars32 returns a 32-bar pattern for the observability chart.
+// buildRepresentativeBars32 returns a 32-bar placeholder when GlobalStats is unavailable.
 func buildRepresentativeBars32() []rateBar {
 	pattern := []int{40, 44, 42, 48, 52, 50, 58, 64, 60, 68, 72, 70, 78, 82, 80, 86, 90, 84, 88, 92, 85, 80, 76, 82, 78, 70, 64, 58, 52, 48, 44, 42}
 	bars := make([]rateBar, 32)
@@ -453,4 +495,168 @@ func buildRepresentativeBars32() []rateBar {
 		bars[i] = rateBar{H: pattern[i%len(pattern)]}
 	}
 	return bars
+}
+
+// buildRequestBars converts GlobalStats hourly snapshot into chart bars and totals.
+func buildRequestBars(snap []obs.HourlyRequestBucket) ([]reqBar, int64, float64) {
+	var maxTotal, totalReqs, totalHits, totalMisses uint64
+	for _, b := range snap {
+		t := b.Requests
+		if t > maxTotal {
+			maxTotal = t
+		}
+		totalReqs += b.Requests
+		totalHits += b.CacheHits
+		totalMisses += b.CacheMisses
+	}
+	bars := make([]reqBar, len(snap))
+	for i, b := range snap {
+		if maxTotal == 0 {
+			bars[i] = reqBar{}
+			continue
+		}
+		total := b.Requests
+		hitH := 0
+		if total > 0 && b.CacheHits > 0 {
+			hitH = int(b.CacheHits * 100 / maxTotal)
+		}
+		missH := int(total*100/maxTotal) - hitH
+		if missH < 0 {
+			missH = 0
+		}
+		bars[i] = reqBar{Hit: hitH, Miss: missH}
+	}
+	var hitPct float64
+	if denom := totalHits + totalMisses; denom > 0 {
+		hitPct = float64(totalHits) / float64(denom) * 100
+	}
+	return bars, int64(totalReqs), hitPct
+}
+
+// buildMetricsBars converts GlobalStats 15-min snapshot into rate bars (height 0–100).
+func buildMetricsBars(snap []obs.MetricsBucket) []rateBar {
+	var maxRate float64
+	for _, b := range snap {
+		if b.ReqRate > maxRate {
+			maxRate = b.ReqRate
+		}
+	}
+	bars := make([]rateBar, len(snap))
+	for i, b := range snap {
+		h := 0
+		if maxRate > 0 {
+			h = int(b.ReqRate / maxRate * 100)
+		}
+		if h < 0 {
+			h = 0
+		}
+		bars[i] = rateBar{H: h}
+	}
+	return bars
+}
+
+// buildTaskRows converts TaskRing entries into display rows.
+func buildTaskRows(s *Server) []taskRow {
+	if s.TaskRing == nil {
+		return nil
+	}
+	tasks := s.TaskRing.Recent(10)
+	rows := make([]taskRow, 0, len(tasks))
+	for _, t := range tasks {
+		var color string
+		var pct int
+		switch t.Status {
+		case "running":
+			color = "var(--accent)"
+			pct = 50 // unknown progress; show half-filled
+		case "done":
+			color = "var(--dot-ok)"
+			pct = 100
+		case "failed":
+			color = "var(--dot-err)"
+			pct = 100
+		default:
+			color = "var(--text-muted)"
+		}
+		rows = append(rows, taskRow{
+			Name:   t.Name,
+			Status: t.Status,
+			Color:  color,
+			Pct:    pct,
+		})
+	}
+	return rows
+}
+
+// buildHealthRows assembles the service health panel from live system state.
+func buildHealthRows(s *Server, latP50Ms int64) []healthRow {
+	var rows []healthRow
+
+	// REST API latency
+	apiStat := "ok"
+	apiClass := "text-ok"
+	if latP50Ms > 0 {
+		apiStat = fmt.Sprintf("ok · %dms p50", latP50Ms)
+	}
+	rows = append(rows, healthRow{DotClass: "dot-ok", Label: "REST API", Stat: apiStat, StatClass: apiClass})
+
+	// Blob store capacity
+	if c, ok := s.Blob.(blob.Capacitor); ok {
+		if used, total, err := c.Capacity(); err == nil && total > 0 {
+			pct := float64(used) / float64(total) * 100
+			dot, cls := "dot-ok", "text-ok"
+			if pct > 90 {
+				dot, cls = "dot-err", "text-err"
+			} else if pct > 75 {
+				dot, cls = "dot-warn", "text-warn"
+			}
+			rows = append(rows, healthRow{
+				DotClass:  dot,
+				Label:     "Blob store",
+				Stat:      fmt.Sprintf("%.0f%% used", pct),
+				StatClass: cls,
+			})
+		}
+	}
+
+	// Async queue depth
+	if dr, ok := s.Queue.(queue.DepthReader); ok {
+		depth := dr.Depth()
+		dot := "dot-ok"
+		if depth > 50 {
+			dot = "dot-warn"
+		}
+		stat := "idle"
+		if depth > 0 {
+			stat = fmt.Sprintf("%d queued", depth)
+		}
+		rows = append(rows, healthRow{DotClass: dot, Label: "Async indexer", Stat: stat, StatClass: "text-ok"})
+	}
+
+	// Proxy retry gauge
+	if retrying := s.retryGauge.Load(); retrying > 0 {
+		rows = append(rows, healthRow{
+			DotClass:  "dot-warn",
+			Label:     "Proxy workers",
+			Stat:      fmt.Sprintf("%d retrying", retrying),
+			StatClass: "text-warn",
+		})
+	} else {
+		rows = append(rows, healthRow{DotClass: "dot-ok", Label: "Proxy workers", Stat: "idle", StatClass: "text-ok"})
+	}
+
+	// Proxy upstream health (one row per unique upstream host that has been contacted)
+	for host, state := range proxy.AllHealth() {
+		dot, cls := "dot-ok", "text-ok"
+		if state == "down" {
+			dot, cls = "dot-err", "text-err"
+		}
+		label := host
+		if len(label) > 32 {
+			label = label[:29] + "…"
+		}
+		rows = append(rows, healthRow{DotClass: dot, Label: label, Stat: state, StatClass: cls})
+	}
+
+	return rows
 }

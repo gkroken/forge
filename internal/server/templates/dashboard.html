@@ -56,22 +56,17 @@
     <div class="panel-card">
       <div class="panel-title">Service health</div>
       <div class="health-rows">
+        {{range .HealthRows}}
         <div class="health-row">
-          <span class="status-dot dot-ok"></span>
-          <span class="health-label">REST API</span>
-          <span class="health-stat text-ok">ok{{if .LatencyP50Ms}} &middot; {{.LatencyP50Ms}}ms p50{{end}}</span>
-        </div>
-        {{range .ReposByFormat}}
-        <div class="health-row">
-          <span class="status-dot dot-ok"></span>
-          <span class="health-label">{{.Format}}</span>
-          <span class="health-stat" style="color:var(--text-muted);">{{.Count}} repo{{if ne .Count 1}}s{{end}}</span>
+          <span class="status-dot {{.DotClass}}"></span>
+          <span class="health-label">{{.Label}}</span>
+          <span class="health-stat {{.StatClass}}">{{.Stat}}</span>
         </div>
         {{end}}
-        {{if eq (len .ReposByFormat) 0}}
+        {{if eq (len .HealthRows) 0}}
         <div class="health-row">
           <span class="status-dot dot-neutral"></span>
-          <span class="health-label" style="color:var(--text-muted);">No repositories</span>
+          <span class="health-label" style="color:var(--text-muted);">No health data</span>
         </div>
         {{end}}
       </div>
