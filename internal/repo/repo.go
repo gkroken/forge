@@ -94,15 +94,27 @@ func (p *CleanupPolicy) UnmarshalJSON(data []byte) error {
 }
 
 type Repository struct {
-	Name          string         `json:"name"`
-	Format        string         `json:"format"`
-	Kind          Kind           `json:"kind"`
-	Upstream      string         `json:"upstream,omitempty"`
-	Members       []string       `json:"members,omitempty"`
-	AnonymousRead bool           `json:"anonymousRead"`
-	ProxyTTL      time.Duration  `json:"proxyTTL,omitempty"`
-	ProxyAuth     string         `json:"proxyAuth,omitempty"`
-	CleanupPolicyName string `json:"cleanupPolicyName,omitempty"`
+	Name              string        `json:"name"`
+	Format            string        `json:"format"`
+	Kind              Kind          `json:"kind"`
+	Upstream          string        `json:"upstream,omitempty"`
+	Members           []string      `json:"members,omitempty"`
+	AnonymousRead     bool          `json:"anonymousRead"`
+	ProxyTTL          time.Duration `json:"-"` // legacy; populated from JSON; use ContentMaxAge for new code
+	ProxyAuth         string        `json:"proxyAuth,omitempty"`
+	CleanupPolicyName string        `json:"cleanupPolicyName,omitempty"`
+
+	// Enabled=false makes the server return 503 for all requests to this repo.
+	// Existing repos without this field serialised default to true (see UnmarshalJSON).
+	Enabled        bool           `json:"enabled"`
+	BlobStore      string         `json:"blobStore,omitempty"`    // named store; "" = default
+	ContentMaxAge  *time.Duration `json:"-"`                      // serialised as "contentMaxAge" string
+	MetadataMaxAge *time.Duration `json:"-"`                      // serialised as "metadataMaxAge" string
+	NegativeCache  *bool          `json:"negativeCache,omitempty"` // nil = global default (true)
+	AutoBlock      *bool          `json:"autoBlock,omitempty"`     // nil = global default (true)
+	TimeoutSecs    *int           `json:"timeoutSecs,omitempty"`   // nil = 30s
+	Retries        *int           `json:"retries,omitempty"`       // nil = DefaultMaxRetries (2)
+	QuotaGB        *float64       `json:"quotaGB,omitempty"`       // nil = unlimited
 }
 
 // metaStore is the minimal interface Manager needs for persistence.
@@ -217,41 +229,72 @@ func (m *Manager) All() []Repository {
 	return out
 }
 
-// MarshalJSON implements json.Marshaler so time.Duration fields are serialised
-// as human-readable strings (e.g. "24h") rather than nanosecond integers.
+// MarshalJSON serialises duration fields as human-readable strings and omits
+// the zero-value ProxyTTL to avoid persisting 0ns.
 func (r Repository) MarshalJSON() ([]byte, error) {
 	type Alias Repository
 	return json.Marshal(&struct {
 		Alias
-		ProxyTTL string `json:"proxyTTL,omitempty"`
+		ProxyTTL       string `json:"proxyTTL,omitempty"`
+		ContentMaxAge  string `json:"contentMaxAge,omitempty"`
+		MetadataMaxAge string `json:"metadataMaxAge,omitempty"`
 	}{
-		Alias:    Alias(r),
-		ProxyTTL: durationString(r.ProxyTTL),
+		Alias:          Alias(r),
+		ProxyTTL:       durationString(r.ProxyTTL),
+		ContentMaxAge:  durationPtrString(r.ContentMaxAge),
+		MetadataMaxAge: durationPtrString(r.MetadataMaxAge),
 	})
 }
 
-// UnmarshalJSON implements json.Unmarshaler to parse ProxyTTL back from string.
+// UnmarshalJSON parses duration strings back to time.Duration values and
+// defaults Enabled=true so existing repos without the field are not taken
+// offline after an upgrade.
 func (r *Repository) UnmarshalJSON(data []byte) error {
+	r.Enabled = true // backward compat: repos with no "enabled" field stay online
 	type Alias Repository
 	aux := &struct {
 		*Alias
-		ProxyTTL string `json:"proxyTTL,omitempty"`
+		ProxyTTL       string `json:"proxyTTL,omitempty"`
+		ContentMaxAge  string `json:"contentMaxAge,omitempty"`
+		MetadataMaxAge string `json:"metadataMaxAge,omitempty"`
 	}{Alias: (*Alias)(r)}
 	if err := json.Unmarshal(data, aux); err != nil {
 		return err
 	}
-	if aux.ProxyTTL != "" {
+	switch {
+	case aux.ContentMaxAge != "":
+		d, err := time.ParseDuration(aux.ContentMaxAge)
+		if err != nil {
+			return fmt.Errorf("invalid contentMaxAge %q: %w", aux.ContentMaxAge, err)
+		}
+		r.ContentMaxAge = &d
+	case aux.ProxyTTL != "":
 		d, err := time.ParseDuration(aux.ProxyTTL)
 		if err != nil {
 			return fmt.Errorf("invalid proxyTTL %q: %w", aux.ProxyTTL, err)
 		}
 		r.ProxyTTL = d
+		r.ContentMaxAge = &d // copy into new field for callers using ContentMaxAge
+	}
+	if aux.MetadataMaxAge != "" {
+		d, err := time.ParseDuration(aux.MetadataMaxAge)
+		if err != nil {
+			return fmt.Errorf("invalid metadataMaxAge %q: %w", aux.MetadataMaxAge, err)
+		}
+		r.MetadataMaxAge = &d
 	}
 	return nil
 }
 
 func durationString(d time.Duration) string {
 	if d == 0 {
+		return ""
+	}
+	return d.String()
+}
+
+func durationPtrString(d *time.Duration) string {
+	if d == nil || *d == 0 {
 		return ""
 	}
 	return d.String()

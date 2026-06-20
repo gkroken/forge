@@ -86,6 +86,47 @@ func TestServer_HandleIndex_NotFound(t *testing.T) {
 	}
 }
 
+// TestServer_HandleRepo_Disabled: a repo with Enabled=false must return 503
+// before the format handler is reached.
+func TestServer_HandleRepo_Disabled(t *testing.T) {
+	srv := newAdminServer(t)
+	if err := srv.Repos.Add(repo.Repository{
+		Name:    "offline-npm",
+		Format:  "npm",
+		Kind:    repo.Hosted,
+		Enabled: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rw := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw,
+		httptest.NewRequest(http.MethodGet, "/repository/offline-npm/my-pkg", nil))
+	if rw.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rw.Code)
+	}
+}
+
+// TestServer_HandleRepo_EnabledByDefault: a repo added without setting Enabled
+// explicitly is still accessible (Enabled defaults to true in Add path).
+func TestServer_HandleRepo_EnabledByDefault(t *testing.T) {
+	srv := newAdminServer(t)
+	if err := srv.Repos.Add(repo.Repository{
+		Name:    "active-npm",
+		Format:  "npm",
+		Kind:    repo.Hosted,
+		Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rw := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw,
+		httptest.NewRequest(http.MethodGet, "/repository/active-npm/my-pkg", nil))
+	// Format handler returns 404 for unknown pkg — but NOT 503 (repo is online).
+	if rw.Code == http.StatusServiceUnavailable {
+		t.Fatalf("repo should be online, got 503")
+	}
+}
+
 // TestRouteLabel covers all branches of the low-cardinality route labeller.
 func TestRouteLabel(t *testing.T) {
 	cases := []struct {
@@ -127,7 +168,7 @@ func TestServer_HandleOCI_WrongFormat(t *testing.T) {
 // registry" branch: an OCI-format repo exists but no handler is registered.
 func TestServer_HandleOCI_HandlerNotRegistered(t *testing.T) {
 	srv := newAdminServer(t) // no handlers registered
-	srv.Repos.Add(repo.Repository{Name: "docker-hosted", Format: "oci", Kind: repo.Hosted}) //nolint:errcheck
+	srv.Repos.Add(repo.Repository{Name: "docker-hosted", Format: "oci", Kind: repo.Hosted, Enabled: true}) //nolint:errcheck
 	rw := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(rw,
 		httptest.NewRequest(http.MethodGet, "/v2/docker-hosted/img/manifests/latest", nil))

@@ -347,17 +347,28 @@ func (s *Server) processRepoForm(w http.ResponseWriter, r *http.Request, existin
 		}
 	}
 
-	rp := repo.Repository{
-		Name:          name,
-		Format:        r.FormValue("format"),
-		Kind:          repo.Kind(r.FormValue("kind")),
-		Upstream:      strings.TrimSpace(r.FormValue("upstream")),
-		Members:       members,
-		AnonymousRead: r.FormValue("anonymousRead") == "on",
-		ProxyAuth:     strings.TrimSpace(r.FormValue("proxyAuth")),
-		ProxyTTL:          ttl,
-		CleanupPolicyName: strings.TrimSpace(r.FormValue("cleanupPolicyName")),
+	// For edits, start from the existing repo so that BE-D fields not yet in
+	// the form (Enabled, ContentMaxAge, QuotaGB, etc.) are preserved rather
+	// than reset to their zero values.
+	var rp repo.Repository
+	if isEdit {
+		rp, _ = s.Repos.Get(name)
+	} else {
+		rp.Enabled = true // new repos default to online
 	}
+	// Overlay the form-controlled fields.
+	rp.Name = name
+	rp.Format = r.FormValue("format")
+	rp.Kind = repo.Kind(r.FormValue("kind"))
+	rp.Upstream = strings.TrimSpace(r.FormValue("upstream"))
+	rp.Members = members
+	rp.AnonymousRead = r.FormValue("anonymousRead") == "on"
+	rp.ProxyAuth = strings.TrimSpace(r.FormValue("proxyAuth"))
+	rp.ProxyTTL = ttl
+	if ttl > 0 {
+		rp.ContentMaxAge = &ttl
+	}
+	rp.CleanupPolicyName = strings.TrimSpace(r.FormValue("cleanupPolicyName"))
 
 	if msg := validateRepo(rp); msg != "" {
 		s.reRenderForm(w, r, existingName, isEdit, msg)

@@ -19,8 +19,18 @@ type repoRequest struct {
 	Upstream      string   `json:"upstream,omitempty"`
 	Members       []string `json:"members,omitempty"`
 	AnonymousRead bool     `json:"anonymousRead"`
-	ProxyTTL      string   `json:"proxyTTL,omitempty"`  // e.g. "24h"
+	ProxyTTL      string   `json:"proxyTTL,omitempty"`  // e.g. "24h" (legacy alias for contentMaxAge)
 	ProxyAuth     string   `json:"proxyAuth,omitempty"` // e.g. "Bearer tok"
+	// BE-D fields — all optional; absent means keep existing / use server default.
+	Enabled        *bool    `json:"enabled,omitempty"`
+	BlobStore      string   `json:"blobStore,omitempty"`
+	ContentMaxAge  string   `json:"contentMaxAge,omitempty"`
+	MetadataMaxAge string   `json:"metadataMaxAge,omitempty"`
+	NegativeCache  *bool    `json:"negativeCache,omitempty"`
+	AutoBlock      *bool    `json:"autoBlock,omitempty"`
+	TimeoutSecs    *int     `json:"timeoutSecs,omitempty"`
+	Retries        *int     `json:"retries,omitempty"`
+	QuotaGB        *float64 `json:"quotaGB,omitempty"`
 }
 
 func (req repoRequest) toRepository() (repo.Repository, error) {
@@ -32,13 +42,38 @@ func (req repoRequest) toRepository() (repo.Repository, error) {
 		Members:       req.Members,
 		AnonymousRead: req.AnonymousRead,
 		ProxyAuth:     req.ProxyAuth,
+		BlobStore:     req.BlobStore,
+		NegativeCache: req.NegativeCache,
+		AutoBlock:     req.AutoBlock,
+		TimeoutSecs:   req.TimeoutSecs,
+		Retries:       req.Retries,
+		QuotaGB:       req.QuotaGB,
+		Enabled:       true, // default: new repos are online
 	}
-	if req.ProxyTTL != "" {
+	if req.Enabled != nil {
+		r.Enabled = *req.Enabled
+	}
+	switch {
+	case req.ContentMaxAge != "":
+		d, err := time.ParseDuration(req.ContentMaxAge)
+		if err != nil {
+			return repo.Repository{}, fmt.Errorf("invalid contentMaxAge: %w", err)
+		}
+		r.ContentMaxAge = &d
+	case req.ProxyTTL != "":
 		d, err := time.ParseDuration(req.ProxyTTL)
 		if err != nil {
-			return repo.Repository{}, err
+			return repo.Repository{}, fmt.Errorf("invalid proxyTTL: %w", err)
 		}
 		r.ProxyTTL = d
+		r.ContentMaxAge = &d
+	}
+	if req.MetadataMaxAge != "" {
+		d, err := time.ParseDuration(req.MetadataMaxAge)
+		if err != nil {
+			return repo.Repository{}, fmt.Errorf("invalid metadataMaxAge: %w", err)
+		}
+		r.MetadataMaxAge = &d
 	}
 	return r, nil
 }

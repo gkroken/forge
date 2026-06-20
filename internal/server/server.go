@@ -283,6 +283,11 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such repository: "+name, http.StatusNotFound)
 		return
 	}
+	if !rp.Enabled {
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"error":"repository offline"}`, http.StatusServiceUnavailable)
+		return
+	}
 	h, ok := s.Handlers.For(rp.Format)
 	if !ok {
 		http.Error(w, "no handler for format: "+rp.Format, http.StatusNotImplemented)
@@ -314,6 +319,10 @@ func (s *Server) handleOCI(w http.ResponseWriter, r *http.Request) {
 	rp, ok := s.Repos.Get(repoName)
 	if !ok || rp.Format != "oci" {
 		ociError(w, "NAME_UNKNOWN", "repository not found", http.StatusNotFound)
+		return
+	}
+	if !rp.Enabled {
+		ociError(w, "DENIED", "repository offline", http.StatusServiceUnavailable)
 		return
 	}
 	h, ok := s.Handlers.For("oci")
