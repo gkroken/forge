@@ -156,6 +156,10 @@ func main() {
 		{Name: "cran-public", Format: "cran", Kind: repo.Group,
 			Members: []string{"cran-hosted", "cran-proxy"}, AnonymousRead: true},
 	} {
+		// Seeded repos start online. Enabled has no "unset" sentinel, so the
+		// struct literals above leave it false; set it here before persisting
+		// or a fresh data dir comes up with every repo offline (503).
+		r.Enabled = true
 		// Add only if not already persisted (idempotent first-run seeding).
 		if err := mgr.Add(r); err != nil {
 			slog.Debug("skipping repo seed (already exists)", "name", r.Name)
