@@ -1133,3 +1133,55 @@ td a:hover { text-decoration: underline; }
 .text-warn { color: var(--dot-warn); }
 .text-err  { color: var(--dot-err); }
 .fw-600    { font-weight: 600; }
+
+/* ── toggle switch ───────────────────────────────────────────────────────── */
+.toggle-sw { position: relative; display: inline-flex; align-items: center; gap: .6rem; cursor: pointer; user-select: none; }
+.toggle-sw input[type=checkbox] { position: absolute; opacity: 0; width: 0; height: 0; }
+.toggle-sw-track { width: 36px; height: 20px; border-radius: 10px; background: var(--border); transition: background .18s; flex-shrink: 0; position: relative; }
+.toggle-sw input:checked ~ .toggle-sw-track { background: var(--accent); }
+.toggle-sw-track::after { content: ''; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform .18s; box-shadow: 0 1px 2px rgba(0,0,0,.3); }
+.toggle-sw input:checked ~ .toggle-sw-track::after { transform: translateX(16px); }
+.toggle-sw-label { font-size: 13px; color: var(--text); }
+
+/* ── status chip ─────────────────────────────────────────────────────────── */
+.chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 12px; font-size: 11px; font-weight: 600; border: 1px solid transparent; }
+.chip::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.chip-ok      { background: var(--alert-ok-bg);  color: var(--alert-ok-fg);  border-color: var(--alert-ok-border); }
+.chip-err     { background: var(--alert-err-bg); color: var(--alert-err-fg); border-color: var(--alert-err-border); }
+.chip-neutral { background: var(--bg-alt);        color: var(--text-muted);   border-color: var(--border); }
+
+/* ── confirm modal ───────────────────────────────────────────────────────── */
+.modal-overlay { position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; }
+.modal-overlay.hidden { display: none; }
+.modal-box { background: var(--bg); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-md); padding: 24px 28px; min-width: 320px; max-width: 440px; width: 90%; }
+.modal-title  { font-weight: 700; font-size: 15px; margin-bottom: 8px; }
+.modal-body   { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; line-height: 1.5; }
+.modal-footer { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* ── toast ───────────────────────────────────────────────────────────────── */
+.toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 300; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.toast { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; font-size: 13px; box-shadow: var(--shadow-sm); max-width: 360px; animation: toast-in .18s ease; pointer-events: auto; }
+.toast-ok  { border-left: 3px solid var(--dot-ok); }
+.toast-err { border-left: 3px solid var(--dot-err); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* ── content tab ─────────────────────────────────────────────────────────── */
+.content-search-wrap { padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--bg-alt); }
+.content-search-wrap input { width: 100%; box-sizing: border-box; }
+.content-pkg-row { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: 13px; }
+.content-pkg-row:hover { background: var(--bg-hover); }
+.content-pkg-name { flex: 1; font-weight: 500; }
+.content-pkg-meta { font-size: 11.5px; color: var(--text-muted); font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+.content-ver-list { background: var(--bg-alt); }
+.content-ver-row { display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 40px; font-size: 12.5px; border-top: 1px solid var(--border); }
+.content-ver-tag { font-family: 'IBM Plex Mono', ui-monospace, monospace; color: var(--text-muted); min-width: 90px; }
+.content-ver-actions { margin-left: auto; display: flex; gap: 5px; }
+
+/* ── activity tab ────────────────────────────────────────────────────────── */
+.activity-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.activity-table th { text-align: left; padding: 9px 14px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; color: var(--text-muted); background: var(--bg-alt); border-bottom: 1px solid var(--border); }
+.activity-table td { padding: 8px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.activity-table tr:last-child td { border-bottom: none; }
+.activity-table tr:hover td { background: var(--bg-hover); }
+.act-time { font-family: 'IBM Plex Mono', ui-monospace, monospace; color: var(--text-muted); white-space: nowrap; }
+.act-actor-init { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: var(--accent-subtle); color: var(--accent); font-size: 10px; font-weight: 700; flex-shrink: 0; }

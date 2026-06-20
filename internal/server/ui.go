@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -95,6 +96,34 @@ var uiFuncs = template.FuncMap{
 	},
 	"urlPathEscape": url.PathEscape,
 	"cssVer":        func() string { return cssVer },
+	// durMins renders a *time.Duration as whole minutes (empty string if nil).
+	"durMins": func(d *time.Duration) string {
+		if d == nil {
+			return ""
+		}
+		return strconv.FormatInt(int64(d.Minutes()), 10)
+	},
+	// intPtr renders a *int as a string (empty string if nil).
+	"intPtr": func(p *int) string {
+		if p == nil {
+			return ""
+		}
+		return strconv.Itoa(*p)
+	},
+	// floatPtr2 renders a *float64 to 2 decimal places (empty string if nil).
+	"floatPtr2": func(p *float64) string {
+		if p == nil {
+			return ""
+		}
+		return strconv.FormatFloat(*p, 'f', 2, 64)
+	},
+	// boolPtrOr returns *b if non-nil, otherwise dflt. Used for toggle defaults.
+	"boolPtrOr": func(b *bool, dflt bool) bool {
+		if b == nil {
+			return dflt
+		}
+		return *b
+	},
 	// sortURL builds the href for a column sort link.
 	// Clicking the active column flips the direction; a new column sorts asc.
 	"sortURL": func(col, activeCol, activeDir string) string {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -184,6 +185,42 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleInvalidate(w, r, repoName)
+		return
+	}
+
+	// /api/v1/repos/{name}/health — circuit-breaker state for the repo's upstream.
+	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "health" {
+		if !s.Enforcer.RequireAdmin(w, r) {
+			return
+		}
+		s.handleRepoHealth(w, r, repoName)
+		return
+	}
+
+	// /api/v1/repos/{name}/reindex — queue an index rebuild (stub).
+	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "reindex" {
+		if !s.Enforcer.RequireAdmin(w, r) {
+			return
+		}
+		s.handleReindex(w, r, repoName)
+		return
+	}
+
+	// /api/v1/repos/{name}/access — token grants targeting this repo.
+	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "access" {
+		if !s.Enforcer.RequireAdmin(w, r) {
+			return
+		}
+		s.handleRepoAccess(w, r, repoName)
+		return
+	}
+
+	// /api/v1/repos/{name}/cache/{key...} — expire a single proxy cache entry.
+	if repoName, rest, found := strings.Cut(name, "/"); found && strings.HasPrefix(rest, "cache/") {
+		if !s.Enforcer.RequireAdmin(w, r) {
+			return
+		}
+		s.handleExpireCache(w, r, repoName, strings.TrimPrefix(rest, "cache/"))
 		return
 	}
 
@@ -489,4 +526,163 @@ func (s *Server) handleInvalidate(w http.ResponseWriter, r *http.Request, name s
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]int{"deleted": deleted}) //nolint:errcheck
+}
+
+// handleRepoHealth serves GET /api/v1/repos/{name}/health.
+// Returns the circuit-breaker state for the repo's upstream URL.
+func (s *Server) handleRepoHealth(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	rp, ok := s.Repos.Get(name)
+	if !ok {
+		http.Error(w, "repository not found: "+name, http.StatusNotFound)
+		return
+	}
+	state := "Unknown"
+	if rp.Kind == repo.Proxy && rp.Upstream != "" {
+		switch proxy.HealthOf(rp.Upstream) {
+		case "ok":
+			state = "Closed"
+		case "down":
+			state = "Open"
+		}
+	}
+	writeJSON(w, map[string]string{"state": state})
+}
+
+// handleReindex serves POST /api/v1/repos/{name}/reindex.
+// Stub: logs the intent and returns queued status.
+func (s *Server) handleReindex(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if _, ok := s.Repos.Get(name); !ok {
+		http.Error(w, "repository not found: "+name, http.StatusNotFound)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "queued"})
+}
+
+// repoAccessGrant is one principal→role binding returned by /access.
+type repoAccessGrant struct {
+	TokenID     string `json:"token_id"`
+	Description string `json:"description"`
+	Role        string `json:"role"`
+	Type        string `json:"type"` // always "token" for now
+}
+
+// handleRepoAccess serves GET /api/v1/repos/{name}/access.
+func (s *Server) handleRepoAccess(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if _, ok := s.Repos.Get(name); !ok {
+		http.Error(w, "repository not found: "+name, http.StatusNotFound)
+		return
+	}
+	grants := []repoAccessGrant{}
+	if s.Auth != nil {
+		tokens, _ := s.Auth.List()
+		for _, t := range tokens {
+			for _, g := range t.Grants {
+				if g.Repo == name || g.Repo == "*" {
+					grants = append(grants, repoAccessGrant{
+						TokenID:     t.ID,
+						Description: t.Description,
+						Role:        g.Role.String(),
+						Type:        "token",
+					})
+					break
+				}
+			}
+		}
+	}
+	writeJSON(w, grants)
+}
+
+// handleExpireCache serves DELETE /api/v1/repos/{name}/cache/{key...}.
+// Removes the blob and cache-meta entry for a specific proxy-cached path.
+func (s *Server) handleExpireCache(w http.ResponseWriter, r *http.Request, name, cacheKey string) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if _, ok := s.Repos.Get(name); !ok {
+		http.Error(w, "repository not found: "+name, http.StatusNotFound)
+		return
+	}
+	cacheNS := name + ":proxy"
+	blobKey := name + "/" + cacheKey
+	s.Meta.Delete(cacheNS, blobKey)  //nolint:errcheck
+	s.Blob.Delete(blobKey)           //nolint:errcheck
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// handleAuditAPI serves GET /api/v1/audit?repo=&limit=.
+func (s *Server) handleAuditAPI(w http.ResponseWriter, r *http.Request) {
+	if !s.Enforcer.RequireAdmin(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	repoFilter := r.URL.Query().Get("repo")
+	limit := 50
+	if l, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && l > 0 && l <= 200 {
+		limit = l
+	}
+
+	type auditEntry struct {
+		Time     string `json:"time"`
+		Actor    string `json:"actor"`
+		Initials string `json:"initials"`
+		Method   string `json:"method"`
+		Path     string `json:"path"`
+		Status   int    `json:"status"`
+		OK       bool   `json:"ok"`
+	}
+
+	entries := []auditEntry{}
+	if s.AuditLog != nil {
+		needle := ""
+		if repoFilter != "" {
+			needle = "/" + repoFilter + "/"
+		}
+		for _, e := range s.AuditLog.Recent(200) {
+			if needle != "" && !strings.Contains(e.Path, needle) {
+				continue
+			}
+			entries = append(entries, auditEntry{
+				Time:     e.Timestamp.UTC().Format("15:04:05"),
+				Actor:    e.Actor,
+				Initials: actorInitials(e.Actor),
+				Method:   e.Method,
+				Path:     e.Path,
+				Status:   e.Status,
+				OK:       e.Status < 400,
+			})
+			if len(entries) >= limit {
+				break
+			}
+		}
+	}
+	writeJSON(w, entries)
+}
+
+// handleBlobStores serves GET /api/v1/blob-stores.
+// Returns a static single-store list until multi-store registry is implemented.
+func (s *Server) handleBlobStores(w http.ResponseWriter, r *http.Request) {
+	if !s.Enforcer.RequireAdmin(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, []map[string]string{{"name": "default"}})
 }

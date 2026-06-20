@@ -238,6 +238,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/v1/repos", s.handleAdminRepos)
 	mux.HandleFunc("/api/v1/repos/", s.handleAdminRepos)
 	mux.HandleFunc("/api/v1/search", s.handleSearch)
+	mux.HandleFunc("/api/v1/audit", s.handleAuditAPI)
+	mux.HandleFunc("/api/v1/blob-stores", s.handleBlobStores)
 	mux.HandleFunc("/api/v1/system/", s.handleSystemAPI)
 	if s.OIDC != nil && s.Auth != nil {
 		mux.HandleFunc("/auth/oidc/login", s.handleOIDCLogin)

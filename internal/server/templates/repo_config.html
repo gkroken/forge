@@ -1,4 +1,7 @@
 {{define "content"}}
+<!-- repo + kind injected for JS via data attributes -->
+<div id="rc-root" data-repo="{{.Repo.Name}}" data-kind="{{.KindStr}}">
+
 <!-- sub-header with tabs -->
 <div class="admin-subheader">
   <div class="admin-subheader-row">
@@ -8,9 +11,16 @@
         <span class="badge fmt-{{.Repo.Format}} fmt-mono">{{formatIcon .Repo.Format}}{{.Repo.Format}}</span>
         <span class="badge kind-{{.Repo.Kind}}">{{.Repo.Kind}}</span>
         {{if .Repo.Upstream}}<span style="font-size:11px;color:var(--text-muted)">↑ {{.Repo.Upstream}}</span>{{end}}
+        {{if not .Repo.Enabled}}<span class="chip chip-err" style="margin-left:4px">Offline</span>{{end}}
       </div>
     </div>
     <div style="margin-left:auto;display:flex;gap:.5rem;align-items:center">
+      {{if eq .KindStr "proxy"}}
+      <button id="btn-invalidate" class="btn btn-sm btn-danger">Invalidate cache</button>
+      {{end}}
+      {{if eq .KindStr "hosted"}}
+      <button id="btn-reindex" class="btn btn-sm">Rebuild index</button>
+      {{end}}
       <a href="/ui/repos/{{.Repo.Name}}" class="btn btn-sm">Browse</a>
     </div>
   </div>
@@ -34,6 +44,8 @@
       {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
       <div class="card" style="padding:20px 24px">
         <form method="POST" class="repo-form">
+
+          <!-- ── Identity ── -->
           <div class="form-group">
             <label for="f-name">Name</label>
             <input id="f-name" type="text" name="name" value="{{.Repo.Name}}" readonly>
@@ -59,31 +71,114 @@
             </div>
           </div>
 
+          <!-- ── Online toggle ── -->
+          <div class="form-group">
+            <label style="font-size:13px;font-weight:500;display:block;margin-bottom:6px">Status</label>
+            <label class="toggle-sw">
+              <input type="checkbox" name="enabled" value="true"{{if .Repo.Enabled}} checked{{end}}>
+              <input type="hidden" name="enabled" value="false">
+              <span class="toggle-sw-track"></span>
+              <span class="toggle-sw-label">Repository online</span>
+            </label>
+            <p class="form-hint">When offline, all requests return 503.</p>
+          </div>
+
+          <!-- ── Blob store ── -->
+          <div class="form-group">
+            <label for="f-blobstore">Blob store</label>
+            <select id="f-blobstore" name="blobStore">
+              <option value="default"{{if or (eq .Repo.BlobStore "") (eq .Repo.BlobStore "default")}} selected{{end}}>default</option>
+            </select>
+            <p class="form-hint">Named blob stores; additional stores appear here once configured.</p>
+          </div>
+
+          <!-- ── Upstream ── -->
           <div class="form-group" id="g-upstream">
             <label for="f-upstream">Upstream URL</label>
             <input id="f-upstream" type="text" name="upstream" value="{{.Repo.Upstream}}"
                    placeholder="https://repo1.maven.org/maven2">
           </div>
 
+          <!-- ── Group members ── -->
           <div class="form-group" id="g-members">
             <label for="f-members">Members <span class="form-hint-inline">comma-separated, in priority order</span></label>
             <input id="f-members" type="text" name="members" value="{{join .Repo.Members ", "}}"
                    placeholder="my-hosted, my-proxy">
           </div>
 
-          <div class="form-row" id="g-proxy-extra">
-            <div class="form-group">
-              <label for="f-ttl">Proxy TTL</label>
-              <input id="f-ttl" type="text" name="proxyTTL" value="{{durStr .Repo.ProxyTTL}}"
-                     placeholder="24h">
+          <!-- ── Proxy section ── -->
+          <fieldset id="g-proxy-section" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:1.1rem">
+            <legend style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px;padding:0 6px">Proxy cache</legend>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="f-content-max-age">Content max-age <span class="form-hint-inline">(minutes)</span></label>
+                <input id="f-content-max-age" type="number" name="contentMaxAge" min="0"
+                       value="{{durMins .Repo.ContentMaxAge}}" placeholder="1440">
+                <p class="form-hint">How long fetched artifacts are served from cache. Empty = 24 h default.</p>
+              </div>
+              <div class="form-group">
+                <label for="f-metadata-max-age">Metadata max-age <span class="form-hint-inline">(minutes)</span></label>
+                <input id="f-metadata-max-age" type="number" name="metadataMaxAge" min="0"
+                       value="{{durMins .Repo.MetadataMaxAge}}" placeholder="1440">
+                <p class="form-hint">How long index/packument data is served from cache.</p>
+              </div>
             </div>
-            <div class="form-group">
-              <label for="f-auth">Proxy Auth</label>
-              <input id="f-auth" type="text" name="proxyAuth" value="{{.Repo.ProxyAuth}}"
-                     placeholder="Bearer …  or  Basic …">
+
+            <div class="form-row" style="gap:2rem;align-items:flex-start">
+              <div class="form-group" style="margin-bottom:0">
+                <label style="font-size:13px;font-weight:500;display:block;margin-bottom:6px">Negative cache</label>
+                <label class="toggle-sw">
+                  <input type="checkbox" name="negativeCache" value="true"{{if boolPtrOr .Repo.NegativeCache true}} checked{{end}}>
+                  <input type="hidden" name="negativeCache" value="false">
+                  <span class="toggle-sw-track"></span>
+                  <span class="toggle-sw-label">Cache upstream 404s</span>
+                </label>
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label style="font-size:13px;font-weight:500;display:block;margin-bottom:6px">Auto-block</label>
+                <label class="toggle-sw">
+                  <input type="checkbox" name="autoBlock" value="true"{{if boolPtrOr .Repo.AutoBlock true}} checked{{end}}>
+                  <input type="hidden" name="autoBlock" value="false">
+                  <span class="toggle-sw-track"></span>
+                  <span class="toggle-sw-label">Block on repeated upstream errors</span>
+                </label>
+              </div>
             </div>
+          </fieldset>
+
+          <!-- ── HTTP & resilience ── -->
+          <fieldset id="g-http-section" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:1.1rem">
+            <legend style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px;padding:0 6px">HTTP &amp; resilience</legend>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="f-timeout">Timeout <span class="form-hint-inline">(seconds)</span></label>
+                <input id="f-timeout" type="number" name="timeoutSecs" min="1"
+                       value="{{intPtr .Repo.TimeoutSecs}}" placeholder="30">
+              </div>
+              <div class="form-group">
+                <label for="f-retries">Retries</label>
+                <input id="f-retries" type="number" name="retries" min="0" max="10"
+                       value="{{intPtr .Repo.Retries}}" placeholder="2">
+              </div>
+            </div>
+
+            <div class="form-group" style="margin-bottom:0">
+              <label style="font-size:13px;font-weight:500;display:block;margin-bottom:6px">Circuit breaker</label>
+              <span id="cb-chip" class="chip chip-neutral">Loading…</span>
+              <p class="form-hint" style="margin-top:6px">Read-only. Trips after repeated upstream failures; resets automatically.</p>
+            </div>
+          </fieldset>
+
+          <!-- ── Proxy auth (legacy) ── -->
+          <div class="form-group" id="g-proxy-auth">
+            <label for="f-auth">Proxy auth</label>
+            <input id="f-auth" type="text" name="proxyAuth" value="{{.Repo.ProxyAuth}}"
+                   placeholder="Bearer …  or  Basic …">
           </div>
 
+          <!-- ── Anonymous read ── -->
           <div class="form-group">
             <label class="checkbox-label">
               <input type="checkbox" name="anonymousRead"{{if .Repo.AnonymousRead}} checked{{end}}>
@@ -91,6 +186,7 @@
             </label>
           </div>
 
+          <!-- ── Cleanup policy ── -->
           <fieldset id="g-cleanup">
             <legend>Cleanup policy <span class="form-hint-inline">(hosted only)</span></legend>
             <div class="form-group">
@@ -117,6 +213,13 @@
             </div>
           </fieldset>
 
+          <!-- ── Quota ── -->
+          <div class="form-group">
+            <label for="f-quota">Storage quota <span class="form-hint-inline">(GB, leave blank for unlimited)</span></label>
+            <input id="f-quota" type="number" name="quotaGB" min="0" step="0.1"
+                   value="{{floatPtr2 .Repo.QuotaGB}}" placeholder="e.g. 50">
+          </div>
+
           <div class="form-actions">
             <button type="submit" class="btn btn-primary">Save changes</button>
             <a href="/ui/admin/" class="btn">Cancel</a>
@@ -127,10 +230,12 @@
       <script>
       function syncKind() {
         var k = document.getElementById('f-kind').value;
-        document.getElementById('g-upstream').style.display    = k === 'proxy'  ? '' : 'none';
-        document.getElementById('g-proxy-extra').style.display = k === 'proxy'  ? '' : 'none';
-        document.getElementById('g-members').style.display     = k === 'group'  ? '' : 'none';
-        document.getElementById('g-cleanup').style.display     = k === 'hosted' ? '' : 'none';
+        document.getElementById('g-upstream').style.display      = k === 'proxy'  ? '' : 'none';
+        document.getElementById('g-members').style.display       = k === 'group'  ? '' : 'none';
+        document.getElementById('g-proxy-section').style.display = k === 'proxy'  ? '' : 'none';
+        document.getElementById('g-http-section').style.display  = k === 'proxy'  ? '' : 'none';
+        document.getElementById('g-proxy-auth').style.display    = k === 'proxy'  ? '' : 'none';
+        document.getElementById('g-cleanup').style.display       = k === 'hosted' ? '' : 'none';
       }
       syncKind();
       function runCleanup(name, btn) {
@@ -146,21 +251,39 @@
       </script>
 
       {{else if eq .ActiveTab "content"}}
-      <div class="card stub-panel">
-        <span class="ms" style="font-size:32px;color:var(--text-muted)">inventory_2</span>
-        <p>Content management — coming soon.</p>
+      <div class="card" style="overflow:hidden">
+        <div class="content-search-wrap">
+          <input type="search" id="content-search" placeholder="Filter packages…" autocomplete="off"
+                 style="border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;background:var(--bg);color:var(--text)">
+        </div>
+        <div id="content-pkg-list">
+          <div style="padding:30px;text-align:center;color:var(--text-muted);font-size:13px">Loading…</div>
+        </div>
       </div>
 
       {{else if eq .ActiveTab "access"}}
-      <div class="card stub-panel">
-        <span class="ms" style="font-size:32px;color:var(--text-muted)">lock</span>
-        <p>Per-repo access control — coming soon.</p>
+      <div class="card" style="overflow:hidden">
+        <div id="access-content">
+          <div style="padding:30px;text-align:center;color:var(--text-muted);font-size:13px">Loading…</div>
+        </div>
       </div>
 
-      {{else}}
-      <div class="card stub-panel">
-        <span class="ms" style="font-size:32px;color:var(--text-muted)">history</span>
-        <p>Repository activity log — coming soon.</p>
+      {{else}}<!-- activity -->
+      <div class="card" style="overflow:hidden">
+        <table class="activity-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Actor</th>
+              <th>Method</th>
+              <th>Path</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="activity-tbody">
+            <tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-muted)">Loading…</td></tr>
+          </tbody>
+        </table>
       </div>
       {{end}}
 
@@ -186,7 +309,25 @@
         </div>
         <div class="rail-progress-bar"><div class="rail-progress-fill" style="width:{{.StoragePct}}%"></div></div>
         {{end}}
+        {{if .Repo.QuotaGB}}
+        <div class="rail-stat-row" style="margin-top:6px">
+          <span class="rail-stat-label">Quota</span>
+          <span class="rail-stat-val">{{floatPtr2 .Repo.QuotaGB}} GB</span>
+        </div>
+        {{end}}
       </div>
+
+      {{if eq .KindStr "proxy"}}
+      <div class="rail-card" id="cache-chart-card">
+        <div class="rail-card-title"><span class="ms" style="font-size:15px;vertical-align:middle;margin-right:5px">cached</span>Cache hit rate</div>
+        <div id="cache-chart-headline" style="font-size:22px;font-weight:700;margin-bottom:10px">—</div>
+        <div id="cache-chart-bars" style="display:flex;align-items:flex-end;gap:2px;height:50px;margin-bottom:6px"></div>
+        <div style="font-size:10px;color:var(--text-light);display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace">
+          <span>00:00</span><span>12:00</span><span>now</span>
+        </div>
+        <div id="cache-chart-stats" style="margin-top:10px"></div>
+      </div>
+      {{end}}
 
       {{if .RecentActivity}}
       <div class="rail-card">
@@ -205,4 +346,6 @@
 
   </div><!-- /repo-config-layout -->
 </div><!-- /admin-content -->
+</div><!-- /rc-root -->
+<script src="/ui/static/repo_config.js"></script>
 {{end}}

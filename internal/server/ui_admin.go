@@ -10,6 +10,17 @@ import (
 	"forge/internal/repo"
 )
 
+// parseBoolField reads a hidden+checkbox pair where the checkbox has the same
+// name but comes first; returns nil if the field is absent from the form.
+func parseBoolField(r *http.Request, name string) *bool {
+	vals, ok := r.Form[name]
+	if !ok || len(vals) == 0 {
+		return nil
+	}
+	b := vals[0] == "true"
+	return &b
+}
+
 var (
 	allFormats = []string{"maven", "npm", "helm", "cran", "oci"}
 	allKinds   = []string{"hosted", "proxy", "group"}
@@ -370,6 +381,48 @@ func (s *Server) processRepoForm(w http.ResponseWriter, r *http.Request, existin
 	}
 	rp.CleanupPolicyName = strings.TrimSpace(r.FormValue("cleanupPolicyName"))
 
+	// BE-D fields — only overlay when the form field was actually submitted.
+	if v := r.FormValue("enabled"); v != "" {
+		rp.Enabled = v == "true"
+	}
+	if v := strings.TrimSpace(r.FormValue("blobStore")); v != "" && v != "default" {
+		rp.BlobStore = v
+	} else if v == "default" {
+		rp.BlobStore = ""
+	}
+
+	if rp.Kind == repo.Proxy {
+		if raw := strings.TrimSpace(r.FormValue("contentMaxAge")); raw != "" {
+			if mins, err := strconv.Atoi(raw); err == nil {
+				d := time.Duration(mins) * time.Minute
+				rp.ContentMaxAge = &d
+			}
+		}
+		if raw := strings.TrimSpace(r.FormValue("metadataMaxAge")); raw != "" {
+			if mins, err := strconv.Atoi(raw); err == nil {
+				d := time.Duration(mins) * time.Minute
+				rp.MetadataMaxAge = &d
+			}
+		}
+		rp.NegativeCache = parseBoolField(r, "negativeCache")
+		rp.AutoBlock = parseBoolField(r, "autoBlock")
+		if raw := strings.TrimSpace(r.FormValue("timeoutSecs")); raw != "" {
+			if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+				rp.TimeoutSecs = &n
+			}
+		}
+		if raw := strings.TrimSpace(r.FormValue("retries")); raw != "" {
+			if n, err := strconv.Atoi(raw); err == nil && n >= 0 {
+				rp.Retries = &n
+			}
+		}
+	}
+	if raw := strings.TrimSpace(r.FormValue("quotaGB")); raw != "" {
+		if f, err := strconv.ParseFloat(raw, 64); err == nil && f > 0 {
+			rp.QuotaGB = &f
+		}
+	}
+
 	if msg := validateRepo(rp); msg != "" {
 		s.reRenderForm(w, r, existingName, isEdit, msg)
 		return
@@ -413,6 +466,25 @@ func (s *Server) reRenderForm(w http.ResponseWriter, r *http.Request, name strin
 	rp.ProxyAuth = r.FormValue("proxyAuth")
 	rp.AnonymousRead = r.FormValue("anonymousRead") == "on"
 	rp.CleanupPolicyName = strings.TrimSpace(r.FormValue("cleanupPolicyName"))
+	if v := r.FormValue("enabled"); v != "" {
+		rp.Enabled = v == "true"
+	}
+	if repo.Kind(r.FormValue("kind")) == repo.Proxy {
+		if raw := strings.TrimSpace(r.FormValue("contentMaxAge")); raw != "" {
+			if mins, err := strconv.Atoi(raw); err == nil {
+				d := time.Duration(mins) * time.Minute
+				rp.ContentMaxAge = &d
+			}
+		}
+		if raw := strings.TrimSpace(r.FormValue("metadataMaxAge")); raw != "" {
+			if mins, err := strconv.Atoi(raw); err == nil {
+				d := time.Duration(mins) * time.Minute
+				rp.MetadataMaxAge = &d
+			}
+		}
+		rp.NegativeCache = parseBoolField(r, "negativeCache")
+		rp.AutoBlock = parseBoolField(r, "autoBlock")
+	}
 
 	if isEdit {
 		s.renderRepoConfig(w, rp, "settings", errMsg, "")
