@@ -157,7 +157,6 @@ var (
 	tmplAdminForm  = parseUITmpl("templates/admin_shell.html", "templates/admin_repo_form.html")
 	tmplLogin      = parseUITmpl("templates/base.html", "templates/login.html")
 	tmplComponent  = parseUITmpl("templates/admin_shell.html", "templates/component.html")
-	tmplTokens     = parseUITmpl("templates/base.html", "templates/tokens.html")
 	tmplAccess     = parseUITmpl("templates/admin_shell.html", "templates/access.html")
 	tmplUpload     = parseUITmpl("templates/admin_shell.html", "templates/upload.html")
 	// Foundry admin shell — sidebar layout

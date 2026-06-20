@@ -656,17 +656,17 @@ func (s *Server) processTokenForm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if form.Description == "" {
-		render(w, tmplTokens, "base.html", s.buildTokensPage("description is required", "", form))
+		render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("description is required", "", form))
 		return
 	}
 	if s.Auth == nil {
-		render(w, tmplTokens, "base.html", s.buildTokensPage("auth not enabled", "", form))
+		render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("auth not enabled", "", form))
 		return
 	}
 
 	role, err := auth.ParseRole(form.Role)
 	if err != nil {
-		render(w, tmplTokens, "base.html", s.buildTokensPage("invalid role: "+form.Role, "", form))
+		render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("invalid role: "+form.Role, "", form))
 		return
 	}
 
@@ -679,7 +679,7 @@ func (s *Server) processTokenForm(w http.ResponseWriter, r *http.Request) {
 	if form.Expires != "" {
 		t, err := time.ParseInLocation("2006-01-02", form.Expires, time.UTC)
 		if err != nil {
-			render(w, tmplTokens, "base.html", s.buildTokensPage("invalid expiry date (use YYYY-MM-DD)", "", form))
+			render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("invalid expiry date (use YYYY-MM-DD)", "", form))
 			return
 		}
 		// Expire at end of the chosen day.
@@ -689,12 +689,12 @@ func (s *Server) processTokenForm(w http.ResponseWriter, r *http.Request) {
 
 	_, secret, err := s.Auth.Create(form.Description, []auth.Grant{{Repo: repoName, Role: role}}, expiresAt)
 	if err != nil {
-		render(w, tmplTokens, "base.html", s.buildTokensPage("failed to create token: "+err.Error(), "", form))
+		render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("failed to create token: "+err.Error(), "", form))
 		return
 	}
 
 	// Re-render with the secret displayed once and form reset to defaults.
-	render(w, tmplTokens, "base.html", s.buildTokensPage("", secret, tokenForm{Repo: "*", Role: "read"}))
+	render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("", secret, tokenForm{Repo: "*", Role: "read"}))
 }
 
 // buildTokensPage assembles the adminTokensPage data, loading the live token
