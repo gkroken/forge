@@ -228,17 +228,54 @@ func newMavenTreeServer(t *testing.T) *Server {
 }
 
 func fetchTree(t *testing.T, srv *Server, prefix string) []treeNode {
+	return fetchTreeRepo(t, srv, "maven-releases", prefix)
+}
+
+func fetchTreeRepo(t *testing.T, srv *Server, repoName, prefix string) []treeNode {
 	t.Helper()
 	rw := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodGet, "/ui/browse/maven-releases/tree?prefix="+prefix, nil))
+	srv.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodGet, "/ui/browse/"+repoName+"/tree?prefix="+prefix, nil))
 	if rw.Code != http.StatusOK {
-		t.Fatalf("tree(%q): status %d: %s", prefix, rw.Code, rw.Body.String())
+		t.Fatalf("tree(%s,%q): status %d: %s", repoName, prefix, rw.Code, rw.Body.String())
 	}
 	var nodes []treeNode
 	if err := json.NewDecoder(rw.Body).Decode(&nodes); err != nil {
 		t.Fatal(err)
 	}
 	return nodes
+}
+
+// TestBrowseTree_GroupFansOutToMembers verifies a Maven group's browse tree
+// merges the trees of its member repos (a group owns no blobs of its own).
+func TestBrowseTree_GroupFansOutToMembers(t *testing.T) {
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	mgr := repo.NewManager()
+	reg := format.NewRegistry()
+	mgr.Add(repo.Repository{Name: "maven-a", Format: "maven", Kind: repo.Hosted})                                           //nolint:errcheck
+	mgr.Add(repo.Repository{Name: "maven-b", Format: "maven", Kind: repo.Hosted})                                           //nolint:errcheck
+	mgr.Add(repo.Repository{Name: "maven-grp", Format: "maven", Kind: repo.Group, Members: []string{"maven-a", "maven-b"}}) //nolint:errcheck
+
+	b.Put("maven-a/org/springframework/spring-core/6.2.7/spring-core-6.2.7.jar", strings.NewReader("x")) //nolint:errcheck
+	b.Put("maven-b/org/apache/commons-lang3/3.14.0/commons-lang3-3.14.0.jar", strings.NewReader("x"))    //nolint:errcheck
+	srv := New(mgr, reg, b, m, nil)
+
+	// Both members share the top-level "org" segment → merged to one folder.
+	root := fetchTreeRepo(t, srv, "maven-grp", "")
+	if len(root) != 1 || root[0].Name != "org" || !root[0].IsDir {
+		t.Fatalf("group root: got %+v, want single folder 'org'", root)
+	}
+
+	// Under org: springframework (from maven-a) and apache (from maven-b) merged.
+	lvl := fetchTreeRepo(t, srv, "maven-grp", "org")
+	names := map[string]bool{}
+	for _, n := range lvl {
+		names[n.Name] = true
+	}
+	if !names["springframework"] || !names["apache"] {
+		t.Fatalf("group org level should merge both members, got %+v", lvl)
+	}
 }
 
 // TestBrowseTree_terminatesAtArtifact verifies the tree descends through groupId

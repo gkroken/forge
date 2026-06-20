@@ -64,17 +64,17 @@ type Server struct {
 	Handlers  *format.Registry
 	Blob      blob.Store
 	Meta      meta.Store
-	Auth      auth.Store           // nil = auth not enabled (eval mode)
-	Enforcer  *auth.Enforcer       // always non-nil; uses AllowAll when Auth is nil
-	OIDC      oidcProvider         // nil = OIDC not configured; *oidc.Provider satisfies this
-	Queue     queue.Queue          // nil = no async index regen (eval / tests)
-	Metrics   *obs.Metrics         // nil = no instrumentation (tests)
-	Cleanup   *cleanup.PolicyManager  // nil = cleanup-policies API returns 503
+	Auth      auth.Store             // nil = auth not enabled (eval mode)
+	Enforcer  *auth.Enforcer         // always non-nil; uses AllowAll when Auth is nil
+	OIDC      oidcProvider           // nil = OIDC not configured; *oidc.Provider satisfies this
+	Queue     queue.Queue            // nil = no async index regen (eval / tests)
+	Metrics   *obs.Metrics           // nil = no instrumentation (tests)
+	Cleanup   *cleanup.PolicyManager // nil = cleanup-policies API returns 503
 	Scheduler *cleanup.Scheduler     // nil = no scheduled runs (eval / tests)
 	AuditLog  *obs.AuditLog          // nil = no in-memory audit log
 	Users     auth.UserStore         // nil = user management not configured
 	Roles     auth.RoleStore         // nil = custom roles not configured
-	MaxUpload int64                // per-request body limit; 0 = use defaultMaxUpload
+	MaxUpload int64                  // per-request body limit; 0 = use defaultMaxUpload
 	reg       prometheus.Gatherer
 	client    *http.Client
 	oidcKey   []byte // HMAC key for signing OIDC state cookies; set by WithOIDC
@@ -200,6 +200,18 @@ func (s *Server) walkBlobSizes() {
 			byFmt[rp.Format] += info.Size
 			byRepo[rp.Name] += info.Size
 			countByRepo[rp.Name]++
+		}
+	}
+	// Group repos own no blobs of their own; surface the union of their members'
+	// usage so the lists/dashboard don't show groups as empty. Computed after the
+	// per-repo walk and deliberately not added to total (avoids double-counting).
+	for _, rp := range s.Repos.All() {
+		if rp.Kind != repo.Group {
+			continue
+		}
+		for _, m := range rp.Members {
+			byRepo[rp.Name] += byRepo[m]
+			countByRepo[rp.Name] += countByRepo[m]
 		}
 	}
 	s.blobMu.Lock()

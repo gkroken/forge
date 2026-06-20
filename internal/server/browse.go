@@ -29,15 +29,13 @@ func (s *Server) uiBrowseTree(w http.ResponseWriter, r *http.Request, repoName s
 	}
 
 	prefix := strings.Trim(r.URL.Query().Get("prefix"), "/")
-	blobPrefix := rp.Name + "/"
-	if prefix != "" {
-		blobPrefix += prefix + "/"
-	}
 
-	keys, err := s.Blob.List(blobPrefix)
-	if err != nil {
-		jsonError(w, "list failed: "+err.Error(), http.StatusInternalServerError)
-		return
+	// A group owns no blobs of its own — its artifacts live under the member
+	// repos. Fan out across members so a group browses the merged tree; a
+	// hosted/proxy repo just scans itself.
+	sources := []string{rp.Name}
+	if rp.Kind == repo.Group && len(rp.Members) > 0 {
+		sources = rp.Members
 	}
 
 	// Collect immediate children (one level deep), classifying each as a folder
@@ -52,25 +50,35 @@ func (s *Server) uiBrowseTree(w http.ResponseWriter, r *http.Request, repoName s
 	}
 	seen := map[string]*childInfo{}
 	var order []string
-	for _, k := range keys {
-		rel := strings.TrimPrefix(k, blobPrefix)
-		if rel == "" {
-			continue
+	for _, src := range sources {
+		blobPrefix := src + "/"
+		if prefix != "" {
+			blobPrefix += prefix + "/"
 		}
-		seg, rest, isDir := strings.Cut(rel, "/")
-		if seg == "" {
-			continue
+		keys, err := s.Blob.List(blobPrefix)
+		if err != nil {
+			continue // skip a member that fails to list; merge the rest
 		}
-		ci := seen[seg]
-		if ci == nil {
-			ci = &childInfo{}
-			seen[seg] = ci
-			order = append(order, seg)
-		}
-		if isDir {
-			ci.isDir = true
-			if g, _, _ := strings.Cut(rest, "/"); g != "" && g[0] >= '0' && g[0] <= '9' {
-				ci.hasVersion = true
+		for _, k := range keys {
+			rel := strings.TrimPrefix(k, blobPrefix)
+			if rel == "" {
+				continue
+			}
+			seg, rest, isDir := strings.Cut(rel, "/")
+			if seg == "" {
+				continue
+			}
+			ci := seen[seg]
+			if ci == nil {
+				ci = &childInfo{}
+				seen[seg] = ci
+				order = append(order, seg)
+			}
+			if isDir {
+				ci.isDir = true
+				if g, _, _ := strings.Cut(rest, "/"); g != "" && g[0] >= '0' && g[0] <= '9' {
+					ci.hasVersion = true
+				}
 			}
 		}
 	}

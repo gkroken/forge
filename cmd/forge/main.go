@@ -202,7 +202,8 @@ func main() {
 		WithScheduler(cleanupScheduler).
 		WithAuditLog(auditLog).
 		WithUsers(userStore).
-		WithRoles(roleStore)
+		WithRoles(roleStore).
+		WithBlobWalker(workerCtx)
 
 	if oidcCfg, err := oidc.FromEnv(); err != nil {
 		slog.Error("oidc: invalid configuration", "err", err)
