@@ -152,7 +152,7 @@ func parseUITmpl(files ...string) *template.Template {
 var (
 	tmplHome             = parseUITmpl("templates/base.html", "templates/home.html")
 	tmplBrowsePage       = parseUITmpl("templates/admin_shell.html", "templates/browse_page.html")
-	tmplSearch           = parseUITmpl("templates/base.html", "templates/search.html")
+	tmplSearch           = parseUITmpl("templates/admin_shell.html", "templates/search.html")
 	tmplAdminRepos       = parseUITmpl("templates/admin_shell.html", "templates/admin_repos.html")
 	tmplAdminForm        = parseUITmpl("templates/base.html", "templates/admin_repo_form.html")
 	tmplLogin            = parseUITmpl("templates/base.html", "templates/login.html")
@@ -223,6 +223,7 @@ type repoPage struct {
 
 type searchPage struct {
 	Title      string
+	ActiveNav  string
 	Query      string
 	Format     string
 	Repo       string
@@ -467,6 +468,7 @@ func (s *Server) uiSearch(w http.ResponseWriter, r *http.Request) {
 
 	data := searchPage{
 		Title:      "Search",
+		ActiveNav:  "search",
 		Query:      q,
 		Format:     filterFormat,
 		Repo:       filterRepo,
@@ -480,7 +482,7 @@ func (s *Server) uiSearch(w http.ResponseWriter, r *http.Request) {
 		render(w, tmplSearch, "search-results", data)
 		return
 	}
-	render(w, tmplSearch, "base.html", data)
+	render(w, tmplSearch, "admin_shell.html", data)
 }
 
 func (s *Server) uiLogin(w http.ResponseWriter, r *http.Request) {
