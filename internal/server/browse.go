@@ -98,7 +98,9 @@ func (s *Server) uiBrowseTree(w http.ResponseWriter, r *http.Request, repoName s
 //
 //	?q=      substring filter on component name (case-insensitive)
 //	?page=   1-based page number (default 1)
-//	?limit=  page size (default 50, max 200)
+//	?limit=  page size (default 50, max 5000); 0 or "all" returns every
+//	         component in one response (the UI list views rely on this to show
+//	         the full cached set of large proxy repos and filter client-side).
 func (s *Server) handleComponents(w http.ResponseWriter, r *http.Request, name string) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -118,7 +120,23 @@ func (s *Server) handleComponents(w http.ResponseWriter, r *http.Request, name s
 	}
 
 	page := clampedInt(r, "page", 1, 1, 1<<20)
-	limit := clampedInt(r, "limit", 50, 1, 200)
+	// limit=0 or "all" → unbounded (return every component); otherwise clamp.
+	limit := 50
+	unbounded := false
+	if lp := r.URL.Query().Get("limit"); lp == "all" {
+		unbounded = true
+	} else if lp != "" {
+		if v, err := strconv.Atoi(lp); err == nil {
+			switch {
+			case v <= 0:
+				unbounded = true
+			case v > 5000:
+				limit = 5000
+			default:
+				limit = v
+			}
+		}
+	}
 	q := strings.ToLower(r.URL.Query().Get("q"))
 
 	b, ok := h.(format.Browsable)
@@ -148,15 +166,21 @@ func (s *Server) handleComponents(w http.ResponseWriter, r *http.Request, name s
 	}
 
 	total := len(entries)
-	start := (page - 1) * limit
-	if start < total {
-		end := start + limit
-		if end > total {
-			end = total
-		}
-		entries = entries[start:end]
+	if unbounded {
+		// Return the full set; page/limit collapse to one page covering everything.
+		page = 1
+		limit = total
 	} else {
-		entries = nil
+		start := (page - 1) * limit
+		if start < total {
+			end := start + limit
+			if end > total {
+				end = total
+			}
+			entries = entries[start:end]
+		} else {
+			entries = nil
+		}
 	}
 
 	items := make([]componentItem, len(entries))

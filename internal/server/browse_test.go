@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -29,8 +30,8 @@ func newBrowseServer(t *testing.T) (*Server, *format.Registry) {
 	reg.Register(npm.New())
 	reg.Register(helm.New())
 
-	mgr.Add(repo.Repository{Name: "npm-hosted", Format: "npm", Kind: repo.Hosted})    //nolint:errcheck
-	mgr.Add(repo.Repository{Name: "helm-hosted", Format: "helm", Kind: repo.Hosted})  //nolint:errcheck
+	mgr.Add(repo.Repository{Name: "npm-hosted", Format: "npm", Kind: repo.Hosted})   //nolint:errcheck
+	mgr.Add(repo.Repository{Name: "helm-hosted", Format: "helm", Kind: repo.Hosted}) //nolint:errcheck
 
 	// Seed one npm packument so BrowseRepo returns something.
 	m.PutJSON("npm-hosted:npm", "lodash", map[string]any{ //nolint:errcheck
@@ -157,6 +158,51 @@ func TestSearch_formatFilter(t *testing.T) {
 	}
 }
 
+// TestComponents_unboundedLimit verifies limit=0 returns the full set, past the
+// old 200 cap, while a positive limit still paginates.
+func TestComponents_unboundedLimit(t *testing.T) {
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	mgr := repo.NewManager()
+	reg := format.NewRegistry()
+	reg.Register(npm.New())
+	mgr.Add(repo.Repository{Name: "npm-hosted", Format: "npm", Kind: repo.Hosted}) //nolint:errcheck
+
+	const n = 250
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("pkg-%03d", i)
+		m.PutJSON("npm-hosted:npm", name, map[string]any{ //nolint:errcheck
+			"name": name, "versions": map[string]any{"1.0.0": map[string]any{}},
+		})
+	}
+	srv := New(mgr, reg, b, m, nil)
+
+	get := func(query string) componentsResponse {
+		rw := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodGet, "/api/v1/repos/npm-hosted/components"+query, nil))
+		if rw.Code != http.StatusOK {
+			t.Fatalf("%q: status %d", query, rw.Code)
+		}
+		var resp componentsResponse
+		if err := json.NewDecoder(rw.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	all := get("?limit=0")
+	if all.Total != n || len(all.Components) != n {
+		t.Errorf("limit=0: got total=%d len=%d, want %d", all.Total, len(all.Components), n)
+	}
+	if alias := get("?limit=all"); len(alias.Components) != n {
+		t.Errorf("limit=all: got %d, want %d", len(alias.Components), n)
+	}
+	if paged := get("?limit=10&page=2"); paged.Total != n || len(paged.Components) != 10 {
+		t.Errorf("limit=10&page=2: got total=%d len=%d, want total=%d len=10", paged.Total, len(paged.Components), n)
+	}
+}
+
 // newMavenTreeServer wires a server with one maven repo seeded with a couple of
 // artifacts laid out in standard Maven 2 layout, so the tree endpoint has a
 // real groupId → artifactId → version → file hierarchy to classify.
@@ -252,11 +298,11 @@ func TestClampedInt(t *testing.T) {
 		query string
 		want  int
 	}{
-		{"", 10},    // absent → default
-		{"abc", 10}, // invalid → default
-		{"0", 1},    // below min → min
+		{"", 10},     // absent → default
+		{"abc", 10},  // invalid → default
+		{"0", 1},     // below min → min
 		{"999", 100}, // above max → max
-		{"50", 50},  // in range → value
+		{"50", 50},   // in range → value
 	}
 	for _, tc := range cases {
 		r := httptest.NewRequest(http.MethodGet, "/?n="+tc.query, nil)

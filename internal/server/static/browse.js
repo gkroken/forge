@@ -62,7 +62,7 @@ async function loadRepoContent(repoNode, content) {
 // ── Flat browse (npm / helm / cran / oci) ────────────────────────────────────
 
 async function loadFlatPkgs(repo, container, kind) {
-  const res = await fetch('/api/v1/repos/' + repo + '/components?limit=200');
+  const res = await fetch('/api/v1/repos/' + repo + '/components?limit=0');
   if (!res.ok) throw new Error('HTTP ' + res.status);
   const d = await res.json();
   const pkgs = d.components || [];

@@ -164,7 +164,7 @@
   function initContentTab() {
     var listEl = document.getElementById('content-pkg-list');
     if (!listEl) return;
-    fetch('/api/v1/repos/' + encodeURIComponent(REPO) + '/components?limit=200')
+    fetch('/api/v1/repos/' + encodeURIComponent(REPO) + '/components?limit=0')
       .then(function (r) { return r.json(); })
       .then(function (d) { renderContentList(listEl, d.components || []); })
       .catch(function () {
