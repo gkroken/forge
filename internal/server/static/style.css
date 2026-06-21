@@ -851,6 +851,10 @@ td a:hover { text-decoration: underline; }
   flex: 1; overflow-y: auto; background: var(--bg-alt);
   padding: 20px 24px; display: flex; flex-direction: column; gap: 16px;
 }
+/* Children keep their natural height; the column itself scrolls. Without this,
+   flex-shrink lets a tall table-wrap (overflow:hidden) collapse and clip its own
+   rows instead of overflowing into admin-content's scroll. */
+.admin-content > * { flex-shrink: 0; }
 /* sub-header with tabs (Tokens page) */
 .admin-subheader { padding: 18px 24px 0; border-bottom: 1px solid var(--border); background: var(--bg); flex-shrink: 0; }
 .admin-subheader-row { display: flex; align-items: flex-start; gap: 12px; }
