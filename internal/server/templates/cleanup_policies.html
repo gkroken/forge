@@ -6,41 +6,31 @@
     <a href="/ui/admin/cleanup-policies/new" class="btn btn-primary" style="height:34px;padding:0 14px;font-size:12.5px;display:flex;align-items:center;gap:6px;"><span class="ms" style="font-size:17px;">add</span>New policy</a>
   </div>
 
-  <!-- KPI row -->
-  <div class="kpi-grid">
-    <div class="kpi-card">
-      <div class="kpi-icon-row"><span class="ms">inventory</span><span class="kpi-label">Policies</span></div>
-      <div class="kpi-value">{{.PolicyCount}}</div>
-      <div class="kpi-trend">
-        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
-        <span class="kpi-trend-sub">named policies configured</span>
+  <!-- metric readouts -->
+  <section class="instrument-panel">
+    <div class="inst-readouts">
+      <div class="inst-readout">
+        <div class="inst-label">Policies</div>
+        <div class="inst-value">{{.PolicyCount}}</div>
+        <div class="inst-unit">named policies configured</div>
+      </div>
+      <div class="inst-readout">
+        <div class="inst-label">Reclaimable</div>
+        <div class="inst-value inst-value-text">{{.ReclaimableGB}}</div>
+        <div class="inst-unit">dry-run across all policies</div>
+      </div>
+      <div class="inst-readout">
+        <div class="inst-label">Freed · 30d</div>
+        <div class="inst-value inst-value-text">{{.FreedLast30dGB}}</div>
+        <div class="inst-unit">last 30 days, non-dry-run</div>
+      </div>
+      <div class="inst-readout">
+        <div class="inst-label">Next run</div>
+        <div class="inst-value inst-value-text">{{.NextRun}}</div>
+        <div class="inst-unit">next scheduled cleanup</div>
       </div>
     </div>
-    <div class="kpi-card">
-      <div class="kpi-icon-row"><span class="ms">savings</span><span class="kpi-label">Reclaimable</span></div>
-      <div class="kpi-value" style="font-size:22px;">{{.ReclaimableGB}}</div>
-      <div class="kpi-trend">
-        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
-        <span class="kpi-trend-sub">dry-run across all policies</span>
-      </div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-icon-row"><span class="ms">recycling</span><span class="kpi-label">Freed · 30d</span></div>
-      <div class="kpi-value" style="font-size:22px;">{{.FreedLast30dGB}}</div>
-      <div class="kpi-trend">
-        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
-        <span class="kpi-trend-sub">last 30 days, non-dry-run</span>
-      </div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-icon-row"><span class="ms">schedule</span><span class="kpi-label">Next run</span></div>
-      <div class="kpi-value" style="font-size:22px;">{{.NextRun}}</div>
-      <div class="kpi-trend">
-        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
-        <span class="kpi-trend-sub">next scheduled cleanup</span>
-      </div>
-    </div>
-  </div>
+  </section>
 
   <!-- policies table -->
   <div>
