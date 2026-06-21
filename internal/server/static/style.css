@@ -130,6 +130,25 @@
   --shadow-sm:   0 1px 3px rgba(27,31,36,.08), 0 1px 0 rgba(27,31,36,.04);
   --shadow-md:   0 3px 6px rgba(27,31,36,.1),  0 1px 3px rgba(27,31,36,.06);
 
+  /* fonts */
+  --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+
+  /* type scale — sans for prose, mono for the "machine voice" (data, labels) */
+  --fs-eyebrow: 10.5px;  /* instrument-panel labels */
+  --fs-caption: 12px;
+  --fs-sm:      13px;
+  --fs-body:    14px;
+  --fs-h3:      15px;
+  --fs-h2:      19px;
+  --fs-h1:      23px;
+  --fs-display: 26px;
+  --track-eyebrow: .12em;  /* mono uppercase labels */
+  --track-tight:  -.02em;  /* display headings + coordinates */
+
+  /* spacing — 4px base */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+
   /* badges (kind) */
   --badge-hosted-bg: #dbeafe; --badge-hosted-fg: #1d4ed8;
   --badge-proxy-bg:  #fef9c3; --badge-proxy-fg:  #854d0e;
@@ -875,6 +894,35 @@ td a:hover { text-decoration: underline; }
 .panel-card   { border: 1px solid var(--border); border-radius: 10px; background: var(--bg); padding: 15px 16px; display: flex; flex-direction: column; }
 .panel-title  { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 13px; }
 .section-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 11px; }
+
+/* ── signature: instrument-panel eyebrows + tabular numerals ─────────────────
+   Forge is a machine for artifacts. Its structural labels speak in IBM Plex
+   Mono — the same voice as the versions, hashes and byte counts they sit above.
+   Every figure aligns on tabular numerals so columns of data read as a gauge. */
+.sidebar-section,
+.kpi-label, .stat-label,
+.panel-title,
+h2,
+thead th {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  letter-spacing: var(--track-eyebrow);
+}
+.sidebar-section { font-size: var(--fs-eyebrow); }
+.kpi-label, .stat-label, .panel-title { font-size: var(--fs-eyebrow); }
+h2     { font-size: var(--fs-caption); }
+thead th { font-size: var(--fs-eyebrow); letter-spacing: .1em; }
+
+/* tabular figures everywhere data lives, so numerals line up column-to-column */
+.kpi-value, .stat-value, .kpi-unit,
+.health-stat,
+.col-latest, .col-count, .col-date, .col-num,
+.fmt-mono, .sidebar-badge,
+.tnum, .mono, .coord {
+  font-variant-numeric: tabular-nums;
+}
+.mono, .coord { font-family: var(--font-mono); }
+.coord { letter-spacing: var(--track-tight); }  /* group:artifact identity */
 
 /* ── dashboard mid/bottom grids ─────────────────────────────────────────── */
 .mid-grid-3    { display: grid; grid-template-columns: 1.1fr 1.5fr 1fr; gap: 14px; min-height: 200px; }
