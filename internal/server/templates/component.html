@@ -4,15 +4,14 @@
   <a href="/ui/repos/{{.Repo.Name}}">{{.Repo.Name}}</a><span>/</span>{{.Detail.Name}}
 </div>
 
-<div class="page-header">
-  <div>
-    <h1 style="margin-bottom:.5rem">{{.Detail.Name}}</h1>
-    <div class="repo-meta">
-      <span class="badge fmt-{{.Repo.Format}}">{{formatIcon .Repo.Format}}{{.Repo.Format}}</span>
-      <span class="badge kind-{{.Repo.Kind}}">{{.Repo.Kind}}</span>
-      {{if .Repo.Upstream}}<span class="upstream">↑ {{.Repo.Upstream}}</span>{{end}}
-      {{if .Detail.License}}<span class="badge">{{.Detail.License}}</span>{{end}}
-    </div>
+<div class="comp-ident">
+  <div class="comp-ident-label">Component</div>
+  <h1 class="comp-ident-name">{{.Detail.Name}}</h1>
+  <div class="repo-meta">
+    <span class="badge fmt-{{.Repo.Format}}">{{formatIcon .Repo.Format}}{{.Repo.Format}}</span>
+    <span class="badge kind-{{.Repo.Kind}}">{{.Repo.Kind}}</span>
+    {{if .Repo.Upstream}}<span class="upstream">↑ {{.Repo.Upstream}}</span>{{end}}
+    {{if .Detail.License}}<span class="badge">{{.Detail.License}}</span>{{end}}
   </div>
 </div>
 

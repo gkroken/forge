@@ -585,6 +585,16 @@ td a:hover { text-decoration: underline; }
 .copy-row:has(.snippet-pre) { align-items: flex-start; }
 
 /* description one-liner and readme long text */
+/* component identity — the artifact presented as a coordinate, in the
+   instrument voice: a COMPONENT eyebrow over the mono name + format/kind badges. */
+.comp-ident { margin-bottom: 1.25rem; }
+.comp-ident-label { display: block; text-transform: uppercase; color: var(--text-muted); margin-bottom: 5px; }
+.comp-ident-name {
+  font-family: var(--font-mono); font-size: 1.4rem; font-weight: 600;
+  letter-spacing: var(--track-tight); color: var(--text); margin-bottom: .6rem;
+}
+.comp-ident .repo-meta { margin-bottom: 0; }
+
 .comp-description { margin: .5rem 0 1rem; color: var(--text); max-width: 720px; }
 .readme-text {
   white-space: pre-wrap;
@@ -930,6 +940,7 @@ td a:hover { text-decoration: underline; }
 .panel-title, .inst-label,
 .browse-coord-label, .browse-detail-asset-label, .browse-cksum-label,
 .rail-card-title, .rc-legend, .section-title, .search-readout-label, .upload-dest-label,
+.comp-ident-label,
 h2,
 thead th {
   font-family: var(--font-mono);
@@ -939,7 +950,8 @@ thead th {
 .sidebar-section { font-size: var(--fs-eyebrow); }
 .kpi-label, .stat-label, .panel-title, .inst-label,
 .browse-coord-label, .browse-detail-asset-label, .browse-cksum-label,
-.rail-card-title, .rc-legend, .section-title, .search-readout-label, .upload-dest-label { font-size: var(--fs-eyebrow); }
+.rail-card-title, .rc-legend, .section-title, .search-readout-label, .upload-dest-label,
+.comp-ident-label { font-size: var(--fs-eyebrow); }
 h2     { font-size: var(--fs-caption); }
 thead th { font-size: var(--fs-eyebrow); letter-spacing: .1em; }
 
