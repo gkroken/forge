@@ -70,6 +70,12 @@
             <td class="col-mono">{{.Interval}}</td>
             <td><span class="status-pill {{.StatusClass}}">{{.Status}}</span></td>
             <td class="col-actions">
+              {{if .HasRepos}}
+              <button class="btn btn-sm" onclick="runPolicy('{{.Name}}', true, this)">Dry-run</button>
+              <button class="btn btn-sm btn-danger" onclick="runPolicy('{{.Name}}', false, this)">Run</button>
+              {{else}}
+              <span class="form-hint" title="Assign a repository before running" style="margin-right:6px">No repos</span>
+              {{end}}
               <a href="/ui/admin/cleanup-policies/{{.Name}}/edit" class="btn btn-sm">Edit</a>
             </td>
           </tr>
@@ -111,4 +117,24 @@
   </div>
 
 </div>
+
+<script>
+function runPolicy(name, dry, btn) {
+  if (!dry && !confirm("Run cleanup policy '" + name + "' now? Matching artifacts will be permanently deleted from every repository it is applied to.")) return;
+  var orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = dry ? 'Previewing…' : 'Running…';
+  fetch('/api/v1/cleanup-policies/' + encodeURIComponent(name) + '/run?dry=' + dry, {method: 'POST'})
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var mb = (d.total_freed / 1048576).toFixed(2);
+      var verb = dry ? 'would delete' : 'deleted';
+      alert("Policy '" + name + "' across " + d.repos.length + " repo(s): " + verb + " " +
+            d.total_deleted + " artifact(s), " + mb + " MB" + (dry ? " (dry-run, nothing removed)" : "") + ".");
+      if (!dry) location.reload();
+    })
+    .catch(function(e) { alert('Run failed: ' + e); })
+    .finally(function() { btn.disabled = false; btn.textContent = orig; });
+}
+</script>
 {{end}}

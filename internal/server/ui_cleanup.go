@@ -32,6 +32,7 @@ type cleanupPolicyRow struct {
 	Criteria    string
 	Interval    string
 	AppliedTo   string // comma-separated repo names using this policy
+	HasRepos    bool   // true when at least one repo uses this policy
 	Status      string // "Active" | "Manual"
 	StatusClass string // CSS class for the status pill
 }
@@ -79,6 +80,7 @@ func (s *Server) uiCleanupPolicies(w http.ResponseWriter, r *http.Request) {
 					Criteria:    summarizeNamedPolicy(p),
 					Interval:    namedPolicyInterval(p),
 					AppliedTo:   applied,
+					HasRepos:    len(policyRepos[p.Name]) > 0,
 					Status:      status,
 					StatusClass: cls,
 				})

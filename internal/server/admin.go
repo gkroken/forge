@@ -456,7 +456,87 @@ func (s *Server) handleCleanupPolicies(w http.ResponseWriter, r *http.Request) {
 		s.handleCleanupPoliciesList(w, r)
 		return
 	}
+	// /api/v1/cleanup-policies/{name}/run — run the policy across every repo it
+	// is applied to (admin only). ?dry=true previews without deleting.
+	if pol, rest, found := strings.Cut(name, "/"); found && rest == "run" {
+		s.handleRunPolicy(w, r, pol)
+		return
+	}
 	s.handleCleanupPolicyByName(w, r, name)
+}
+
+// policyRunResult is the JSON response for a policy-level run.
+type policyRunResult struct {
+	Policy       string                `json:"policy"`
+	DryRun       bool                  `json:"dry_run"`
+	Repos        []policyRunRepoResult `json:"repos"`
+	TotalDeleted int                   `json:"total_deleted"`
+	TotalFreed   int64                 `json:"total_freed"`
+}
+
+type policyRunRepoResult struct {
+	Repo       string `json:"repo"`
+	Deleted    int    `json:"deleted"`
+	FreedBytes int64  `json:"freed_bytes"`
+}
+
+// handleRunPolicy runs a named policy against every hosted repo it is applied
+// to. POST /api/v1/cleanup-policies/{name}/run?dry=true|false.
+func (s *Server) handleRunPolicy(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	np, ok, err := s.Cleanup.Get(name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		http.Error(w, "cleanup policy not found: "+name, http.StatusNotFound)
+		return
+	}
+	dry := r.URL.Query().Get("dry") == "true"
+	p := np.ToCleanupPolicy()
+	out := policyRunResult{Policy: name, DryRun: dry, Repos: []policyRunRepoResult{}}
+
+	for _, rp := range s.Repos.All() {
+		if rp.Kind != repo.Hosted || rp.CleanupPolicyName != name {
+			continue
+		}
+		start := time.Now()
+		if dry {
+			dr, derr := cleanup.DryRun(rp.Name, rp.Format, p, s.Blob, s.Meta)
+			if derr != nil {
+				continue
+			}
+			var freed int64
+			for _, c := range dr.Candidates {
+				freed += c.SizeBytes
+			}
+			out.Repos = append(out.Repos, policyRunRepoResult{Repo: rp.Name, Deleted: len(dr.Candidates), FreedBytes: freed})
+			out.TotalDeleted += len(dr.Candidates)
+			out.TotalFreed += freed
+			_ = cleanup.RecordRun(s.Meta, rp.Name, cleanup.CleanupRun{
+				Timestamp: start, PolicyName: name, Deleted: len(dr.Candidates),
+				FreedBytes: freed, DurationMs: time.Since(start).Milliseconds(), DryRun: true,
+			})
+			continue
+		}
+		res, rerr := cleanup.Run(rp.Name, rp.Format, p, s.Blob, s.Meta)
+		if rerr != nil {
+			continue
+		}
+		out.Repos = append(out.Repos, policyRunRepoResult{Repo: rp.Name, Deleted: res.Deleted, FreedBytes: res.FreedBytes})
+		out.TotalDeleted += res.Deleted
+		out.TotalFreed += res.FreedBytes
+		_ = cleanup.RecordRun(s.Meta, rp.Name, cleanup.CleanupRun{
+			Timestamp: start, PolicyName: name, Deleted: res.Deleted,
+			FreedBytes: res.FreedBytes, DurationMs: time.Since(start).Milliseconds(),
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
 }
 
 func (s *Server) handleCleanupPoliciesList(w http.ResponseWriter, r *http.Request) {
