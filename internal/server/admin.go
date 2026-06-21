@@ -362,6 +362,7 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request, name stri
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	start := time.Now()
 	if r.URL.Query().Get("dry") == "true" {
 		result, err := cleanup.DryRun(rp.Name, rp.Format, p, s.Blob, s.Meta)
 		if err != nil {
@@ -371,6 +372,18 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request, name stri
 		if result.Candidates == nil {
 			result.Candidates = []cleanup.Candidate{}
 		}
+		var freed int64
+		for _, c := range result.Candidates {
+			freed += c.SizeBytes
+		}
+		_ = cleanup.RecordRun(s.Meta, rp.Name, cleanup.CleanupRun{
+			Timestamp:  start,
+			PolicyName: rp.CleanupPolicyName,
+			Deleted:    len(result.Candidates),
+			FreedBytes: freed,
+			DurationMs: time.Since(start).Milliseconds(),
+			DryRun:     true,
+		})
 		json.NewEncoder(w).Encode(result)
 		return
 	}
@@ -379,6 +392,13 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request, name stri
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	_ = cleanup.RecordRun(s.Meta, rp.Name, cleanup.CleanupRun{
+		Timestamp:  start,
+		PolicyName: rp.CleanupPolicyName,
+		Deleted:    result.Deleted,
+		FreedBytes: result.FreedBytes,
+		DurationMs: time.Since(start).Milliseconds(),
+	})
 	json.NewEncoder(w).Encode(result)
 }
 
