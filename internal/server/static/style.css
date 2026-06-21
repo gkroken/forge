@@ -675,6 +675,14 @@ td a:hover { text-decoration: underline; }
 .grant-list code { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px; color: var(--text); }
 
 /* ── upload ──────────────────────────────────────────────────────────── */
+/* upload destination readout — the artifact's target, in the instrument voice:
+   an UPLOADING TO eyebrow, the repo name as the emphasized coordinate, format/kind badges. */
+.upload-dest { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 1.5rem; }
+.upload-dest-label { text-transform: uppercase; color: var(--text-muted); }
+.upload-dest-name {
+  font-family: var(--font-mono); font-size: 18px; font-weight: 600;
+  color: var(--text); letter-spacing: var(--track-tight);
+}
 .upload-cli { max-width: 640px; }
 .cli-hint {
   margin-top: .75rem;
@@ -921,7 +929,7 @@ td a:hover { text-decoration: underline; }
 .kpi-label, .stat-label,
 .panel-title, .inst-label,
 .browse-coord-label, .browse-detail-asset-label, .browse-cksum-label,
-.rail-card-title, .rc-legend, .section-title, .search-readout-label,
+.rail-card-title, .rc-legend, .section-title, .search-readout-label, .upload-dest-label,
 h2,
 thead th {
   font-family: var(--font-mono);
@@ -931,7 +939,7 @@ thead th {
 .sidebar-section { font-size: var(--fs-eyebrow); }
 .kpi-label, .stat-label, .panel-title, .inst-label,
 .browse-coord-label, .browse-detail-asset-label, .browse-cksum-label,
-.rail-card-title, .rc-legend, .section-title, .search-readout-label { font-size: var(--fs-eyebrow); }
+.rail-card-title, .rc-legend, .section-title, .search-readout-label, .upload-dest-label { font-size: var(--fs-eyebrow); }
 h2     { font-size: var(--fs-caption); }
 thead th { font-size: var(--fs-eyebrow); letter-spacing: .1em; }
 

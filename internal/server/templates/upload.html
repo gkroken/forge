@@ -4,8 +4,9 @@
   <a href="/ui/repos/{{.Repo.Name}}">{{.Repo.Name}}</a><span>/</span>Upload
 </div>
 
-<h1>Upload to {{.Repo.Name}}</h1>
-<div class="repo-meta">
+<div class="upload-dest">
+  <span class="upload-dest-label">Uploading to</span>
+  <span class="upload-dest-name">{{.Repo.Name}}</span>
   <span class="badge fmt-{{.Repo.Format}}">{{.Repo.Format}}</span>
   <span class="badge kind-{{.Repo.Kind}}">{{.Repo.Kind}}</span>
 </div>
