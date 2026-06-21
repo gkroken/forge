@@ -307,8 +307,8 @@ h2 { font-size: .9rem; font-weight: 600; margin-bottom: .75rem; color: var(--tex
 .kind-proxy  { background: var(--badge-proxy-bg);  color: var(--badge-proxy-fg);  }
 .kind-group  { background: var(--badge-group-bg);  color: var(--badge-group-fg);  }
 .upstream-health { font-size: .6rem; vertical-align: middle; margin-left: .3rem; }
-.health-ok  { color: #22c55e; }
-.health-err { color: #ef4444; }
+.health-ok  { color: var(--dot-ok); }
+.health-err { color: var(--dot-err); }
 .fmt-maven   { background: var(--badge-maven-bg);  color: var(--badge-maven-fg);  }
 .fmt-npm     { background: var(--badge-npm-bg);    color: var(--badge-npm-fg);    }
 .fmt-helm    { background: var(--badge-helm-bg);   color: var(--badge-helm-fg);   }
@@ -1211,7 +1211,6 @@ thead th { font-size: var(--fs-eyebrow); letter-spacing: .1em; }
 .admin-table      { width: 100%; border-collapse: collapse; }
 .admin-table thead th {
   text-align: left; padding: 11px 18px;
-  font-size: 11px; font-weight: 600; letter-spacing: .4px;
   text-transform: uppercase; color: var(--text-muted);
   background: var(--bg-alt); border-bottom: 1px solid var(--border);
 }
