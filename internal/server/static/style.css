@@ -902,7 +902,7 @@ td a:hover { text-decoration: underline; }
 /* ── panel cards ────────────────────────────────────────────────────────── */
 .panel-card   { border: 1px solid var(--border); border-radius: 10px; background: var(--bg); padding: 15px 16px; display: flex; flex-direction: column; }
 .panel-title  { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 13px; }
-.section-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 11px; }
+.section-title { text-transform: uppercase; color: var(--text-muted); margin-bottom: 11px; }
 
 /* ── signature: instrument-panel eyebrows + tabular numerals ─────────────────
    Forge is a machine for artifacts. Its structural labels speak in IBM Plex
@@ -912,7 +912,7 @@ td a:hover { text-decoration: underline; }
 .kpi-label, .stat-label,
 .panel-title, .inst-label,
 .browse-coord-label, .browse-detail-asset-label, .browse-cksum-label,
-.rail-card-title, .rc-legend,
+.rail-card-title, .rc-legend, .section-title,
 h2,
 thead th {
   font-family: var(--font-mono);
@@ -922,7 +922,7 @@ thead th {
 .sidebar-section { font-size: var(--fs-eyebrow); }
 .kpi-label, .stat-label, .panel-title, .inst-label,
 .browse-coord-label, .browse-detail-asset-label, .browse-cksum-label,
-.rail-card-title, .rc-legend { font-size: var(--fs-eyebrow); }
+.rail-card-title, .rc-legend, .section-title { font-size: var(--fs-eyebrow); }
 h2     { font-size: var(--fs-caption); }
 thead th { font-size: var(--fs-eyebrow); letter-spacing: .1em; }
 
