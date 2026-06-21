@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -222,6 +223,35 @@ type cleanupPolicyFormPage struct {
 	IntervalStr string
 	IsEdit      bool
 	Error       string
+	Repos       []policyRepoOption // hosted repos this policy can be applied to
+}
+
+// policyRepoOption is one selectable hosted repository on the policy form.
+type policyRepoOption struct {
+	Name        string
+	Format      string
+	Checked     bool   // currently assigned to THIS policy
+	OtherPolicy string // assigned to a different policy (surfaced, not blocked)
+}
+
+// policyRepoOptions lists hosted repos and marks which are assigned to
+// policyName (Checked) or to some other policy (OtherPolicy).
+func (s *Server) policyRepoOptions(policyName string) []policyRepoOption {
+	var opts []policyRepoOption
+	for _, rp := range s.Repos.All() {
+		if rp.Kind != repo.Hosted {
+			continue
+		}
+		opt := policyRepoOption{Name: rp.Name, Format: rp.Format}
+		if policyName != "" && rp.CleanupPolicyName == policyName {
+			opt.Checked = true
+		} else if rp.CleanupPolicyName != "" {
+			opt.OtherPolicy = rp.CleanupPolicyName
+		}
+		opts = append(opts, opt)
+	}
+	sort.Slice(opts, func(i, j int) bool { return opts[i].Name < opts[j].Name })
+	return opts
 }
 
 func (s *Server) uiCleanupPolicyForm(w http.ResponseWriter, r *http.Request, name string, isEdit bool) {
@@ -259,7 +289,32 @@ func (s *Server) uiCleanupPolicyForm(w http.ResponseWriter, r *http.Request, nam
 		Policy:      policy,
 		IntervalStr: intervalStr,
 		IsEdit:      isEdit,
+		Repos:       s.policyRepoOptions(name),
 	})
+}
+
+// applyPolicyToRepos syncs hosted repo→policy assignments from the form's
+// "applyRepos" checkboxes: checked repos get policyName (overwriting a prior
+// policy), and repos that previously had policyName but are now unchecked are
+// cleared. Repos assigned to a different policy are left alone unless checked.
+func (s *Server) applyPolicyToRepos(r *http.Request, policyName string) {
+	selected := map[string]bool{}
+	for _, n := range r.Form["applyRepos"] {
+		selected[n] = true
+	}
+	for _, rp := range s.Repos.All() {
+		if rp.Kind != repo.Hosted {
+			continue
+		}
+		switch {
+		case selected[rp.Name] && rp.CleanupPolicyName != policyName:
+			rp.CleanupPolicyName = policyName
+			_ = s.Repos.Update(rp)
+		case !selected[rp.Name] && rp.CleanupPolicyName == policyName:
+			rp.CleanupPolicyName = ""
+			_ = s.Repos.Update(rp)
+		}
+	}
 }
 
 func (s *Server) processCleanupPolicyForm(w http.ResponseWriter, r *http.Request, existingName string, isEdit bool) {
@@ -300,6 +355,7 @@ func (s *Server) processCleanupPolicyForm(w http.ResponseWriter, r *http.Request
 		s.reRenderPolicyForm(w, r, existingName, isEdit, err.Error())
 		return
 	}
+	s.applyPolicyToRepos(r, policy.Name)
 	http.Redirect(w, r, "/ui/admin/cleanup-policies", http.StatusSeeOther) // #nosec G710
 }
 
@@ -329,6 +385,15 @@ func (s *Server) reRenderPolicyForm(w http.ResponseWriter, r *http.Request, exis
 	if isEdit {
 		title = "Cleanup — Edit " + existingName
 	}
+	// Preserve the user's checkbox selections across the error re-render.
+	selected := map[string]bool{}
+	for _, n := range r.Form["applyRepos"] {
+		selected[n] = true
+	}
+	opts := s.policyRepoOptions(policy.Name)
+	for i := range opts {
+		opts[i].Checked = selected[opts[i].Name]
+	}
 	render(w, tmplCleanupPolicyForm, "admin_shell.html", cleanupPolicyFormPage{
 		Title:       title,
 		ActiveNav:   "cleanup",
@@ -336,6 +401,7 @@ func (s *Server) reRenderPolicyForm(w http.ResponseWriter, r *http.Request, exis
 		IntervalStr: intervalStr,
 		IsEdit:      isEdit,
 		Error:       errMsg,
+		Repos:       opts,
 	})
 }
 

@@ -64,6 +64,25 @@
       </label>
     </div>
 
+    <div class="form-group">
+      <label>Apply to repositories</label>
+      <span class="form-hint">Hosted repositories this policy runs against. A repository can have only one policy; checking one already using another policy reassigns it.</span>
+      {{if .Repos}}
+      <div style="border:1px solid var(--border);border-radius:8px;padding:6px 4px;margin-top:6px;max-height:240px;overflow:auto">
+        {{range .Repos}}
+        <label class="checkbox-label" style="padding:5px 10px;margin:0;display:flex;align-items:center;gap:8px">
+          <input type="checkbox" name="applyRepos" value="{{.Name}}"{{if .Checked}} checked{{end}}>
+          <span>{{.Name}}</span>
+          <span class="badge fmt-{{.Format}} fmt-mono" style="font-size:10px">{{.Format}}</span>
+          {{if .OtherPolicy}}<span style="font-size:11px;color:var(--danger,#c0392b);margin-left:auto">using <strong>{{.OtherPolicy}}</strong></span>{{end}}
+        </label>
+        {{end}}
+      </div>
+      {{else}}
+      <div class="form-hint" style="margin-top:6px">No hosted repositories exist yet.</div>
+      {{end}}
+    </div>
+
     <div class="form-actions">
       <button type="submit" class="btn btn-primary">
         {{if .IsEdit}}Save changes{{else}}Create policy{{end}}
