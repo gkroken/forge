@@ -895,37 +895,6 @@ td a:hover { text-decoration: underline; }
 }
 .admin-tab.active { font-weight: 600; color: var(--accent); border-bottom-color: var(--accent); }
 
-/* ── KPI / stat cards ───────────────────────────────────────────────────── */
-.kpi-grid    { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; }
-.stat-grid-3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 14px; }
-.kpi-card, .stat-card {
-  border: 1px solid var(--border); border-radius: 10px;
-  background: var(--bg); padding: 15px 16px;
-}
-.kpi-label, .stat-label {
-  font-size: 12px; font-weight: 600; color: var(--text-muted);
-  text-transform: uppercase; letter-spacing: .4px; margin-bottom: 10px;
-}
-/* icon + label row at top of KPI card */
-.kpi-icon-row {
-  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
-}
-.kpi-icon-row .ms { font-size: 18px; color: var(--accent); }
-.kpi-icon-row .kpi-label { margin-bottom: 0; }
-/* trend row */
-.kpi-trend-icon { font-size: 15px; }
-.kpi-trend-val  { font-size: 11.5px; font-weight: 600; }
-.kpi-trend-sub  { font-size: 11.5px; color: var(--text-muted); }
-.kpi-value {
-  display: flex; align-items: baseline; gap: 6px;
-  font-size: 26px; font-weight: 700; color: var(--text);
-  font-family: 'IBM Plex Mono', ui-monospace, monospace; letter-spacing: -.5px;
-}
-.stat-value { font-size: 26px; font-weight: 700; font-family: 'IBM Plex Mono', ui-monospace, monospace; letter-spacing: -.5px; color: var(--text); }
-.kpi-unit   { font-size: 12px; color: var(--text-muted); font-family: inherit; font-weight: 400; }
-.kpi-trend  { display: flex; align-items: center; gap: 4px; margin-top: 7px; font-size: 11.5px; }
-.kpi-sub    { font-size: 11.5px; color: var(--text-light); margin-top: 6px; }
-
 /* ── panel cards ────────────────────────────────────────────────────────── */
 .panel-card   { border: 1px solid var(--border); border-radius: 10px; background: var(--bg); padding: 15px 16px; display: flex; flex-direction: column; }
 .panel-title  { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 13px; }
@@ -936,7 +905,6 @@ td a:hover { text-decoration: underline; }
    Mono — the same voice as the versions, hashes and byte counts they sit above.
    Every figure aligns on tabular numerals so columns of data read as a gauge. */
 .sidebar-section,
-.kpi-label, .stat-label,
 .panel-title, .inst-label,
 .browse-coord-label, .browse-detail-asset-label, .browse-cksum-label,
 .rail-card-title, .rc-legend, .section-title, .search-readout-label, .upload-dest-label,
@@ -948,7 +916,7 @@ thead th {
   letter-spacing: var(--track-eyebrow);
 }
 .sidebar-section { font-size: var(--fs-eyebrow); }
-.kpi-label, .stat-label, .panel-title, .inst-label,
+.panel-title, .inst-label,
 .browse-coord-label, .browse-detail-asset-label, .browse-cksum-label,
 .rail-card-title, .rc-legend, .section-title, .search-readout-label, .upload-dest-label,
 .comp-ident-label { font-size: var(--fs-eyebrow); }
@@ -956,7 +924,6 @@ h2     { font-size: var(--fs-caption); }
 thead th { font-size: var(--fs-eyebrow); letter-spacing: .1em; }
 
 /* tabular figures everywhere data lives, so numerals line up column-to-column */
-.kpi-value, .stat-value, .kpi-unit,
 .inst-value, .inst-header,
 .health-stat,
 .col-latest, .col-count, .col-date, .col-num,
