@@ -21,7 +21,7 @@
       {{if eq .KindStr "hosted"}}
       <button id="btn-reindex" class="btn btn-sm">Rebuild index</button>
       {{end}}
-      <a href="/ui/repos/{{.Repo.Name}}" class="btn btn-sm">Browse</a>
+      <a href="/ui/browse/{{.Repo.Name}}" class="btn btn-sm">Browse</a>
     </div>
   </div>
   <div class="admin-tabs">
@@ -55,11 +55,9 @@
           <div class="form-row">
             <div class="form-group">
               <label for="f-format">Format</label>
-              <select id="f-format" name="format">
-                {{range .Formats}}
-                <option value="{{.}}"{{if eq . $.Repo.Format}} selected{{end}}>{{.}}</option>
-                {{end}}
-              </select>
+              <input id="f-format" type="text" value="{{.Repo.Format}}" readonly>
+              <input type="hidden" name="format" value="{{.Repo.Format}}">
+              <p class="form-hint">Format cannot be changed after creation.</p>
             </div>
             <div class="form-group">
               <label for="f-kind">Kind</label>
