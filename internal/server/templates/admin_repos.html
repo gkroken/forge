@@ -3,7 +3,7 @@
   <div class="admin-subheader-row">
     <div>
       <div class="admin-subheader-title">Repositories</div>
-      <div class="admin-subheader-sub">Manage hosted, proxy, and group repositories</div>
+      <div class="admin-subheader-sub">Browse or manage hosted, proxy, and group repositories</div>
     </div>
     <div style="margin-left:auto">
       <a href="/ui/admin/repos/new" class="btn btn-primary">+ New repository</a>
@@ -21,23 +21,34 @@
           <th>Name</th>
           <th>Format</th>
           <th>Type</th>
-          <th>Upstream / Members</th>
+          <th class="col-num">Artifacts</th>
+          <th class="col-num">Size</th>
+          <th>Health</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
-        {{range .Repos}}
+        {{range .Rows}}
         <tr>
-          <td class="col-name"><a href="/ui/admin/repos/{{.Name}}/edit">{{.Name}}</a></td>
+          <td class="col-name">
+            <a href="/ui/browse/{{.Name}}">{{.Name}}</a>
+            {{if .Upstream}}<div class="repo-subline col-mono">{{.Upstream}}</div>
+            {{else if .Members}}<div class="repo-subline col-mono">{{join .Members ", "}}</div>{{end}}
+          </td>
           <td><span class="badge fmt-{{.Format}} fmt-mono">{{formatIcon .Format}}{{.Format}}</span></td>
           <td><span class="badge kind-{{.Kind}}">{{.Kind}}</span></td>
-          <td class="col-count col-mono">
-            {{if .Upstream}}{{.Upstream}}
-            {{else if .Members}}{{join .Members ", "}}
+          <td class="col-num col-count">{{.ArtifactCount}}</td>
+          <td class="col-num col-count">{{if gt .SizeBytes 0}}{{fmtBytes .SizeBytes}}{{else}}—{{end}}</td>
+          <td class="col-health">
+            {{if eq .Kind "proxy"}}
+              {{if eq .Health "down"}}<span class="health-dot health-err" title="Upstream unreachable">●</span>
+              {{else if eq .Health "ok"}}<span class="health-dot health-ok" title="Upstream reachable">●</span>
+              {{else}}<span class="health-dot health-unknown" title="No data yet">●</span>{{end}}
             {{else}}—{{end}}
           </td>
           <td class="col-actions">
-            <a href="/ui/admin/repos/{{.Name}}/edit" class="btn btn-sm">Settings</a>
+            <a href="/ui/browse/{{.Name}}" class="btn btn-sm">Browse</a>
+            <a href="/ui/admin/repos/{{.Name}}/edit" class="btn btn-sm">Configure</a>
             <button class="btn btn-sm btn-danger"
                     hx-delete="/ui/admin/repos/{{.Name}}"
                     hx-confirm="Delete «{{.Name}}»? This cannot be undone.">
@@ -46,7 +57,7 @@
           </td>
         </tr>
         {{else}}
-        <tr><td colspan="5" class="empty">No repositories. <a href="/ui/admin/repos/new">Create one</a>.</td></tr>
+        <tr><td colspan="7" class="empty">No repositories. <a href="/ui/admin/repos/new">Create one</a>.</td></tr>
         {{end}}
       </tbody>
     </table>

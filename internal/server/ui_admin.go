@@ -2,11 +2,13 @@ package server
 
 import (
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"forge/internal/auth"
+	"forge/internal/proxy"
 	"forge/internal/repo"
 )
 
@@ -31,8 +33,22 @@ var (
 type adminReposPage struct {
 	Title     string
 	ActiveNav string
-	Repos     []repo.Repository
+	Rows      []adminRepoRow
 	Flash     string
+}
+
+// adminRepoRow is a display-ready row for the canonical Repositories list:
+// repo identity + storage usage (member-aggregated for groups) + upstream
+// health, plus what the Browse/Configure/Delete actions need.
+type adminRepoRow struct {
+	Name          string
+	Format        string
+	Kind          string
+	Upstream      string
+	Members       []string
+	ArtifactCount int
+	SizeBytes     int64
+	Health        string // "ok" | "down" | "" (proxy only)
 }
 
 type adminFormPage struct {
@@ -208,10 +224,29 @@ func (s *Server) handleUIAdmin(w http.ResponseWriter, r *http.Request, sub strin
 // ── handlers ──────────────────────────────────────────────────────────────────
 
 func (s *Server) uiAdminHome(w http.ResponseWriter, r *http.Request) {
+	bsizes := s.GetBlobSizes()
+	var rows []adminRepoRow
+	for _, rp := range s.Repos.All() {
+		row := adminRepoRow{
+			Name:          rp.Name,
+			Format:        rp.Format,
+			Kind:          string(rp.Kind),
+			Upstream:      rp.Upstream,
+			Members:       rp.Members,
+			ArtifactCount: bsizes.CountByRepo[rp.Name],
+			SizeBytes:     bsizes.ByRepo[rp.Name],
+		}
+		if rp.Kind == repo.Proxy && rp.Upstream != "" {
+			row.Health = proxy.HealthOf(rp.Upstream)
+		}
+		rows = append(rows, row)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+
 	render(w, tmplAdminRepos, "admin_shell.html", adminReposPage{
 		Title:     "Repositories",
 		ActiveNav: "repos",
-		Repos:     s.Repos.All(),
+		Rows:      rows,
 		Flash:     r.URL.Query().Get("flash"),
 	})
 }

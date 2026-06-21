@@ -102,34 +102,16 @@ func assertNotContains(t *testing.T, body, want string) {
 
 // ── /ui/ home ─────────────────────────────────────────────────────────────────
 
-func TestUIHome_OK(t *testing.T) {
+func TestUIHome_RedirectsToDashboard(t *testing.T) {
+	// The post-login landing is the Dashboard; the repo list lives at /ui/admin/.
 	h := newUIServer(t).Routes()
 	rw := uiGet(t, h, "/ui/")
-	if rw.Code != http.StatusOK {
-		t.Fatalf("status %d", rw.Code)
+	if rw.Code != http.StatusFound {
+		t.Fatalf("status %d, want 302", rw.Code)
 	}
-	body := rw.Body.String()
-	assertContains(t, body, "npm-hosted")
-	assertContains(t, body, "helm-hosted")
-	assertContains(t, body, "forge") // brand in nav
-}
-
-func TestUIHome_ContentType(t *testing.T) {
-	h := newUIServer(t).Routes()
-	rw := uiGet(t, h, "/ui/")
-	if ct := rw.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
-		t.Errorf("expected text/html, got %q", ct)
+	if loc := rw.Header().Get("Location"); loc != "/ui/dashboard" {
+		t.Errorf("redirect target %q, want /ui/dashboard", loc)
 	}
-}
-
-func TestUIHome_FullPage(t *testing.T) {
-	h := newUIServer(t).Routes()
-	rw := uiGet(t, h, "/ui/")
-	body := rw.Body.String()
-	// Full page renders in the Foundry admin shell (sidebar nav).
-	assertContains(t, body, "<!DOCTYPE html>")
-	assertContains(t, body, "<nav")
-	assertContains(t, body, "sidebar-nav-item")
 }
 
 // ── /ui/repos/{name} ──────────────────────────────────────────────────────────
@@ -293,12 +275,16 @@ func TestUIAdminHome_FlashMessage(t *testing.T) {
 	assertContains(t, rw.Body.String(), "Created repository test")
 }
 
-func TestUIAdminHome_EditDeleteButtons(t *testing.T) {
+func TestUIAdminHome_RowActions(t *testing.T) {
+	// The canonical Repositories list offers explicit Browse + Configure +
+	// Delete actions per row (no ambiguous whole-row click).
 	h := newUIServer(t).Routes()
 	rw := uiGet(t, h, "/ui/admin/")
 	body := rw.Body.String()
-	assertContains(t, body, `/ui/admin/repos/npm-hosted/edit`)
-	assertContains(t, body, `hx-delete="/ui/admin/repos/npm-hosted"`)
+	assertContains(t, body, `href="/ui/browse/npm-hosted"`)           // Browse
+	assertContains(t, body, `/ui/admin/repos/npm-hosted/edit`)        // Configure
+	assertContains(t, body, `hx-delete="/ui/admin/repos/npm-hosted"`) // Delete
+	assertContains(t, body, "Artifacts")                              // storage columns merged in
 }
 
 // ── /ui/admin/repos/new ───────────────────────────────────────────────────────
@@ -498,7 +484,7 @@ func TestUIComponent_OK(t *testing.T) {
 	assertContains(t, body, "lodash")
 	assertContains(t, body, "4.17.21")
 	assertContains(t, body, "4.17.20")
-	assertContains(t, body, "npm-hosted") // breadcrumb
+	assertContains(t, body, "npm-hosted")              // breadcrumb
 	assertContains(t, body, "/repository/npm-hosted/") // registry URL
 }
 
@@ -541,7 +527,7 @@ func TestUIRepo_ComponentLinksPresent(t *testing.T) {
 
 func TestUI_CSSHasCacheBustParam(t *testing.T) {
 	h := newUIServer(t).Routes()
-	rw := uiGet(t, h, "/ui/")
+	rw := uiGet(t, h, "/ui/admin/")
 	body := rw.Body.String()
 	// style.css link must include a ?v= query param
 	if !strings.Contains(body, "style.css?v=") {
@@ -551,7 +537,7 @@ func TestUI_CSSHasCacheBustParam(t *testing.T) {
 
 func TestUI_CSSVersionConsistent(t *testing.T) {
 	h := newUIServer(t).Routes()
-	r1 := uiGet(t, h, "/ui/")
+	r1 := uiGet(t, h, "/ui/admin/")
 	r2 := uiGet(t, h, "/ui/search")
 	extractVer := func(body string) string {
 		i := strings.Index(body, "style.css?v=")
@@ -595,14 +581,6 @@ func TestUISearch_HtmxBoosted_ReturnsFullPage(t *testing.T) {
 	assertContains(t, body, "<!DOCTYPE html>")
 	assertContains(t, body, "<nav")
 	assertContains(t, body, "lodash")
-}
-
-func TestUIHome_RendersInAdminShell(t *testing.T) {
-	// Home (post-login landing) now uses the Foundry admin shell, with the
-	// Repositories nav item active — not the legacy base.html chrome.
-	h := newUIServer(t).Routes()
-	rw := uiGet(t, h, "/ui/")
-	assertContains(t, rw.Body.String(), "admin-sidebar")
 }
 
 func TestUIAdminHome_HasBreadcrumb(t *testing.T) {
@@ -873,7 +851,7 @@ func TestUITokens_Create_Success(t *testing.T) {
 	}
 	body := rw.Body.String()
 	assertContains(t, body, "Token created")
-	assertContains(t, body, "forge_") // secret prefix
+	assertContains(t, body, "forge_")   // secret prefix
 	assertContains(t, body, "ci-token") // appears in token list
 }
 

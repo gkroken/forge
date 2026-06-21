@@ -10,14 +10,12 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"forge/internal/auth"
 	"forge/internal/format"
-	"forge/internal/proxy"
 	"forge/internal/repo"
 )
 
@@ -150,7 +148,6 @@ func parseUITmpl(files ...string) *template.Template {
 }
 
 var (
-	tmplHome       = parseUITmpl("templates/admin_shell.html", "templates/home.html")
 	tmplBrowsePage = parseUITmpl("templates/admin_shell.html", "templates/browse_page.html")
 	tmplSearch     = parseUITmpl("templates/admin_shell.html", "templates/search.html")
 	tmplAdminRepos = parseUITmpl("templates/admin_shell.html", "templates/admin_repos.html")
@@ -184,23 +181,6 @@ type loginPage struct {
 	Next         string
 	OIDCEnabled  bool
 	UsersEnabled bool
-}
-
-type homePage struct {
-	Title     string
-	ActiveNav string
-	Repos     []repoRow
-	Sort      string // active sort column: "name"|"format"|"kind"|"count"
-	Dir       string // "asc"|"desc"
-}
-
-type repoRow struct {
-	Name          string
-	Format        string
-	Kind          string
-	ArtifactCount int    // blob count from BlobSizes.CountByRepo
-	SizeBytes     int64  // from BlobSizes.ByRepo
-	Health        string // "ok" | "down" | "" (non-proxy repos)
 }
 
 type browsePage struct {
@@ -243,7 +223,9 @@ func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case p == "/":
-		s.uiHome(w, r)
+		// The post-login landing is the Dashboard; the repository list lives at
+		// /ui/admin/ (single canonical Repositories page).
+		http.Redirect(w, r, "/ui/dashboard", http.StatusFound)
 	case p == "/dashboard":
 		s.uiDashboard(w, r)
 	case p == "/search":
@@ -290,57 +272,6 @@ func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── handlers ──────────────────────────────────────────────────────────────────
-
-func (s *Server) uiHome(w http.ResponseWriter, r *http.Request) {
-	bsizes := s.GetBlobSizes()
-	var rows []repoRow
-	for _, rp := range s.Repos.All() {
-		row := repoRow{
-			Name:          rp.Name,
-			Format:        rp.Format,
-			Kind:          string(rp.Kind),
-			ArtifactCount: bsizes.CountByRepo[rp.Name],
-			SizeBytes:     bsizes.ByRepo[rp.Name],
-		}
-		if rp.Kind == repo.Proxy && rp.Upstream != "" {
-			row.Health = proxy.HealthOf(rp.Upstream)
-		}
-		rows = append(rows, row)
-	}
-
-	sortCol := r.URL.Query().Get("sort")
-	sortDir := r.URL.Query().Get("dir")
-	if sortDir != "desc" {
-		sortDir = "asc"
-	}
-	if sortCol != "" {
-		sort.SliceStable(rows, func(i, j int) bool {
-			var less bool
-			switch sortCol {
-			case "format":
-				less = rows[i].Format < rows[j].Format
-			case "kind":
-				less = rows[i].Kind < rows[j].Kind
-			case "artifacts":
-				less = rows[i].ArtifactCount < rows[j].ArtifactCount
-			case "size":
-				less = rows[i].SizeBytes < rows[j].SizeBytes
-			default: // "name"
-				sortCol = "name"
-				less = rows[i].Name < rows[j].Name
-			}
-			if sortDir == "desc" {
-				return !less
-			}
-			return less
-		})
-	}
-
-	render(w, tmplHome, "admin_shell.html", homePage{
-		Title: "Repositories", ActiveNav: "repos", Repos: rows,
-		Sort: sortCol, Dir: sortDir,
-	})
-}
 
 func (s *Server) uiBrowsePage(w http.ResponseWriter, r *http.Request, selected string) {
 	if selected != "" {

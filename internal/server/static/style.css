@@ -808,6 +808,7 @@ td a:hover { text-decoration: underline; }
   border: 1px solid var(--border); border-radius: 8px;
   background: var(--bg); cursor: text; flex-shrink: 0;
 }
+.repo-subline { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 .topbar-search-icon { font-size: 17px; color: var(--text-muted); }
 .topbar-search-input {
   flex: 1; min-width: 0; border: none; background: transparent; outline: none;
