@@ -1,41 +1,31 @@
 {{define "content"}}
 <div class="admin-content">
 
-  <!-- KPI row -->
-  <div class="kpi-grid">
-    <div class="kpi-card">
-      <div class="kpi-icon-row"><span class="ms">timer</span><span class="kpi-label">Latency P50</span></div>
-      <div class="kpi-value">{{if .LatencyP50Ms}}{{.LatencyP50Ms}}<span class="kpi-unit">ms</span>{{else}}—{{end}}</div>
-      <div class="kpi-trend">
-        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
-        <span class="kpi-trend-sub">median response time</span>
+  <!-- metric readouts -->
+  <section class="instrument-panel">
+    <div class="inst-readouts">
+      <div class="inst-readout">
+        <div class="inst-label">Latency P50</div>
+        <div class="inst-value">{{if .LatencyP50Ms}}{{.LatencyP50Ms}}<span class="inst-value-unit">ms</span>{{else}}—{{end}}</div>
+        <div class="inst-unit">median response time</div>
+      </div>
+      <div class="inst-readout">
+        <div class="inst-label">Latency P95</div>
+        <div class="inst-value">{{if .LatencyP95Ms}}{{.LatencyP95Ms}}<span class="inst-value-unit">ms</span>{{else}}—{{end}}</div>
+        <div class="inst-unit">95th percentile</div>
+      </div>
+      <div class="inst-readout">
+        <div class="inst-label">Throughput</div>
+        <div class="inst-value">{{if .ThroughputRPS}}{{printf "%.1f" .ThroughputRPS}}<span class="inst-value-unit">req/s</span>{{else}}—{{end}}</div>
+        <div class="inst-unit">rolling 60s window</div>
+      </div>
+      <div class="inst-readout">
+        <div class="inst-label">Error rate</div>
+        <div class="inst-value">{{if .ErrorPct}}{{printf "%.2f" .ErrorPct}}<span class="inst-value-unit">%</span>{{else}}—{{end}}</div>
+        <div class="inst-unit">5xx responses</div>
       </div>
     </div>
-    <div class="kpi-card">
-      <div class="kpi-icon-row"><span class="ms">speed</span><span class="kpi-label">Latency P95</span></div>
-      <div class="kpi-value">{{if .LatencyP95Ms}}{{.LatencyP95Ms}}<span class="kpi-unit">ms</span>{{else}}—{{end}}</div>
-      <div class="kpi-trend">
-        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
-        <span class="kpi-trend-sub">95th percentile</span>
-      </div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-icon-row"><span class="ms">trending_up</span><span class="kpi-label">Throughput</span></div>
-      <div class="kpi-value">{{if .ThroughputRPS}}{{printf "%.1f" .ThroughputRPS}}<span class="kpi-unit">req/s</span>{{else}}—{{end}}</div>
-      <div class="kpi-trend">
-        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
-        <span class="kpi-trend-sub">rolling 60s window</span>
-      </div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-icon-row"><span class="ms">error_outline</span><span class="kpi-label">Error rate</span></div>
-      <div class="kpi-value">{{if .ErrorPct}}{{printf "%.2f" .ErrorPct}}<span class="kpi-unit">%</span>{{else}}—{{end}}</div>
-      <div class="kpi-trend">
-        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
-        <span class="kpi-trend-sub">5xx responses</span>
-      </div>
-    </div>
-  </div>
+  </section>
 
   <!-- mid row: request chart · status breakdown -->
   <div class="mid-grid-2">
@@ -78,9 +68,9 @@
         {{range .StatusBreakdown}}
         <div class="obs-legend-row">
           <span class="obs-swatch" style="background:{{.Color}};"></span>
-          <span style="font-family:ui-monospace,monospace;color:var(--text);font-weight:600;font-size:12.5px;">{{.Code}}</span>
+          <span class="mono" style="color:var(--text);font-weight:600;font-size:12.5px;">{{.Code}}</span>
           <span style="color:var(--text-muted);">{{.Label}}</span>
-          <span style="margin-left:auto;font-family:ui-monospace,monospace;color:var(--text-muted);">{{.PctStr}}</span>
+          <span class="mono" style="margin-left:auto;color:var(--text-muted);">{{.PctStr}}</span>
         </div>
         {{end}}
         {{if eq (len .StatusBreakdown) 0}}
