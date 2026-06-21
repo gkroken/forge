@@ -105,8 +105,8 @@
           </div>
 
           <!-- ── Proxy section ── -->
-          <fieldset id="g-proxy-section" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:1.1rem">
-            <legend style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px;padding:0 6px">Proxy cache</legend>
+          <fieldset id="g-proxy-section" class="rc-fieldset">
+            <legend class="rc-legend">Proxy cache</legend>
 
             <div class="form-row">
               <div class="form-group">
@@ -146,8 +146,8 @@
           </fieldset>
 
           <!-- ── HTTP & resilience ── -->
-          <fieldset id="g-http-section" style="border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:1.1rem">
-            <legend style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px;padding:0 6px">HTTP &amp; resilience</legend>
+          <fieldset id="g-http-section" class="rc-fieldset">
+            <legend class="rc-legend">HTTP &amp; resilience</legend>
 
             <div class="form-row">
               <div class="form-group">
@@ -185,8 +185,8 @@
           </div>
 
           <!-- ── Cleanup policy ── -->
-          <fieldset id="g-cleanup">
-            <legend>Cleanup policy <span class="form-hint-inline">(hosted only)</span></legend>
+          <fieldset id="g-cleanup" class="rc-fieldset">
+            <legend class="rc-legend">Cleanup policy <span class="form-hint-inline">(hosted only)</span></legend>
             <div class="form-group">
               <label for="f-cleanup-policy-name">Policy</label>
               {{if .PolicyNames}}
