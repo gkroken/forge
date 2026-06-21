@@ -551,12 +551,24 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			}
 		}
 
-		// Trigger a blob-size re-walk after any successful write to a repository.
+		// After a successful write to a repository: re-walk blob sizes, and if the
+		// repo opted into on-publish cleanup, fire a debounced run. Scoped to
+		// /repository/ (the four formats cleanup.Run implements); OCI /v2/ has no
+		// cleanup support yet. Notify returns immediately — cleanup never runs in
+		// the request path.
 		if isWriteMethod(r.Method) && status < 300 &&
-			strings.HasPrefix(r.URL.Path, "/repository/") && s.walkTrigger != nil {
-			select {
-			case s.walkTrigger <- struct{}{}:
-			default: // walk already queued; skip
+			strings.HasPrefix(r.URL.Path, "/repository/") {
+			if s.walkTrigger != nil {
+				select {
+				case s.walkTrigger <- struct{}{}:
+				default: // walk already queued; skip
+				}
+			}
+			if s.Scheduler != nil {
+				rest := strings.TrimPrefix(r.URL.Path, "/repository/")
+				if repoName, _, _ := strings.Cut(rest, "/"); repoName != "" {
+					s.Scheduler.Notify(repoName)
+				}
 			}
 		}
 
