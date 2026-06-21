@@ -206,8 +206,7 @@
               <span class="form-hint">Manage policies on the <a href="/ui/admin/cleanup-policies">Cleanup</a> page.</span>
             </div>
             <div class="form-group" style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
-              <button type="button" class="btn btn-sm"
-                      onclick="runCleanup('{{.Repo.Name}}', this)">Run cleanup now</button>
+              <button type="button" class="btn btn-sm btn-danger" id="btn-run-cleanup">Run cleanup now</button>
               <a href="/ui/admin/repos/{{.Repo.Name}}/cleanup" class="btn btn-sm">Dry-run &amp; history</a>
               <span id="cleanup-result" style="font-size:.85em"></span>
             </div>
@@ -238,16 +237,6 @@
         document.getElementById('g-cleanup').style.display       = k === 'hosted' ? '' : 'none';
       }
       syncKind();
-      function runCleanup(name, btn) {
-        btn.disabled = true;
-        var el = document.getElementById('cleanup-result');
-        el.textContent = 'Running…';
-        fetch('/api/v1/repos/' + name + '/cleanup', {method: 'POST'})
-          .then(function(r) { return r.json(); })
-          .then(function(d) { el.textContent = 'Done: ' + d.deleted + ' artifact(s) deleted, ' + (d.freed_bytes / 1048576).toFixed(2) + ' MB freed'; })
-          .catch(function(e) { el.textContent = 'Error: ' + e; })
-          .finally(function() { btn.disabled = false; });
-      }
       </script>
 
       {{else if eq .ActiveTab "content"}}

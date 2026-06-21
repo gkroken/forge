@@ -143,6 +143,29 @@
       });
     }
 
+    var runCleanupBtn = document.getElementById('btn-run-cleanup');
+    if (runCleanupBtn) {
+      runCleanupBtn.addEventListener('click', function () {
+        confirmModal(
+          'Run cleanup now',
+          'Apply the retention policy to "' + REPO + '" and permanently delete matching artifacts? This cannot be undone. Use Dry-run first to preview.',
+          function () {
+            runCleanupBtn.disabled = true;
+            var el = document.getElementById('cleanup-result');
+            if (el) el.textContent = 'Running…';
+            fetch('/api/v1/repos/' + encodeURIComponent(REPO) + '/cleanup', { method: 'POST' })
+              .then(function (r) { return r.json(); })
+              .then(function (d) {
+                if (el) el.textContent = 'Done: ' + d.deleted + ' artifact(s) deleted, ' + ((d.freed_bytes || 0) / 1048576).toFixed(2) + ' MB freed';
+                toast('Cleanup complete — ' + d.deleted + ' deleted', 'ok');
+              })
+              .catch(function (e) { if (el) el.textContent = 'Error: ' + e; toast('Cleanup failed', 'err'); })
+              .finally(function () { runCleanupBtn.disabled = false; });
+          }
+        );
+      });
+    }
+
     var reindexBtn = document.getElementById('btn-reindex');
     if (reindexBtn) {
       reindexBtn.addEventListener('click', function () {
