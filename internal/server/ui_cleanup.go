@@ -2,12 +2,14 @@ package server
 
 import (
 	"fmt"
+	"html/template"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"forge/internal/cleanup"
+	"forge/internal/repo"
 )
 
 // ── page types ────────────────────────────────────────────────────────────────
@@ -18,6 +20,7 @@ type cleanupPoliciesPage struct {
 	PolicyCount    int
 	ReclaimableGB  string // formatted from cleanup.Reclaimable; "—" when unknown
 	FreedLast30dGB string // formatted from cleanup.FreedLast30d
+	NextRun        string // next scheduled cleanup; "—" when none scheduled
 	Policies       []cleanupPolicyRow
 	SchedTasks     []schedTask
 }
@@ -37,7 +40,7 @@ type schedTask struct {
 	Name    string
 	Cron    string
 	Status  string
-	Color   string
+	Color   template.CSS // trusted CSS color token (e.g. var(--accent))
 	LastRun string
 }
 
@@ -87,31 +90,83 @@ func (s *Server) uiCleanupPolicies(w http.ResponseWriter, r *http.Request) {
 	freedLast30dGB := "—"
 	if s.Cleanup != nil {
 		if rb := cleanup.Reclaimable(s.Cleanup, s.Repos, s.Blob, s.Meta); rb >= 0 {
-			reclaimableGB = fmt.Sprintf("%.2f GB", float64(rb)/(1<<30))
+			reclaimableGB = humanBytes(rb)
 		}
 		if fb := cleanup.FreedLast30d(s.Meta, s.Repos); fb >= 0 {
-			freedLast30dGB = fmt.Sprintf("%.2f GB", float64(fb)/(1<<30))
+			freedLast30dGB = humanBytes(fb)
 		}
 	}
 
-	// Scheduled tasks — derive last-run of "Apply cleanup policies" from Scheduler.
-	lastCleanupRun := "—"
-	if s.Scheduler != nil {
-		runs := s.Scheduler.LastRuns()
-		var latest time.Time
-		for _, t := range runs {
-			if t.After(latest) {
-				latest = t
+	// Determine which hosted repos have a scheduled (interval > 0) policy, and
+	// look up each policy's interval — used for the scheduler status + next-run.
+	intervalByPolicy := map[string]time.Duration{}
+	if s.Cleanup != nil {
+		if policies, err := s.Cleanup.List(); err == nil {
+			for _, p := range policies {
+				intervalByPolicy[p.Name] = p.Interval
 			}
 		}
-		if !latest.IsZero() {
-			lastCleanupRun = latest.UTC().Format("2006-01-02 15:04")
+	}
+	type schedRepo struct {
+		name     string
+		interval time.Duration
+	}
+	var scheduled []schedRepo
+	for _, rp := range s.Repos.All() {
+		if rp.Kind != repo.Hosted || rp.CleanupPolicyName == "" {
+			continue
+		}
+		if iv := intervalByPolicy[rp.CleanupPolicyName]; iv > 0 {
+			scheduled = append(scheduled, schedRepo{name: rp.Name, interval: iv})
 		}
 	}
+
+	// Scheduled tasks — only "Apply cleanup policies" is a real background job
+	// (the Scheduler); report its actual status, cadence, and last run rather
+	// than inventing cron strings for jobs that don't exist.
+	lastCleanupRun := "—"
+	var latestRun time.Time
+	runs := map[string]time.Time{}
+	if s.Scheduler != nil {
+		runs = s.Scheduler.LastRuns()
+		for _, t := range runs {
+			if t.After(latestRun) {
+				latestRun = t
+			}
+		}
+		if !latestRun.IsZero() {
+			lastCleanupRun = latestRun.UTC().Format("2006-01-02 15:04")
+		}
+	}
+
+	// Next run = earliest (lastRun + interval) across scheduled repos. A repo the
+	// scheduler hasn't run yet is due on the next tick.
+	nextRun := "—"
+	schedStatus, cadence := "Idle", "No scheduled policies"
+	schedColor := template.CSS("var(--text-light)")
+	if s.Scheduler != nil && len(scheduled) > 0 {
+		schedStatus, schedColor = "Active", template.CSS("var(--accent)")
+		cadence = fmt.Sprintf("%d repo(s) · runs on each policy interval", len(scheduled))
+		now := time.Now()
+		var earliest time.Time
+		for _, sr := range scheduled {
+			next := now // never-run → due now
+			if last, ok := runs[sr.name]; ok {
+				next = last.Add(sr.interval)
+			}
+			if earliest.IsZero() || next.Before(earliest) {
+				earliest = next
+			}
+		}
+		if !earliest.After(now) {
+			nextRun = "Due now"
+		} else {
+			nextRun = earliest.UTC().Format("2006-01-02 15:04")
+		}
+	}
+
 	tasks := []schedTask{
-		{Icon: "delete_sweep", Name: "Blob store GC", Cron: "0 2 * * *", Status: "Scheduled", Color: "var(--accent)", LastRun: "—"},
-		{Icon: "manage_search", Name: "Rebuild search index", Cron: "0 */6 * * *", Status: "Scheduled", Color: "var(--accent)", LastRun: "—"},
-		{Icon: "auto_delete", Name: "Apply cleanup policies", Cron: "30 2 * * *", Status: "Scheduled", Color: "var(--accent)", LastRun: lastCleanupRun},
+		{Icon: "auto_delete", Name: "Apply cleanup policies", Cron: cadence, Status: schedStatus, Color: schedColor, LastRun: lastCleanupRun},
 	}
 
 	render(w, tmplCleanupPolicies, "admin_shell.html", cleanupPoliciesPage{
@@ -120,6 +175,7 @@ func (s *Server) uiCleanupPolicies(w http.ResponseWriter, r *http.Request) {
 		PolicyCount:    len(rows),
 		ReclaimableGB:  reclaimableGB,
 		FreedLast30dGB: freedLast30dGB,
+		NextRun:        nextRun,
 		Policies:       rows,
 		SchedTasks:     tasks,
 	})
@@ -371,4 +427,3 @@ func (s *Server) policyNames() []string {
 	}
 	return names
 }
-
