@@ -212,10 +212,11 @@ async function selectPkg(repo, pkg) {
   }
 }
 
-// browseBreadcrumb renders the location trail above the version list:
+// browseBreadcrumb renders the coordinate readout above the version list — the
+// trail that locates the artifact within the store:
 //   {repo} / {group} / {path} / {artifact}   (maven, component "group.path:artifact")
 //   {repo} / {name}                           (flat formats — npm/helm/cran/oci)
-// The final segment (the component itself) is emphasised.
+// The repo is the origin segment; the final segment (the component) is emphasised.
 function browseBreadcrumb(repo, name) {
   let segs;
   const colon = name.indexOf(':');
@@ -225,13 +226,16 @@ function browseBreadcrumb(repo, name) {
   } else {
     segs = [name];
   }
-  let h = '<div class="browse-breadcrumb"><span class="browse-bc-seg">' + esc(repo) + '</span>';
+  let path = '<span class="browse-bc-origin">' + esc(repo) + '</span>';
   segs.forEach((s, i) => {
-    h += '<span class="browse-bc-sep">/</span>';
+    path += '<span class="browse-bc-sep">/</span>';
     const cls = i === segs.length - 1 ? 'browse-bc-cur' : 'browse-bc-seg';
-    h += '<span class="' + cls + '">' + esc(s) + '</span>';
+    path += '<span class="' + cls + '">' + esc(s) + '</span>';
   });
-  return h + '</div>';
+  return '<div class="browse-coord">' +
+         '<div class="browse-coord-label">Location</div>' +
+         '<div class="browse-coord-path">' + path + '</div>' +
+         '</div>';
 }
 
 function renderVersions(d) {
@@ -291,7 +295,7 @@ function renderDetail(d) {
   h += '<div class="browse-detail-actions">';
   if (d.download_url) {
     h += '<a href="' + esc(d.download_url) + '" class="btn btn-sm btn-primary" style="flex:1;text-align:center;">↓ Download</a>';
-    h += '<button class="btn btn-sm btn-icon" id="copy-url-btn" title="Copy URL">⧉</button>';
+    h += '<button class="btn btn-sm btn-icon" id="copy-url-btn" title="Copy URL" aria-label="Copy URL"><span class="ms">content_copy</span></button>';
   }
   h += '</div>';
 

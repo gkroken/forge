@@ -902,6 +902,7 @@ td a:hover { text-decoration: underline; }
 .sidebar-section,
 .kpi-label, .stat-label,
 .panel-title, .inst-label,
+.browse-coord-label, .browse-detail-asset-label, .browse-cksum-label,
 h2,
 thead th {
   font-family: var(--font-mono);
@@ -909,7 +910,8 @@ thead th {
   letter-spacing: var(--track-eyebrow);
 }
 .sidebar-section { font-size: var(--fs-eyebrow); }
-.kpi-label, .stat-label, .panel-title, .inst-label { font-size: var(--fs-eyebrow); }
+.kpi-label, .stat-label, .panel-title, .inst-label,
+.browse-coord-label, .browse-detail-asset-label, .browse-cksum-label { font-size: var(--fs-eyebrow); }
 h2     { font-size: var(--fs-caption); }
 thead th { font-size: var(--fs-eyebrow); letter-spacing: .1em; }
 
@@ -1133,21 +1135,24 @@ thead th { font-size: var(--fs-eyebrow); letter-spacing: .1em; }
 .browse-pkg-name   { flex: 1; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .browse-pkg-ver    { font-size: 11px; font-family: 'IBM Plex Mono', monospace; color: var(--text-muted); flex-shrink: 0; }
 
-/* center pane version table */
-.browse-ver-title {
-  padding: 12px 16px; font-weight: 700; font-size: 13.5px;
-  border-bottom: 1px solid var(--border); background: var(--bg);
-  position: sticky; top: 0;
+/* center pane — coordinate readout + version table.
+   The readout is the screen's signature: a mono "address" that pins the
+   selected artifact within the store (origin repo / path / component). */
+.browse-coord {
+  padding: 10px 16px 12px; background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 1;
 }
-.browse-breadcrumb {
-  padding: 12px 16px; font-size: 13px;
-  border-bottom: 1px solid var(--border); background: var(--bg);
-  position: sticky; top: 0;
-  display: flex; align-items: center; gap: .35rem; flex-wrap: wrap;
+.browse-coord-label { margin-bottom: 6px; color: var(--text-muted); }
+.browse-coord-path {
+  display: flex; align-items: center; gap: .3rem; flex-wrap: wrap;
+  font-family: var(--font-mono); font-size: 13px;
+  letter-spacing: var(--track-tight); line-height: 1.5;
 }
+.browse-bc-origin { color: var(--accent); font-weight: 600; }
 .browse-bc-seg { color: var(--text-muted); }
 .browse-bc-sep { color: var(--text-light); }
-.browse-bc-cur { font-weight: 700; color: var(--text); }
+.browse-bc-cur { font-weight: 600; color: var(--text); }
 .browse-ver-tbl { width: 100%; border-collapse: collapse; }
 .browse-ver-tbl thead th {
   padding: 7px 14px; font-size: 11.5px; font-weight: 600;
@@ -1158,16 +1163,6 @@ thead th { font-size: var(--fs-eyebrow); letter-spacing: .1em; }
 .browse-ver-row td { padding: 9px 14px; font-size: 13px; }
 .browse-ver-row:hover  { background: var(--bg-hover); }
 .browse-ver-row.active { background: var(--accent-subtle); }
-
-/* right pane detail */
-.browse-detail      { padding: 16px; }
-.browse-detail-ver  { font-size: 15px; font-weight: 700; font-family: 'IBM Plex Mono', monospace; margin-bottom: 3px; word-break: break-all; }
-.browse-detail-pkg  { font-size: 12px; color: var(--text-muted); margin-bottom: 14px; }
-.browse-detail-actions { display: flex; gap: 7px; margin-bottom: 16px; flex-wrap: wrap; }
-
-.browse-meta    { display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; margin: 0; font-size: 12px; }
-.browse-meta dt { color: var(--text-muted); font-weight: 600; white-space: nowrap; }
-.browse-meta dd { margin: 0; word-break: break-all; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; }
 
 /* shared states */
 .browse-placeholder {
@@ -1292,16 +1287,21 @@ thead th { font-size: var(--fs-eyebrow); letter-spacing: .1em; }
 
 /* ── browse detail pane ──────────────────────────────────────────────────── */
 .browse-detail { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
-.browse-detail-asset-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--text-muted); }
+.browse-detail-asset-label { text-transform: uppercase; color: var(--text-muted); }
 .browse-detail-filename { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 13px; font-weight: 600; color: var(--text); word-break: break-all; }
 .browse-detail-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .browse-detail-actions .btn-primary { flex: 1; text-align: center; justify-content: center; }
 .browse-detail-actions .btn-icon { width: 34px; height: 34px; padding: 0; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 15px; }
+.browse-detail-actions .btn-icon .ms { font-size: 17px; }
 .browse-meta { display: grid; grid-template-columns: auto 1fr; column-gap: 16px; row-gap: 5px; margin: 0; }
 .browse-meta dt { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
-.browse-meta dd { font-size: 12.5px; color: var(--text); font-weight: 500; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browse-meta dd {
+  font-size: 12px; color: var(--text); margin: 0;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .browse-checksum { font-size: 11.5px; }
-.browse-cksum-label { font-size: 10.5px; font-weight: 700; letter-spacing: .3px; color: var(--text-muted); margin-bottom: 2px; }
+.browse-cksum-label { text-transform: uppercase; color: var(--text-muted); margin-bottom: 3px; }
 .browse-cksum-val { font-family: 'IBM Plex Mono', ui-monospace, monospace; color: var(--text-muted); word-break: break-all; line-height: 1.5; }
 .browse-proxy-lookup { padding: 10px 12px; border-top: 1px solid var(--border); display: flex; gap: 6px; }
 .browse-proxy-lookup input { flex: 1; }
