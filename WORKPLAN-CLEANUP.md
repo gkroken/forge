@@ -110,17 +110,26 @@ annoyance; **on-publish it is an instant, dramatic failure** — fix first.
 
 ---
 
-## Phase 3 — Proxy cache eviction
+## Phase 3 — Proxy cache eviction ✅ DONE (live-verified, real npm proxy)
 
-Cleanup hard-skips `Kind != Hosted`, yet proxy caches are where unbounded growth
-actually hurts.
+Key finding: reusing `cleanup.Run` for proxies only works for maven (blob-walk);
+npm/cran proxy caching writes different namespaces (`:proxy`, blobs) than Run
+enumerates (`:npm:v`, `:cran`), so it would **silently no-op**. A cache is just
+blobs → evict by blob, not by format.
 
-- Allow assigning **time-based / last-downloaded** policies to proxy repos; `Run`
-  evicts cached blobs for those rules only (count-based stays hosted-only —
-  meaningless for a cache). Relax the `Hosted` guard in `Scheduler` / `Notify` /
-  `Reclaimable` for time-based policies.
-- Depends on Phase 2 for the download-age signal; do after.
-- **Commit:** `cleanup: time-based eviction for proxy caches`
+- ✅ `internal/cleanup/evict.go`: `EvictProxyCache` walks `b.List(repo/)` and
+  deletes blobs whose last download (stamped on every proxy GET-200 since Phase
+  2, incl. the cache-fill fetch) is older than `LastDownloadedDays`. Count/
+  snapshot rules don't apply to a cache. Blob-level — cached metadata re-fetches
+  on demand. `RunForRepo`/`DryRunForRepo` dispatch hosted→retention,
+  proxy→eviction; group→no-op.
+- ✅ Wired into `Scheduler.RunDue` + `runOne`, `Reclaimable`, the per-repo run,
+  and `handleRunPolicy` (guards relaxed `Hosted`→`!Group`). `Notify` stays
+  hosted-only (proxies have no publishes). Form lists proxy repos tagged "cache".
+- ✅ Tests: `TestEvictProxyCache`, `TestRunForRepo_Dispatch`, scheduler
+  proxy/group tests updated.
+- **Commit:** `61eab46`. **Verified live:** GET via `npm-proxy` cached + stamped
+  two tarballs; `cache-30` evicted the 45-day-old one, kept the warm one.
 
 ---
 
@@ -138,7 +147,5 @@ Update memory with the shipped behaviour.
 
 ## Sequencing
 
-**Done:** Phases **0 + 1 + 2** (semver sort, on-publish trigger, download
-tracking) — all live-verified.
-**Remaining:** Phase **3** (proxy cache eviction) — depends on Phase 2's
-download-age signal; confirm scope before starting.
+**Done:** Phases **0 + 1 + 2 + 3** — all live-verified. The cleanup roadmap in
+this file is complete.
