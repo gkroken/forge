@@ -551,6 +551,18 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			}
 		}
 
+		// Record per-artifact download time for last-downloaded retention. Async
+		// + throttled so it adds no request latency. Only when cleanup is
+		// configured (the sole consumer). The blob key is the path after the
+		// /repository/ prefix ("{repo}/{sub}").
+		if s.Cleanup != nil && r.Method == http.MethodGet && status == http.StatusOK &&
+			strings.HasPrefix(r.URL.Path, "/repository/") {
+			blobKey := strings.TrimPrefix(r.URL.Path, "/repository/")
+			if blobKey != "" && !strings.HasSuffix(blobKey, "/") {
+				go cleanup.RecordDownload(s.Meta, blobKey)
+			}
+		}
+
 		// After a successful write to a repository: re-walk blob sizes, and if the
 		// repo opted into on-publish cleanup, fire a debounced run. Scoped to
 		// /repository/ (the four formats cleanup.Run implements); OCI /v2/ has no
