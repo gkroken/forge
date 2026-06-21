@@ -41,7 +41,11 @@
 {{define "search-results"}}
 {{if .Query}}
   {{if .Results}}
-  <p class="search-meta">{{len .Results}} result{{if ne (len .Results) 1}}s{{end}} for "{{.Query}}"</p>
+  <div class="search-readout">
+    <span class="search-readout-label">Results</span>
+    <span class="search-readout-count">{{len .Results}}</span>
+    <span class="search-readout-q">for <b>{{.Query}}</b>{{if .Format}} · {{.Format}}{{end}}{{if .Repo}} · {{.Repo}}{{end}}</span>
+  </div>
   <div class="table-wrap">
     <table>
       <thead>

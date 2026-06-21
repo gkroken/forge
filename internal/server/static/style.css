@@ -553,7 +553,16 @@ td a:hover { text-decoration: underline; }
 .htmx-request.htmx-indicator { display: inline; }
 
 /* ── search results ───────────────────────────────────────────────────── */
-.search-meta { font-size: 12px; color: var(--text-muted); margin-bottom: .75rem; }
+/* search result readout — the query's measurement, in the instrument voice:
+   a small RESULTS eyebrow, an emphasized tabular-mono count, the echoed query. */
+.search-readout { display: flex; align-items: baseline; gap: 9px; margin-bottom: .8rem; }
+.search-readout-label { text-transform: uppercase; color: var(--text-muted); }
+.search-readout-count {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: 18px; font-weight: 600; color: var(--text); letter-spacing: var(--track-tight);
+}
+.search-readout-q { font-family: var(--font-mono); font-size: 12.5px; color: var(--text-muted); }
+.search-readout-q b { color: var(--text); font-weight: 600; }
 
 /* ── component detail ────────────────────────────────────────────────── */
 .component-detail { display: flex; flex-direction: column; gap: 2rem; }
@@ -912,7 +921,7 @@ td a:hover { text-decoration: underline; }
 .kpi-label, .stat-label,
 .panel-title, .inst-label,
 .browse-coord-label, .browse-detail-asset-label, .browse-cksum-label,
-.rail-card-title, .rc-legend, .section-title,
+.rail-card-title, .rc-legend, .section-title, .search-readout-label,
 h2,
 thead th {
   font-family: var(--font-mono);
@@ -922,7 +931,7 @@ thead th {
 .sidebar-section { font-size: var(--fs-eyebrow); }
 .kpi-label, .stat-label, .panel-title, .inst-label,
 .browse-coord-label, .browse-detail-asset-label, .browse-cksum-label,
-.rail-card-title, .rc-legend, .section-title { font-size: var(--fs-eyebrow); }
+.rail-card-title, .rc-legend, .section-title, .search-readout-label { font-size: var(--fs-eyebrow); }
 h2     { font-size: var(--fs-caption); }
 thead th { font-size: var(--fs-eyebrow); letter-spacing: .1em; }
 
