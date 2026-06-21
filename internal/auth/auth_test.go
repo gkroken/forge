@@ -505,6 +505,55 @@ func TestTokenStore_Count(t *testing.T) {
 	}
 }
 
+// TestRequireAdmin_AcceptsSessionCookie guards the fix where the admin UI's
+// own fetch/htmx calls (Access + Activity tabs, cache-stats, role delete…)
+// hit Bearer-guarded API routes carrying only the HttpOnly forge_token
+// session cookie. RequireAdmin must honour that cookie, not just the header.
+func TestRequireAdmin_AcceptsSessionCookie(t *testing.T) {
+	store := newStore(t)
+	enforcer := auth.NewEnforcer(store, repo.NewManager())
+
+	_, adminSecret, _ := store.Create("admin", []auth.Grant{{Repo: "*", Role: auth.RoleAdmin}}, nil)
+	_, readSecret, _ := store.Create("reader", []auth.Grant{{Repo: "*", Role: auth.RoleRead}}, nil)
+
+	cases := []struct {
+		name string
+		set  func(r *http.Request)
+		want int // 0 = RequireAdmin returns true (no error written)
+	}{
+		{"admin via Bearer header", func(r *http.Request) {
+			r.Header.Set("Authorization", "Bearer "+adminSecret)
+		}, 0},
+		{"admin via session cookie", func(r *http.Request) {
+			r.AddCookie(&http.Cookie{Name: auth.UISessionCookie, Value: adminSecret})
+		}, 0},
+		{"no credentials", func(r *http.Request) {}, http.StatusUnauthorized},
+		{"bad cookie value", func(r *http.Request) {
+			r.AddCookie(&http.Cookie{Name: auth.UISessionCookie, Value: "forge_" + nHex(64)})
+		}, http.StatusUnauthorized},
+		{"non-admin cookie", func(r *http.Request) {
+			r.AddCookie(&http.Cookie{Name: auth.UISessionCookie, Value: readSecret})
+		}, http.StatusForbidden},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := httptest.NewRequest("GET", "/api/v1/repos/x/access", nil)
+			c.set(r)
+			w := httptest.NewRecorder()
+			ok := enforcer.RequireAdmin(w, r)
+			if c.want == 0 {
+				if !ok || w.Code != http.StatusOK {
+					t.Fatalf("expected pass, got ok=%v code=%d", ok, w.Code)
+				}
+			} else {
+				if ok || w.Code != c.want {
+					t.Fatalf("expected fail %d, got ok=%v code=%d", c.want, ok, w.Code)
+				}
+			}
+		})
+	}
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func isForgeToken(s string) bool {

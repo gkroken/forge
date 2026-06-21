@@ -121,6 +121,16 @@ func (e *Enforcer) RequireAdmin(w http.ResponseWriter, r *http.Request) bool {
 	}
 	secret := bearerToken(r)
 	if secret == "" {
+		// The admin UI's own fetch/htmx calls hit these API routes with only
+		// the HttpOnly forge_token session cookie (JS can't read it to set a
+		// Bearer header). The cookie is SameSite=Strict, so honouring it here
+		// is CSRF-safe. Unlike RequireAdminUI this still returns 401 rather
+		// than redirecting, which is what XHR/fetch callers expect.
+		if c, err := r.Cookie(UISessionCookie); err == nil {
+			secret = c.Value
+		}
+	}
+	if secret == "" {
 		http.Error(w, "authentication required", http.StatusUnauthorized)
 		return false
 	}
