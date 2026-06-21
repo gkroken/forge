@@ -129,25 +129,47 @@ func TestScheduler_LastRuns_Empty(t *testing.T) {
 	}
 }
 
-func TestScheduler_RunDue_SkipsProxyRepo(t *testing.T) {
+// Proxy repos are now processed by the scheduler (cache eviction), so a due
+// proxy repo with a scheduled policy advances lastRun.
+func TestScheduler_RunDue_ProcessesProxyRepo(t *testing.T) {
 	b, m := stores(t)
 	mgr := repo.NewManager()
 	pm := cleanup.NewPolicyManager(m)
-	if err := pm.Put(cleanup.NamedPolicy{Name: "keep-1", KeepVersions: 1, Interval: time.Hour}); err != nil {
+	if err := pm.Put(cleanup.NamedPolicy{Name: "cache-30", LastDownloadedDays: 30, Interval: time.Hour}); err != nil {
 		t.Fatal(err)
 	}
-	// Proxy repo with a policy name should be skipped.
 	if err := mgr.Add(repo.Repository{
 		Name: "r", Format: "cran", Kind: repo.Proxy,
-		CleanupPolicyName: "keep-1",
+		CleanupPolicyName: "cache-30",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
 	lastRun := map[string]time.Time{"r": now.Add(-2 * time.Hour)}
 	cleanup.NewScheduler(mgr, pm, b, m).RunDue(now, lastRun)
-	// lastRun should NOT be updated since proxy repos are skipped.
-	if lastRun["r"].Equal(now) {
-		t.Fatal("lastRun was updated for a proxy repo — should have been skipped")
+	if !lastRun["r"].Equal(now) {
+		t.Fatal("lastRun should be updated — proxy repos are now scheduled for cache eviction")
+	}
+}
+
+// Group repos own no storage and are always skipped.
+func TestScheduler_RunDue_SkipsGroupRepo(t *testing.T) {
+	b, m := stores(t)
+	mgr := repo.NewManager()
+	pm := cleanup.NewPolicyManager(m)
+	if err := pm.Put(cleanup.NamedPolicy{Name: "cache-30", LastDownloadedDays: 30, Interval: time.Hour}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Add(repo.Repository{
+		Name: "g", Format: "maven", Kind: repo.Group, Members: []string{"x"},
+		CleanupPolicyName: "cache-30",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	lastRun := map[string]time.Time{"g": now.Add(-2 * time.Hour)}
+	cleanup.NewScheduler(mgr, pm, b, m).RunDue(now, lastRun)
+	if lastRun["g"].Equal(now) {
+		t.Fatal("lastRun was updated for a group repo — should have been skipped")
 	}
 }

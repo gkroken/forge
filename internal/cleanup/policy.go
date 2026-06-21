@@ -119,14 +119,14 @@ func (pm *PolicyManager) Delete(name string) error {
 func Reclaimable(pm *PolicyManager, repos *repo.Manager, b blob.Store, m meta.Store) int64 {
 	var total int64
 	for _, r := range repos.All() {
-		if r.CleanupPolicyName == "" || r.Kind != repo.Hosted {
+		if r.CleanupPolicyName == "" || r.Kind == repo.Group {
 			continue
 		}
 		np, ok, err := pm.Get(r.CleanupPolicyName)
 		if err != nil || !ok {
 			continue
 		}
-		result, err := DryRun(r.Name, r.Format, np.ToCleanupPolicy(), b, m)
+		result, err := DryRunForRepo(r, np.ToCleanupPolicy(), b, m)
 		if err != nil {
 			continue
 		}

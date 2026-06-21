@@ -82,7 +82,9 @@ func (s *Scheduler) LastRuns() map[string]time.Time {
 // lastRun is updated in-place. Exported for testing.
 func (s *Scheduler) RunDue(now time.Time, lastRun map[string]time.Time) {
 	for _, r := range s.repos.All() {
-		if r.CleanupPolicyName == "" || r.Kind != repo.Hosted {
+		// Hosted repos get version retention; proxy repos get cache eviction.
+		// Group repos own no storage.
+		if r.CleanupPolicyName == "" || r.Kind == repo.Group {
 			continue
 		}
 		np, ok, err := s.policies.Get(r.CleanupPolicyName)
@@ -129,7 +131,7 @@ func (s *Scheduler) Notify(repoName string) bool {
 // trigger labels the log line ("scheduled" / "on-publish").
 func (s *Scheduler) runOne(r repo.Repository, np NamedPolicy, ts time.Time, trigger string) {
 	start := time.Now()
-	result, err := Run(r.Name, r.Format, np.ToCleanupPolicy(), s.blob, s.meta)
+	result, err := RunForRepo(r, np.ToCleanupPolicy(), s.blob, s.meta)
 	if err != nil {
 		slog.Error("cleanup: "+trigger+" run failed", "repo", r.Name, "err", err)
 		return

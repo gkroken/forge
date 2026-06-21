@@ -375,7 +375,7 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request, name stri
 	w.Header().Set("Content-Type", "application/json")
 	start := time.Now()
 	if r.URL.Query().Get("dry") == "true" {
-		result, err := cleanup.DryRun(rp.Name, rp.Format, p, s.Blob, s.Meta)
+		result, err := cleanup.DryRunForRepo(rp, p, s.Blob, s.Meta)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -398,7 +398,7 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request, name stri
 		json.NewEncoder(w).Encode(result)
 		return
 	}
-	result, err := cleanup.Run(rp.Name, rp.Format, p, s.Blob, s.Meta)
+	result, err := cleanup.RunForRepo(rp, p, s.Blob, s.Meta)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -480,8 +480,9 @@ type policyRunRepoResult struct {
 	FreedBytes int64  `json:"freed_bytes"`
 }
 
-// handleRunPolicy runs a named policy against every hosted repo it is applied
-// to. POST /api/v1/cleanup-policies/{name}/run?dry=true|false.
+// handleRunPolicy runs a named policy against every repo it is applied to —
+// version retention for hosted repos, cache eviction for proxy repos.
+// POST /api/v1/cleanup-policies/{name}/run?dry=true|false.
 func (s *Server) handleRunPolicy(w http.ResponseWriter, r *http.Request, name string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -501,12 +502,12 @@ func (s *Server) handleRunPolicy(w http.ResponseWriter, r *http.Request, name st
 	out := policyRunResult{Policy: name, DryRun: dry, Repos: []policyRunRepoResult{}}
 
 	for _, rp := range s.Repos.All() {
-		if rp.Kind != repo.Hosted || rp.CleanupPolicyName != name {
+		if rp.Kind == repo.Group || rp.CleanupPolicyName != name {
 			continue
 		}
 		start := time.Now()
 		if dry {
-			dr, derr := cleanup.DryRun(rp.Name, rp.Format, p, s.Blob, s.Meta)
+			dr, derr := cleanup.DryRunForRepo(rp, p, s.Blob, s.Meta)
 			if derr != nil {
 				continue
 			}
@@ -523,7 +524,7 @@ func (s *Server) handleRunPolicy(w http.ResponseWriter, r *http.Request, name st
 			})
 			continue
 		}
-		res, rerr := cleanup.Run(rp.Name, rp.Format, p, s.Blob, s.Meta)
+		res, rerr := cleanup.RunForRepo(rp, p, s.Blob, s.Meta)
 		if rerr != nil {
 			continue
 		}

@@ -116,7 +116,7 @@ func (s *Server) uiCleanupPolicies(w http.ResponseWriter, r *http.Request) {
 	}
 	var scheduled []schedRepo
 	for _, rp := range s.Repos.All() {
-		if rp.Kind != repo.Hosted || rp.CleanupPolicyName == "" {
+		if rp.Kind == repo.Group || rp.CleanupPolicyName == "" {
 			continue
 		}
 		if iv := intervalByPolicy[rp.CleanupPolicyName]; iv > 0 {
@@ -231,23 +231,25 @@ type cleanupPolicyFormPage struct {
 	Repos       []policyRepoOption // hosted repos this policy can be applied to
 }
 
-// policyRepoOption is one selectable hosted repository on the policy form.
+// policyRepoOption is one selectable repository on the policy form.
 type policyRepoOption struct {
 	Name        string
 	Format      string
+	IsProxy     bool   // proxy repo → cache eviction (last-downloaded only)
 	Checked     bool   // currently assigned to THIS policy
 	OtherPolicy string // assigned to a different policy (surfaced, not blocked)
 }
 
-// policyRepoOptions lists hosted repos and marks which are assigned to
-// policyName (Checked) or to some other policy (OtherPolicy).
+// policyRepoOptions lists hosted + proxy repos and marks which are assigned to
+// policyName (Checked) or to some other policy (OtherPolicy). Hosted repos get
+// version retention; proxy repos get last-downloaded cache eviction.
 func (s *Server) policyRepoOptions(policyName string) []policyRepoOption {
 	var opts []policyRepoOption
 	for _, rp := range s.Repos.All() {
-		if rp.Kind != repo.Hosted {
+		if rp.Kind == repo.Group {
 			continue
 		}
-		opt := policyRepoOption{Name: rp.Name, Format: rp.Format}
+		opt := policyRepoOption{Name: rp.Name, Format: rp.Format, IsProxy: rp.Kind == repo.Proxy}
 		if policyName != "" && rp.CleanupPolicyName == policyName {
 			opt.Checked = true
 		} else if rp.CleanupPolicyName != "" {
@@ -308,7 +310,7 @@ func (s *Server) applyPolicyToRepos(r *http.Request, policyName string) {
 		selected[n] = true
 	}
 	for _, rp := range s.Repos.All() {
-		if rp.Kind != repo.Hosted {
+		if rp.Kind == repo.Group {
 			continue
 		}
 		switch {
