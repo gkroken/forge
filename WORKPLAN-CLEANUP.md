@@ -91,20 +91,22 @@ annoyance; **on-publish it is an instant, dramatic failure** — fix first.
 
 ---
 
-## Phase 2 — `lastDownloadedDays` → download tracking
+## Phase 2 — `lastDownloadedDays` → download tracking ✅ DONE (live-verified)
 
-The field exists but is dropped in `ToCleanupPolicy`; only a Prometheus per-repo
-counter exists, no per-artifact timestamp. (Original intent — see the now-deleted
-`WORKPLAN-UI.md` §W3a — was always to back it with download-time tracking.)
-
-- **2a.** Persist per-artifact `downloadedAt` in `meta.Store` (new namespace, key
-  = repo+path). Write from the middleware's existing GET-200 artifact branch;
-  throttle (only update if stale by >1h) so hot downloads don't hammer meta.
-- **2b.** Thread a download-time lookup into `Run`/`DryRun`; a version becomes a
-  candidate when last-download (fallback: publish time) is older than N days. Stop
-  dropping the field in `ToCleanupPolicy`.
-- **2c.** Drop the "coming soon" / no-op labels in `policy.go` and `ui_cleanup.go`.
-- **Commits:** tracking store → cleanup wiring → UI label. *(Largest phase.)*
+- **2a.** ✅ `internal/cleanup/downloads.go`: `download-times` meta namespace
+  (key = blob key), `RecordDownload` (throttled to 1 write/hr per key) +
+  `lastDownloadTime`. Server middleware stamps it async on every artifact GET-200
+  when cleanup is configured.
+- **2b.** ✅ `LastDownloadedDays` added to `repo.CleanupPolicy` + set in
+  `ToCleanupPolicy`. A `downloadedAt` accessor threaded into
+  `applyPolicies`/`applyPoliciesTagged` and every format caller (incl.
+  `runMaven`'s custom loop and `dryRunMaven`, now given `meta`). Effective time =
+  last download, falling back to upload time; neither known → skipped. Also fixed
+  the lexicographic-sort straggler in `dryRunMaven`'s path (Phase 0).
+- **2c.** ✅ Form hint updated (was "coming soon").
+- **Commits:** `2f201f6` (store + middleware) · `272cbe9` (rule) · `fd4aaad` (label).
+- **Verified live:** GET of `app-2.0.0.jar` wrote a stamp; `dl-30` (lastDownloaded
+  30d) pruned a version with a 40-day-old stamp, kept the just-downloaded one.
 
 ---
 
@@ -136,6 +138,7 @@ Update memory with the shipped behaviour.
 
 ## Sequencing
 
-**This session:** Phases **0 + 1** (the on-publish ask, done safely).
-**Confirm scope before starting:** Phases **2 + 3** are genuinely new capability;
-in the plan as agreed, executed separately.
+**Done:** Phases **0 + 1 + 2** (semver sort, on-publish trigger, download
+tracking) — all live-verified.
+**Remaining:** Phase **3** (proxy cache eviction) — depends on Phase 2's
+download-age signal; confirm scope before starting.
