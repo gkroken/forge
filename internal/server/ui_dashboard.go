@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"forge/internal/blob"
 	"forge/internal/obs"
@@ -17,6 +18,11 @@ import (
 type dashboardPage struct {
 	Title           string
 	ActiveNav       string
+	Mode            string // EVAL MODE / AUTH ENABLED — instrument-panel header
+	Uptime          string // HH:MM:SS since process start
+	StatusLabel     string // OPERATIONAL / DEGRADED
+	StatusDot       string // dot-ok / dot-warn
+	StatusOK        bool
 	RepoCount       int
 	FormatCount     int
 	TotalRequests   int64
@@ -237,9 +243,37 @@ func (s *Server) uiDashboard(w http.ResponseWriter, r *http.Request) {
 		rps = s.Metrics.Throughput.RatePerSec()
 	}
 
+	// ── instrument-panel header: mode, uptime, derived health status ──
+	mode := "EVAL MODE"
+	if s.Auth != nil {
+		mode = "AUTH ENABLED"
+	}
+	uptime := "—"
+	if !s.started.IsZero() {
+		uptime = humanUptime(time.Since(s.started))
+	}
+	healthRows := buildHealthRows(s, latP50)
+	statusOK := true
+	for _, hr := range healthRows {
+		switch hr.DotClass {
+		case "", "dot-ok", "dot-neutral":
+		default:
+			statusOK = false
+		}
+	}
+	statusLabel, statusDot := "OPERATIONAL", "dot-ok"
+	if !statusOK {
+		statusLabel, statusDot = "DEGRADED", "dot-warn"
+	}
+
 	render(w, tmplDashboard, "admin_shell.html", dashboardPage{
 		Title:           "Dashboard",
 		ActiveNav:       "dashboard",
+		Mode:            mode,
+		Uptime:          uptime,
+		StatusLabel:     statusLabel,
+		StatusDot:       statusDot,
+		StatusOK:        statusOK,
 		RepoCount:       total,
 		FormatCount:     len(fmtCounts),
 		TotalRequests:   totalReqs,
@@ -248,7 +282,7 @@ func (s *Server) uiDashboard(w http.ResponseWriter, r *http.Request) {
 		ReqBars:         reqBars,
 		RecentActivity:  recentActivity,
 		BackgroundTasks: buildTaskRows(s),
-		HealthRows:      buildHealthRows(s, latP50),
+		HealthRows:      healthRows,
 		StoredGB:        storedGB,
 		LatencyP50Ms:    latP50,
 		LatencyP95Ms:    latP95,
@@ -589,6 +623,23 @@ func buildTaskRows(s *Server) []taskRow {
 }
 
 // buildHealthRows assembles the service health panel from live system state.
+// humanUptime renders a process uptime as the instrument-panel readout
+// "HH:MM:SS", prefixed with whole days once it crosses 24h.
+func humanUptime(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	total := int(d.Seconds())
+	days := total / 86400
+	h := (total % 86400) / 3600
+	m := (total % 3600) / 60
+	sec := total % 60
+	if days > 0 {
+		return fmt.Sprintf("%dd %02d:%02d:%02d", days, h, m, sec)
+	}
+	return fmt.Sprintf("%02d:%02d:%02d", h, m, sec)
+}
+
 func buildHealthRows(s *Server, latP50Ms int64) []healthRow {
 	var rows []healthRow
 

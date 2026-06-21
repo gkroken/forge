@@ -1,53 +1,41 @@
 {{define "content"}}
 <div class="admin-content">
 
-  <!-- system overview header -->
-  <div style="display:flex;align-items:flex-end;gap:12px;">
-    <div>
-      <div style="font-size:19px;font-weight:700;color:var(--text);letter-spacing:-.2px;">System overview</div>
-      <div style="font-size:12.5px;color:var(--text-muted);margin-top:2px;">forge · uptime unknown · eval mode</div>
+  <!-- instrument panel: the machine reporting its own state -->
+  <section class="instrument-panel">
+    <div class="inst-header">
+      <span class="inst-name">FORGE</span>
+      <span class="inst-sep">·</span>
+      <span>{{.Mode}}</span>
+      <span class="inst-sep">·</span>
+      <span>UP {{.Uptime}}</span>
+      <span class="inst-status {{if .StatusOK}}is-ok{{else}}is-warn{{end}}">
+        <span class="status-dot {{.StatusDot}}"></span>{{.StatusLabel}}
+      </span>
     </div>
-    <div style="margin-left:auto;display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:8px;background:var(--alert-ok-bg);border:1px solid var(--alert-ok-border);">
-      <span class="status-dot dot-ok"></span>
-      <span style="font-size:12.5px;font-weight:600;color:var(--alert-ok-fg);">All systems operational</span>
-    </div>
-  </div>
-
-  <!-- KPI row -->
-  <div class="kpi-grid">
-    <div class="kpi-card">
-      <div class="kpi-icon-row"><span class="ms">inventory_2</span><span class="kpi-label">Repositories</span></div>
-      <div class="kpi-value">{{.RepoCount}}<span class="kpi-unit">repos</span></div>
-      <div class="kpi-trend">
-        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
-        <span class="kpi-trend-sub">{{.FormatCount}} format{{if ne .FormatCount 1}}s{{end}} in use</span>
+    <div class="inst-readouts">
+      <div class="inst-readout">
+        <div class="inst-label">Repositories</div>
+        <div class="inst-value">{{.RepoCount}}</div>
+        <div class="inst-unit">{{.FormatCount}} format{{if ne .FormatCount 1}}s{{end}} in use</div>
+      </div>
+      <div class="inst-readout">
+        <div class="inst-label">Stored</div>
+        <div class="inst-value">{{if .StoredGB}}{{printf "%.2f" .StoredGB}}<span class="inst-value-unit">GB</span>{{else}}—{{end}}</div>
+        <div class="inst-unit">blob store usage</div>
+      </div>
+      <div class="inst-readout">
+        <div class="inst-label">Requests · 24h</div>
+        <div class="inst-value">{{if .TotalRequests}}{{.TotalRequests}}<span class="inst-value-unit">req</span>{{else}}—{{end}}</div>
+        <div class="inst-unit">all routes</div>
+      </div>
+      <div class="inst-readout">
+        <div class="inst-label">Cache hit</div>
+        <div class="inst-value">{{if .CacheHitPct}}{{printf "%.1f" .CacheHitPct}}<span class="inst-value-unit">%</span>{{else}}—{{end}}</div>
+        <div class="inst-unit">proxy repositories</div>
       </div>
     </div>
-    <div class="kpi-card">
-      <div class="kpi-icon-row"><span class="ms">storage</span><span class="kpi-label">Stored</span></div>
-      <div class="kpi-value">{{if .StoredGB}}{{printf "%.2f" .StoredGB}}{{else}}—{{end}}<span class="kpi-unit">GB</span></div>
-      <div class="kpi-trend">
-        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
-        <span class="kpi-trend-sub">blob store usage</span>
-      </div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-icon-row"><span class="ms">bar_chart</span><span class="kpi-label">Requests · 24h</span></div>
-      <div class="kpi-value">{{if .TotalRequests}}{{.TotalRequests}}<span class="kpi-unit">req</span>{{else}}—{{end}}</div>
-      <div class="kpi-trend">
-        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
-        <span class="kpi-trend-sub">all routes</span>
-      </div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-icon-row"><span class="ms">cached</span><span class="kpi-label">Cache hit rate</span></div>
-      <div class="kpi-value">{{if .CacheHitPct}}{{printf "%.1f" .CacheHitPct}}<span class="kpi-unit">%</span>{{else}}—{{end}}</div>
-      <div class="kpi-trend">
-        <span class="ms kpi-trend-icon" style="color:var(--text-light);">horizontal_rule</span>
-        <span class="kpi-trend-sub">proxy repositories</span>
-      </div>
-    </div>
-  </div>
+  </section>
 
   <!-- mid row: health · requests chart · storage by format -->
   <div class="mid-grid-3">

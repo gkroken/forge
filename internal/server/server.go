@@ -79,6 +79,8 @@ type Server struct {
 	client    *http.Client
 	oidcKey   []byte // HMAC key for signing OIDC state cookies; set by WithOIDC
 
+	started time.Time // process start; powers the dashboard uptime readout
+
 	blobMu      sync.RWMutex
 	blobSizes   BlobSizes
 	walkTrigger chan struct{} // non-blocking send kicks off an immediate re-walk
@@ -96,6 +98,7 @@ func New(m *repo.Manager, reg *format.Registry, b blob.Store, mt meta.Store, a a
 		Enforcer:  auth.NewEnforcer(a, m),
 		client:    &http.Client{Timeout: 30 * time.Second},
 		MaxUpload: defaultMaxUpload,
+		started:   time.Now(),
 	}
 }
 

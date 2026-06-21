@@ -901,7 +901,7 @@ td a:hover { text-decoration: underline; }
    Every figure aligns on tabular numerals so columns of data read as a gauge. */
 .sidebar-section,
 .kpi-label, .stat-label,
-.panel-title,
+.panel-title, .inst-label,
 h2,
 thead th {
   font-family: var(--font-mono);
@@ -909,12 +909,13 @@ thead th {
   letter-spacing: var(--track-eyebrow);
 }
 .sidebar-section { font-size: var(--fs-eyebrow); }
-.kpi-label, .stat-label, .panel-title { font-size: var(--fs-eyebrow); }
+.kpi-label, .stat-label, .panel-title, .inst-label { font-size: var(--fs-eyebrow); }
 h2     { font-size: var(--fs-caption); }
 thead th { font-size: var(--fs-eyebrow); letter-spacing: .1em; }
 
 /* tabular figures everywhere data lives, so numerals line up column-to-column */
 .kpi-value, .stat-value, .kpi-unit,
+.inst-value, .inst-header,
 .health-stat,
 .col-latest, .col-count, .col-date, .col-num,
 .fmt-mono, .sidebar-badge,
@@ -923,6 +924,47 @@ thead th { font-size: var(--fs-eyebrow); letter-spacing: .1em; }
 }
 .mono, .coord { font-family: var(--font-mono); }
 .coord { letter-spacing: var(--track-tight); }  /* group:artifact identity */
+
+/* ── dashboard instrument panel — the machine reporting its own state ─────────
+   One status header strip over a row of gauge readouts. The header speaks in
+   the mono "instrument-panel" voice; readouts are split by hairline dividers
+   so the row scans like a control surface, not four detached cards. */
+.instrument-panel {
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg); overflow: hidden;
+}
+.inst-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 18px; border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+  font-family: var(--font-mono); font-size: var(--fs-caption);
+  letter-spacing: var(--track-eyebrow); text-transform: uppercase;
+  color: var(--text-muted);
+}
+.inst-name { font-weight: 600; color: var(--text); letter-spacing: .16em; }
+.inst-sep  { color: var(--text-light); }
+.inst-status {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+  font-weight: 600;
+}
+.inst-status.is-ok   { color: var(--alert-ok-fg); }
+.inst-status.is-warn { color: var(--dot-warn); }
+.inst-readouts { display: grid; grid-template-columns: repeat(4, 1fr); }
+.inst-readout  { padding: 16px 18px; }
+.inst-readout + .inst-readout { border-left: 1px solid var(--border); }
+.inst-label { margin-bottom: 9px; color: var(--text-muted); }
+.inst-value {
+  display: flex; align-items: baseline; gap: 5px; line-height: 1;
+  font-family: var(--font-mono); font-size: var(--fs-display); font-weight: 600;
+  letter-spacing: var(--track-tight); color: var(--text);
+}
+.inst-value-unit { font-size: 13px; font-weight: 400; color: var(--text-muted); }
+.inst-unit { margin-top: 8px; font-size: 11.5px; color: var(--text-light); }
+@media (max-width: 760px) {
+  .inst-readouts { grid-template-columns: repeat(2, 1fr); }
+  .inst-readout:nth-child(odd)  { border-left: none; }
+  .inst-readout:nth-child(n+3)  { border-top: 1px solid var(--border); }
+}
 
 /* ── dashboard mid/bottom grids ─────────────────────────────────────────── */
 .mid-grid-3    { display: grid; grid-template-columns: 1.1fr 1.5fr 1fr; gap: 14px; min-height: 200px; }

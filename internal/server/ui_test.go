@@ -1124,7 +1124,8 @@ func TestUIDashboard_OK(t *testing.T) {
 	}
 	body := rw.Body.String()
 	assertContains(t, body, "Dashboard")
-	assertContains(t, body, "System overview")
+	assertContains(t, body, "instrument-panel")
+	assertContains(t, body, "OPERATIONAL")
 }
 
 func TestUIDashboard_SidebarNav(t *testing.T) {
