@@ -95,6 +95,34 @@ func TestCRAN_KeepVersions(t *testing.T) {
 	}
 }
 
+// TestCRAN_KeepVersions_SemverSort guards the lexicographic-sort regression:
+// keep-2 over {1.8.0, 1.9.0, 1.10.0} must keep the two numerically-highest
+// (1.9.0, 1.10.0) and delete 1.8.0. The old string sort kept 1.8.0+1.9.0 and
+// deleted 1.10.0 — the just-published version.
+func TestCRAN_KeepVersions_SemverSort(t *testing.T) {
+	b, m := stores(t)
+	seedCRAN(t, b, m, "cran", []cranRec{
+		{Package: "data.table", Version: "1.8.0"},
+		{Package: "data.table", Version: "1.9.0"},
+		{Package: "data.table", Version: "1.10.0"},
+	})
+	res, err := cleanup.Run("cran", "cran", &repo.CleanupPolicy{KeepVersions: 2}, b, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Deleted != 1 {
+		t.Fatalf("expected 1 deletion (keep 2 of 3), got %d", res.Deleted)
+	}
+	if _, exists, _ := b.Stat("cran/src/contrib/data.table_1.8.0.tar.gz"); exists {
+		t.Fatal("expected data.table_1.8.0 (lowest) to be deleted")
+	}
+	for _, v := range []string{"1.9.0", "1.10.0"} {
+		if _, exists, _ := b.Stat("cran/src/contrib/data.table_" + v + ".tar.gz"); !exists {
+			t.Fatalf("expected data.table_%s to be kept", v)
+		}
+	}
+}
+
 func TestCRAN_DeleteOlderThanDays(t *testing.T) {
 	b, m := stores(t)
 	old := time.Now().UTC().AddDate(0, 0, -60)
