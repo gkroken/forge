@@ -299,6 +299,7 @@ func (s *Server) uiBrowseVersions(w http.ResponseWriter, r *http.Request, repoNa
 				Version:     v.Version,
 				PublishedAt: v.PublishedAt,
 				SizeBytes:   v.SizeBytes,
+				DownloadURL: v.DownloadURL,
 			})
 		}
 	} else if b, ok := h.(format.Browsable); ok {
@@ -400,6 +401,7 @@ type browseVersionRow struct {
 	Version     string    `json:"version"`
 	PublishedAt time.Time `json:"published_at,omitempty"`
 	SizeBytes   int64     `json:"size_bytes,omitempty"`
+	DownloadURL string    `json:"download_url,omitempty"`
 }
 
 type browseDetailResponse struct {

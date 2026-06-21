@@ -215,6 +215,17 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// /api/v1/repos/{name}/component — delete one component+version (admin only).
+	// Format-agnostic: takes ?name= & ?version= so it works for every format,
+	// not just the npm tarball path.
+	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "component" {
+		if !s.Enforcer.RequireAdmin(w, r) {
+			return
+		}
+		s.handleDeleteComponent(w, r, repoName)
+		return
+	}
+
 	// /api/v1/repos/{name}/cache/{key...} — expire a single proxy cache entry.
 	if repoName, rest, found := strings.Cut(name, "/"); found && strings.HasPrefix(rest, "cache/") {
 		if !s.Enforcer.RequireAdmin(w, r) {
@@ -400,6 +411,33 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request, name stri
 		DurationMs: time.Since(start).Milliseconds(),
 	})
 	json.NewEncoder(w).Encode(result)
+}
+
+// handleDeleteComponent deletes one component+version from a hosted repo.
+// DELETE /api/v1/repos/{name}/component?name={component}&version={version}
+func (s *Server) handleDeleteComponent(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	rp, ok := s.Repos.Get(name)
+	if !ok {
+		http.Error(w, "repository not found: "+name, http.StatusNotFound)
+		return
+	}
+	component := r.URL.Query().Get("name")
+	version := r.URL.Query().Get("version")
+	if component == "" || version == "" {
+		http.Error(w, "name and version are required", http.StatusBadRequest)
+		return
+	}
+	res, err := cleanup.DeleteVersion(rp.Name, rp.Format, component, version, s.Blob, s.Meta)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(res)
 }
 
 // handleCleanupPolicies dispatches /api/v1/cleanup-policies and
@@ -637,8 +675,8 @@ func (s *Server) handleExpireCache(w http.ResponseWriter, r *http.Request, name,
 	}
 	cacheNS := name + ":proxy"
 	blobKey := name + "/" + cacheKey
-	s.Meta.Delete(cacheNS, blobKey)  //nolint:errcheck
-	s.Blob.Delete(blobKey)           //nolint:errcheck
+	s.Meta.Delete(cacheNS, blobKey) //nolint:errcheck
+	s.Blob.Delete(blobKey)          //nolint:errcheck
 	writeJSON(w, map[string]bool{"ok": true})
 }
 

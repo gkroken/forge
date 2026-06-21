@@ -266,9 +266,10 @@
     }
     versions.forEach(function (v) {
       var ver = (typeof v === 'object' && v.version) ? v.version : String(v);
+      var dl = (typeof v === 'object' && v.download_url) ? v.download_url : '';
+      var copyURL = dl || (window.location.origin + '/repository/' + encodeURIComponent(REPO) + '/' + encodeURIComponent(pkg));
       var row = document.createElement('div');
       row.className = 'content-ver-row';
-      var copyURL = window.location.origin + '/repository/' + encodeURIComponent(REPO) + '/' + encodeURIComponent(pkg) + '/' + encodeURIComponent(ver);
       row.innerHTML =
         '<span class="content-ver-tag">' + esc(ver) + '</span>' +
         '<span class="content-ver-actions">' +
@@ -371,7 +372,7 @@
       'Permanently delete ' + pkg + ' ' + ver + ' from "' + REPO + '"? This cannot be undone.',
       function () {
         btn.disabled = true;
-        fetch('/repository/' + encodeURIComponent(REPO) + '/' + encodeURIComponent(pkg) + '/-/' + encodeURIComponent(pkg) + '-' + encodeURIComponent(ver) + '.tgz', { method: 'DELETE' })
+        fetch('/api/v1/repos/' + encodeURIComponent(REPO) + '/component?name=' + encodeURIComponent(pkg) + '&version=' + encodeURIComponent(ver), { method: 'DELETE' })
           .then(function (r) {
             if (r.ok) {
               toast('Version deleted', 'ok');
