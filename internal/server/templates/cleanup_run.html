@@ -6,9 +6,9 @@
     Cleanup
   </div>
 
-  <!-- dry-run panel -->
+  <!-- run panel -->
   <div>
-    <div class="section-title">Dry run</div>
+    <div class="section-title">Run cleanup</div>
     <div style="margin-bottom:.75rem;font-size:.85em;color:var(--text-muted)">
       Policy:
       {{if .PolicyName}}
@@ -17,9 +17,12 @@
         <em>none assigned</em> — <a href="/ui/admin/repos/{{.RepoName}}/edit">assign a policy</a>
       {{end}}
     </div>
-    <button class="btn" id="dry-run-btn" onclick="runDry('{{.RepoName}}',this)">Run dry-run</button>
+    {{if .PolicyName}}
+    <button class="btn" id="dry-run-btn" onclick="runDry('{{.RepoName}}',this)">Dry run</button>
+    <button class="btn btn-danger" id="run-btn" onclick="runLive('{{.RepoName}}',this)">Run cleanup</button>
     <span id="dry-run-status" style="margin-left:.75rem;font-size:.85em;color:var(--text-muted)"></span>
     <div id="dry-run-result" style="margin-top:1rem"></div>
+    {{end}}
   </div>
 
   <!-- history -->
@@ -94,6 +97,26 @@ function runDry(name, btn) {
     })
     .catch(function(e) { status.textContent = 'Error: ' + e; })
     .finally(function() { btn.disabled = false; });
+}
+function runLive(name, btn) {
+  if (!confirm('Permanently delete all artifacts matching this policy in "' + name + '"? This cannot be undone.')) return;
+  var dryBtn = document.getElementById('dry-run-btn');
+  btn.disabled = true; if (dryBtn) dryBtn.disabled = true;
+  var status = document.getElementById('dry-run-status');
+  var result = document.getElementById('dry-run-result');
+  status.textContent = 'Running…';
+  result.innerHTML = '';
+  fetch('/api/v1/repos/' + name + '/cleanup', {method: 'POST'})
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      status.textContent = 'Deleted ' + (d.deleted || 0) + ' · freed ' +
+        ((d.freed_bytes || 0) / 1048576).toFixed(2) + ' MB — refreshing…';
+      setTimeout(function() { location.reload(); }, 900);
+    })
+    .catch(function(e) {
+      status.textContent = 'Error: ' + e;
+      btn.disabled = false; if (dryBtn) dryBtn.disabled = false;
+    });
 }
 function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
