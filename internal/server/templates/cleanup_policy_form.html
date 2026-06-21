@@ -59,6 +59,14 @@
 
     <div class="form-group">
       <label class="checkbox-label">
+        <input type="checkbox" name="runOnPublish"{{if .Policy.RunOnPublish}} checked{{end}}>
+        Run on publish (also apply this policy when an artifact is published)
+      </label>
+      <span class="form-hint">Responsive cleanup in addition to the scheduled run. Best for count-based rules (keep last N, keep releases only).</span>
+    </div>
+
+    <div class="form-group">
+      <label class="checkbox-label">
         <input type="checkbox" name="keepReleasesOnly"{{if .Policy.KeepReleasesOnly}} checked{{end}}>
         Keep releases only (exclude snapshots and pre-releases)
       </label>

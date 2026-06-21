@@ -24,6 +24,7 @@ type NamedPolicy struct {
 	DeleteSnapshotsDays int           `json:"deleteSnapshotsDays,omitempty"`
 	DeleteOlderThanDays int           `json:"deleteOlderThanDays,omitempty"`
 	LastDownloadedDays  int           `json:"lastDownloadedDays,omitempty"` // no-op until download tracking lands
+	RunOnPublish        bool          `json:"runOnPublish,omitempty"`       // also run this policy when an artifact is published
 	Interval            time.Duration `json:"-"`
 }
 

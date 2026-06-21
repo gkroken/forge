@@ -203,6 +203,9 @@ func summarizeNamedPolicy(p cleanup.NamedPolicy) string {
 	if p.LastDownloadedDays > 0 {
 		parts = append(parts, fmt.Sprintf("Delete not downloaded in %d days", p.LastDownloadedDays))
 	}
+	if p.RunOnPublish {
+		parts = append(parts, "Runs on publish")
+	}
 	if len(parts) == 0 {
 		return "No rules"
 	}
@@ -333,6 +336,7 @@ func (s *Server) processCleanupPolicyForm(w http.ResponseWriter, r *http.Request
 	deleteSnapshotsDays, _ := strconv.Atoi(r.FormValue("deleteSnapshotsDays"))
 	lastDownloadedDays, _ := strconv.Atoi(r.FormValue("lastDownloadedDays"))
 	keepReleasesOnly := r.FormValue("keepReleasesOnly") == "on"
+	runOnPublish := r.FormValue("runOnPublish") == "on"
 
 	var interval time.Duration
 	if raw := strings.TrimSpace(r.FormValue("interval")); raw != "" {
@@ -351,6 +355,7 @@ func (s *Server) processCleanupPolicyForm(w http.ResponseWriter, r *http.Request
 		DeleteSnapshotsDays: deleteSnapshotsDays,
 		LastDownloadedDays:  lastDownloadedDays,
 		KeepReleasesOnly:    keepReleasesOnly,
+		RunOnPublish:        runOnPublish,
 		Interval:            interval,
 	}
 	if err := s.Cleanup.Put(policy); err != nil {
@@ -378,6 +383,7 @@ func (s *Server) reRenderPolicyForm(w http.ResponseWriter, r *http.Request, exis
 	policy.DeleteSnapshotsDays, _ = strconv.Atoi(r.FormValue("deleteSnapshotsDays"))
 	policy.LastDownloadedDays, _ = strconv.Atoi(r.FormValue("lastDownloadedDays"))
 	policy.KeepReleasesOnly = r.FormValue("keepReleasesOnly") == "on"
+	policy.RunOnPublish = r.FormValue("runOnPublish") == "on"
 
 	intervalStr := r.FormValue("interval")
 	if iv, err := time.ParseDuration(intervalStr); err == nil && iv > 0 {
