@@ -147,6 +147,25 @@ func runMaven(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store
 			arts = remaining
 		}
 
+		// Apply LastDownloadedDays: delete versions whose last download (or
+		// upload time when never downloaded) is older than the cutoff.
+		if p.LastDownloadedDays > 0 {
+			cutoff := time.Now().UTC().AddDate(0, 0, -p.LastDownloadedDays)
+			var remaining []artifact
+			for _, a := range arts {
+				eff := effectiveDownloadTime(
+					lastDownloadTime(m, a.keys...),
+					mavenSnapUploadTime(snapNS, a.version, a.keys, m),
+				)
+				if !eff.IsZero() && eff.Before(cutoff) {
+					toDelete = append(toDelete, a)
+				} else {
+					remaining = append(remaining, a)
+				}
+			}
+			arts = remaining
+		}
+
 		// Apply KeepVersions: sort remaining versions and drop oldest.
 		if p.KeepVersions > 0 && len(arts) > p.KeepVersions {
 			sorted := make([]artifact, len(arts))
@@ -225,6 +244,9 @@ func runCRAN(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store)
 		toDelete := applyPolicies(p, recs,
 			func(r cranRecord) string    { return r.Version },
 			func(r cranRecord) time.Time { return r.UploadedAt },
+			func(r cranRecord) time.Time {
+				return lastDownloadTime(m, repoName+"/src/contrib/"+r.Package+"_"+r.Version+".tar.gz")
+			},
 		)
 		for _, rec := range toDelete {
 			blobKey := repoName + "/src/contrib/" + rec.Package + "_" + rec.Version + ".tar.gz"
@@ -270,6 +292,7 @@ func runHelm(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store)
 		toDelete := applyPolicies(p, recs,
 			func(r helmRecord) string    { return r.Version },
 			func(r helmRecord) time.Time { return r.UploadedAt },
+			func(r helmRecord) time.Time { return lastDownloadTime(m, repoName+"/"+r.Filename) },
 		)
 		for _, rec := range toDelete {
 			blobKey := repoName + "/" + rec.Filename
@@ -317,6 +340,9 @@ func runNPM(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store) 
 		toDelete := applyPolicies(p, recs,
 			func(r npmVersionRecord) string    { return r.Version },
 			func(r npmVersionRecord) time.Time { return r.UploadedAt },
+			func(r npmVersionRecord) time.Time {
+				return lastDownloadTime(m, repoName+"/"+r.Package+"/-/"+r.Package+"-"+r.Version+".tgz")
+			},
 		)
 		for _, rec := range toDelete {
 			blobKey := repoName + "/" + rec.Package + "/-/" + rec.Package + "-" + rec.Version + ".tgz"
@@ -351,6 +377,7 @@ func applyPolicies[T any](
 	recs []T,
 	version func(T) string,
 	uploadedAt func(T) time.Time,
+	downloadedAt func(T) time.Time,
 ) []T {
 	var toDelete []T
 	kept := make([]T, 0, len(recs))
@@ -376,6 +403,13 @@ func applyPolicies[T any](
 		}
 		if !deleted && p.DeleteOlderThanDays > 0 && !ua.IsZero() {
 			if ua.Before(now.AddDate(0, 0, -p.DeleteOlderThanDays)) {
+				toDelete = append(toDelete, r)
+				deleted = true
+			}
+		}
+		if !deleted && p.LastDownloadedDays > 0 {
+			if eff := effectiveDownloadTime(downloadedAt(r), ua); !eff.IsZero() &&
+				eff.Before(now.AddDate(0, 0, -p.LastDownloadedDays)) {
 				toDelete = append(toDelete, r)
 				deleted = true
 			}

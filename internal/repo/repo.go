@@ -55,6 +55,11 @@ type CleanupPolicy struct {
 	// this field was introduced.
 	DeleteOlderThanDays int `json:"deleteOlderThanDays,omitempty"`
 
+	// LastDownloadedDays deletes artifacts whose most recent download (falling
+	// back to upload time when never downloaded) is more than N days ago.
+	// Artifacts with neither a download nor an upload timestamp are skipped.
+	LastDownloadedDays int `json:"lastDownloadedDays,omitempty"`
+
 	// Interval is how often the cleanup policy runs automatically. When set
 	// (e.g. "24h", "168h"), the background scheduler fires cleanup.Run on
 	// this cadence. Zero means manual-only (POST /api/v1/repos/{name}/cleanup).

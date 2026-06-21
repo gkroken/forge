@@ -36,6 +36,16 @@ func RecordDownload(m meta.Store, blobKey string) {
 	_ = m.PutJSON(downloadNS, blobKey, downloadRecord{DownloadedAt: time.Now().UTC()})
 }
 
+// effectiveDownloadTime returns the time the LastDownloadedDays rule ages
+// against: the last download time, or the upload time when the artifact was
+// never downloaded. Zero when neither is known (the rule then skips it).
+func effectiveDownloadTime(downloaded, uploaded time.Time) time.Time {
+	if !downloaded.IsZero() {
+		return downloaded
+	}
+	return uploaded
+}
+
 // lastDownloadTime returns the most recent recorded download time across
 // blobKeys, or the zero time if none were ever downloaded.
 func lastDownloadTime(m meta.Store, blobKeys ...string) time.Time {

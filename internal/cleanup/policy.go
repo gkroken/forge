@@ -23,7 +23,7 @@ type NamedPolicy struct {
 	KeepReleasesOnly    bool          `json:"keepReleasesOnly,omitempty"`
 	DeleteSnapshotsDays int           `json:"deleteSnapshotsDays,omitempty"`
 	DeleteOlderThanDays int           `json:"deleteOlderThanDays,omitempty"`
-	LastDownloadedDays  int           `json:"lastDownloadedDays,omitempty"` // no-op until download tracking lands
+	LastDownloadedDays  int           `json:"lastDownloadedDays,omitempty"` // delete artifacts not downloaded in N days
 	RunOnPublish        bool          `json:"runOnPublish,omitempty"`       // also run this policy when an artifact is published
 	Interval            time.Duration `json:"-"`
 }
@@ -59,13 +59,14 @@ func (p *NamedPolicy) UnmarshalJSON(data []byte) error {
 }
 
 // ToCleanupPolicy converts a NamedPolicy to the repo.CleanupPolicy type used by
-// Run and DryRun. LastDownloadedDays is omitted until download tracking lands.
+// Run and DryRun.
 func (p NamedPolicy) ToCleanupPolicy() *repo.CleanupPolicy {
 	return &repo.CleanupPolicy{
 		KeepVersions:        p.KeepVersions,
 		KeepReleasesOnly:    p.KeepReleasesOnly,
 		DeleteSnapshotsDays: p.DeleteSnapshotsDays,
 		DeleteOlderThanDays: p.DeleteOlderThanDays,
+		LastDownloadedDays:  p.LastDownloadedDays,
 		Interval:            p.Interval,
 	}
 }

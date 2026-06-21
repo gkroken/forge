@@ -37,7 +37,7 @@ func DryRun(repoName, format string, p *repo.CleanupPolicy, b blob.Store, m meta
 	case "npm":
 		return dryRunNPM(repoName, p, b, m)
 	case "maven":
-		return dryRunMaven(repoName, p, b)
+		return dryRunMaven(repoName, p, b, m)
 	}
 	return DryRunResult{Candidates: []Candidate{}}, nil
 }
@@ -55,6 +55,7 @@ func applyPoliciesTagged[T any](
 	recs []T,
 	version func(T) string,
 	uploadedAt func(T) time.Time,
+	downloadedAt func(T) time.Time,
 ) []tagged[T] {
 	var toDelete []tagged[T]
 	kept := make([]T, 0, len(recs))
@@ -82,6 +83,13 @@ func applyPoliciesTagged[T any](
 				deleted = true
 			}
 		}
+		if !deleted && p.LastDownloadedDays > 0 {
+			if eff := effectiveDownloadTime(downloadedAt(r), ua); !eff.IsZero() &&
+				eff.Before(now.AddDate(0, 0, -p.LastDownloadedDays)) {
+				toDelete = append(toDelete, tagged[T]{r, "last_downloaded_days"})
+				deleted = true
+			}
+		}
 		if !deleted {
 			kept = append(kept, r)
 		}
@@ -91,7 +99,7 @@ func applyPoliciesTagged[T any](
 		sorted := make([]T, len(kept))
 		copy(sorted, kept)
 		for i := 1; i < len(sorted); i++ {
-			for j := i; j > 0 && version(sorted[j]) < version(sorted[j-1]); j-- {
+			for j := i; j > 0 && compareVersions(version(sorted[j]), version(sorted[j-1])) < 0; j-- {
 				sorted[j], sorted[j-1] = sorted[j-1], sorted[j]
 			}
 		}
@@ -141,6 +149,9 @@ func dryRunCRAN(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Sto
 		for _, t := range applyPoliciesTagged(p, recs,
 			func(r cranRecord) string    { return r.Version },
 			func(r cranRecord) time.Time { return r.UploadedAt },
+			func(r cranRecord) time.Time {
+				return lastDownloadTime(m, repoName+"/src/contrib/"+r.Package+"_"+r.Version+".tar.gz")
+			},
 		) {
 			blobKey := repoName + "/src/contrib/" + t.rec.Package + "_" + t.rec.Version + ".tar.gz"
 			result.Candidates = append(result.Candidates, Candidate{
@@ -178,6 +189,7 @@ func dryRunHelm(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Sto
 		for _, t := range applyPoliciesTagged(p, recs,
 			func(r helmRecord) string    { return r.Version },
 			func(r helmRecord) time.Time { return r.UploadedAt },
+			func(r helmRecord) time.Time { return lastDownloadTime(m, repoName+"/"+r.Filename) },
 		) {
 			blobKey := repoName + "/" + t.rec.Filename
 			result.Candidates = append(result.Candidates, Candidate{
@@ -215,6 +227,9 @@ func dryRunNPM(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Stor
 		for _, t := range applyPoliciesTagged(p, recs,
 			func(r npmVersionRecord) string    { return r.Version },
 			func(r npmVersionRecord) time.Time { return r.UploadedAt },
+			func(r npmVersionRecord) time.Time {
+				return lastDownloadTime(m, repoName+"/"+r.Package+"/-/"+r.Package+"-"+r.Version+".tgz")
+			},
 		) {
 			blobKey := repoName + "/" + t.rec.Package + "/-/" + t.rec.Package + "-" + t.rec.Version + ".tgz"
 			result.Candidates = append(result.Candidates, Candidate{
@@ -231,7 +246,7 @@ func dryRunNPM(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Stor
 
 // ── Maven ─────────────────────────────────────────────────────────────────────
 
-func dryRunMaven(repoName string, p *repo.CleanupPolicy, b blob.Store) (DryRunResult, error) {
+func dryRunMaven(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (DryRunResult, error) {
 	keys, err := b.List(repoName + "/")
 	if err != nil {
 		return DryRunResult{}, err
@@ -276,6 +291,7 @@ func dryRunMaven(repoName string, p *repo.CleanupPolicy, b blob.Store) (DryRunRe
 		for _, t := range applyPoliciesTagged(p, arts,
 			func(a mavenArtifact) string    { return a.version },
 			func(a mavenArtifact) time.Time { return zero },
+			func(a mavenArtifact) time.Time { return lastDownloadTime(m, a.blobKeys...) },
 		) {
 			var size int64
 			for _, k := range t.rec.blobKeys {
