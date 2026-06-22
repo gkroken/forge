@@ -309,6 +309,42 @@ kind cluster install + conformance smoke, timed quickstart gate (< 10 min).
 
 ---
 
+## Vulnerability scanning & download policy
+
+forge scans stored and proxied **npm** and **Maven** artifacts against
+[OSV.dev](https://osv.dev) and surfaces findings on the Browse detail pane, the
+per-repo Security column, the dashboard tile, and the **Security → Findings**
+admin page. Other formats are labelled "not scanned" rather than shown a
+misleading green (CRAN has no credible advisory source; OCI/Helm are tracked
+separately).
+
+A **download policy** can then warn on — or block — vulnerable downloads.
+Configure it under **Security → Policies**:
+
+- A **global default** plus reusable **named policies** (e.g. "strict"), each
+  with an enforcement mode (Off / Warn / Block), a severity **threshold**, a
+  **fail-open** switch for never-scanned artifacts, and audited **suppressions**
+  (silence a specific CVE/GHSA with a reason; who and when are recorded).
+- Each repository's **Security tab** assigns a named policy or inherits the
+  global default. Resolution is _named policy → global default → Off_. Policies
+  are admin-set: enforcement is a security boundary, so consumers can't
+  self-downgrade Block to Warn. Use **Preview impact** to see the blast radius
+  (how many component@versions a policy would block) before enforcing.
+
+Enforcement gates the artifact download itself (jar/tarball — never metadata or
+checksums): **Block** returns `403` with an advisory link; **Warn** serves the
+artifact but adds an `X-Forge-Vulnerabilities` response header. Both are audited
+and emit a `policy.violation` webhook; blocks increment
+`forge_downloads_blocked_total`.
+
+> **Honest caveat — Warn is forge-side only.** A warning shows in the UI, the
+> `X-Forge-Vulnerabilities` header, the audit log, and metrics, but package
+> managers don't render it — `npm install` and Maven won't surface it. Only
+> **Block** is visible to the client, as a failed download. Treat Warn as a
+> governance signal, not an install-time message.
+
+---
+
 ## Post-GA roadmap
 
 - **OIDC SSO** — shipped: login against Keycloak/Entra/Okta/ADFS with group→role

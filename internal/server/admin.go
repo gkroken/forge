@@ -181,6 +181,15 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// /api/v1/repos/{name}/security-policy/dry-run — blast-radius preview (admin only).
+	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "security-policy/dry-run" {
+		if !s.Enforcer.RequireAdmin(w, r) {
+			return
+		}
+		s.handleRepoSecurityDryRun(w, r, repoName)
+		return
+	}
+
 	// /api/v1/repos/{name}/security-policy — get resolved / assign named policy (admin only).
 	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "security-policy" {
 		if !s.Enforcer.RequireAdmin(w, r) {

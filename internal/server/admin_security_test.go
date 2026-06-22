@@ -101,3 +101,28 @@ func TestRepoSecurityPolicy_AssignResolves(t *testing.T) {
 		t.Fatalf("unknown policy: %d want 400", w.Code)
 	}
 }
+
+func TestSecurityDryRun_BlastRadius(t *testing.T) {
+	srv := newGateServer(t) // lodash@4.17.20 has a HIGH finding
+	// Add a second vulnerable version + a moderate one.
+	srv.Vuln.Put("npm-hosted", vuln.Finding{Component: "lodash", Version: "3.0.0", //nolint:errcheck
+		Advisories: []vuln.Advisory{{ID: "GHSA-y", Severity: vuln.SeverityCritical}}})
+	srv.Vuln.Put("npm-hosted", vuln.Finding{Component: "left-pad", Version: "1.0.0", //nolint:errcheck
+		Advisories: []vuln.Advisory{{ID: "GHSA-z", Severity: vuln.SeverityModerate}}})
+	srv.VulnPolicy.Put(vuln.NamedPolicy{Name: "strict", //nolint:errcheck
+		Policy: vuln.Policy{Mode: vuln.ModeBlock, Threshold: vuln.SeverityHigh}})
+
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/repos/npm-hosted/security-policy/dry-run",
+		bytes.NewReader([]byte(`{"policyName":"strict"}`)))
+	w := httptest.NewRecorder()
+	srv.handleRepoSecurityDryRun(w, r, "npm-hosted")
+	if w.Code != http.StatusOK {
+		t.Fatalf("dry-run: %d %s", w.Code, w.Body)
+	}
+	var d securityDryRun
+	json.Unmarshal(w.Body.Bytes(), &d)
+	// high + critical lodash versions block; moderate left-pad doesn't.
+	if d.BlockedVersions != 2 || d.BlockedComponents != 1 || d.TotalScanned != 3 {
+		t.Fatalf("blast radius = %+v, want blocked 2/1 of 3", d)
+	}
+}

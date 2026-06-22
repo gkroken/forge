@@ -225,3 +225,68 @@ func (s *Server) handleRepoSecurityPolicy(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// securityDryRun is the blast-radius preview: how the repo's existing findings
+// would be handled under a candidate policy, before it is enforced.
+type securityDryRun struct {
+	Mode              string `json:"mode"`
+	TotalScanned      int    `json:"totalScanned"`      // component@versions with a finding
+	BlockedVersions   int    `json:"blockedVersions"`   // would 403
+	BlockedComponents int    `json:"blockedComponents"` // distinct components among the above
+	WarnedVersions    int    `json:"warnedVersions"`    // would serve + flag
+	WarnedComponents  int    `json:"warnedComponents"`
+}
+
+// handleRepoSecurityDryRun previews a candidate policy against the repo's
+// persisted findings. Body: {"policyName":"..."} ("" = global default). It never
+// mutates anything — purely "what would assigning this do".
+// POST /api/v1/repos/{name}/security-policy/dry-run.
+func (s *Server) handleRepoSecurityDryRun(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.VulnPolicy == nil || s.Vuln == nil {
+		http.Error(w, "vulnerability enforcement not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if _, ok := s.Repos.Get(name); !ok {
+		http.Error(w, "repository not found: "+name, http.StatusNotFound)
+		return
+	}
+	var body struct {
+		PolicyName string `json:"policyName"`
+	}
+	json.NewDecoder(r.Body).Decode(&body) //nolint:errcheck — empty body = global default
+	pol, err := s.VulnPolicy.Resolve(body.PolicyName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	findings, err := s.Vuln.List(name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	out := securityDryRun{Mode: string(pol.Mode)}
+	if out.Mode == "" {
+		out.Mode = string(vuln.ModeOff)
+	}
+	blockedComps := map[string]struct{}{}
+	warnedComps := map[string]struct{}{}
+	for _, f := range findings {
+		out.TotalScanned++
+		switch action, _ := pol.Decision(f, true); action {
+		case vuln.ActionBlock:
+			out.BlockedVersions++
+			blockedComps[f.Component] = struct{}{}
+		case vuln.ActionWarn:
+			out.WarnedVersions++
+			warnedComps[f.Component] = struct{}{}
+		}
+	}
+	out.BlockedComponents = len(blockedComps)
+	out.WarnedComponents = len(warnedComps)
+	writeJSON(w, out)
+}
+

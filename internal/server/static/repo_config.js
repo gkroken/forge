@@ -435,10 +435,27 @@
       '</select></div>' +
       '<div style="display:flex;align-items:center;gap:12px;margin-top:6px">' +
       '<button class="btn btn-primary btn-sm" id="sec-save">Save</button>' +
+      (GATEABLE ? '<button class="btn btn-sm" id="sec-preview">Preview impact</button>' : '') +
       '<a href="/ui/admin/security-policies" class="btn btn-sm">Manage policies</a>' +
-      '</div>';
+      '</div>' +
+      '<div id="sec-preview-out" style="margin-top:12px;font-size:12.5px;color:var(--text-muted)"></div>';
 
     el.innerHTML = html;
+
+    var previewBtn = document.getElementById('sec-preview');
+    if (previewBtn) {
+      previewBtn.addEventListener('click', function () {
+        var name = document.getElementById('sec-assign').value;
+        var out = document.getElementById('sec-preview-out');
+        out.textContent = 'Checking…';
+        fetch('/api/v1/repos/' + encodeURIComponent(REPO) + '/security-policy/dry-run', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ policyName: name })
+        }).then(function (r) { return r.json(); }).then(function (d) {
+          out.innerHTML = renderBlastRadius(d);
+        }).catch(function () { out.textContent = 'Preview failed.'; });
+      });
+    }
 
     document.getElementById('sec-save').addEventListener('click', function () {
       var name = document.getElementById('sec-assign').value;
@@ -453,6 +470,30 @@
         renderSecurityTab(el, rs, named);
       }).catch(function () { toast('Could not update the policy', 'err'); });
     });
+  }
+
+  function renderBlastRadius(d) {
+    if (d.mode === 'off' || d.mode === '') {
+      return 'This policy is <strong>Off</strong> — no downloads would be gated. ' +
+        esc(d.totalScanned) + ' scanned version(s) in this repository.';
+    }
+    if (d.mode === 'block') {
+      if (!d.blockedVersions) {
+        return 'Nothing would be blocked. None of the ' + esc(d.totalScanned) +
+          ' scanned version(s) meet the threshold.';
+      }
+      return 'Switching to this policy would <strong style="color:var(--danger)">block ' +
+        esc(d.blockedVersions) + ' version(s)</strong> across ' + esc(d.blockedComponents) +
+        ' component(s), out of ' + esc(d.totalScanned) + ' scanned.';
+    }
+    // warn
+    if (!d.warnedVersions) {
+      return 'Nothing would be flagged. None of the ' + esc(d.totalScanned) +
+        ' scanned version(s) meet the threshold.';
+    }
+    return 'This policy would <strong>flag ' + esc(d.warnedVersions) + ' version(s)</strong> across ' +
+      esc(d.warnedComponents) + ' component(s) (served with a warning header), out of ' +
+      esc(d.totalScanned) + ' scanned.';
   }
 
   function kvRow(k, v) {

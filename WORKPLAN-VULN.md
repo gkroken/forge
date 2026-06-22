@@ -1,6 +1,9 @@
 # WORKPLAN — Vulnerability Scanning & Supply-Chain Warnings
 
-**Status:** **STARTED 2026-06-22 — Plan A, A-V0 in progress.** Scope locked to **npm + Maven**
+**Status:** **Plan A COMPLETE (A-V0 + A-V1 + A-V2) as of 2026-06-23.** Findings, surfacing,
+breadth/observability, and the warn/block download policy all shipped for **npm + Maven**.
+Next ecosystems: Plan B (OCI/Trivy sidecar), Plan C (Helm). Original scope note follows.
+Scope locked to **npm + Maven**
 (both OSV-scannable, pure stdlib). Scheduler-HA and webhooks (the prereqs in "Dependencies")
 both shipped — the A-V1 daily-re-scan blocker is already cleared. PyPI format is tracked
 separately as the architecture-extensibility test (and will be covered for free once it
@@ -196,7 +199,38 @@ repo-wide findings rollup and a shared badge — build that rollup once and reus
    Also fixed a pre-existing cleanup on-publish goroutine/TempDir race (Scheduler now tracks runs in a
    WaitGroup + `Wait()`). `go test ./...` + `go vet` + `bash test.sh` (20/20) green; binary rebuilt.
 
-### A-V2 — Policy & enforcement (warn vs block)
+### A-V2 — Policy & enforcement (warn vs block) — COMPLETE 2026-06-23
+Shipped across self-contained commits on `feature/foundry-remaining-tabs`:
+- **Policy spine** (`internal/vuln/policy.go`): `Policy{Mode Off|Warn|Block, Threshold,
+  FailOpen, Suppressions}` + a pure `Decision(finding, found)` evaluator (clean/unscored
+  findings always serve; suppression filters advisories by id/alias before worst-severity;
+  fail-open governs unscanned). `PolicyManager` mirrors `cleanup.PolicyManager`: named
+  policies in meta ns `vuln-policies`, a global default in `vuln-policy`, `Resolve(name)` =
+  named → default → Off.
+- **Path→coordinate seam** (`format.VulnGate`): reverses a download sub-path to the
+  `(component, version)` keys `vuln.Store` holds, `ok=false` for non-primary artifacts.
+  npm (tarball paths) + Maven (jar/war/aar/ear only, mirroring BrowseRepo's verIdx model);
+  helm/cran/oci never gated. (A sibling to `VulnCoordinates`, which can't carry path
+  reversal — noted divergence from the original "via the VulnCoordinates seam" wording.)
+- **Gate** in `handleRepo` (`vuln_gate.go`): GET/HEAD of a primary artifact, after auth,
+  before serve. Block = 403 + advisory link; Warn = serve + `X-Forge-Vulnerabilities`
+  header. Each decision: durable audit row (new `AuditEntry.Detail`, migration 006),
+  `policy.violation` webhook (new event type), `forge_downloads_blocked_total{repo}` (block
+  only). Fails open on every uncertainty; fail-closed-for-unscanned is the explicit
+  `Policy.FailOpen` choice.
+- **Admin API** (`admin_security.go`): named-policy CRUD + `_default` + repo assignment
+  (`/api/v1/repos/{name}/security-policy`), suppressions stamped with who/when on save.
+  Dry-run blast radius (`.../security-policy/dry-run`).
+- **UI**: `/ui/admin/security-policies` (global default + named policies, Findings|Policies
+  sub-nav) and a per-repo **Security tab** (resolved policy, assignment, suppressions view,
+  Preview impact, ungateable-format note). `.chip-warn` token added.
+- Tests: evaluator (threshold/suppression/fail-open/clean), both VulnGate mappings, gate
+  (403/serve/header/fail-open/off/ungateable/not-configured), API CRUD + assignment + dry
+  run. `go test ./...` + `go vet` + `bash test.sh` (20/20) green; binary rebuilt.
+- **Fast-follows (not in V2.0):** delegated owner (repo-scoped manage capability) and a
+  user exception/acknowledge flow (request → admin grants time-boxed override) — both
+  audit events. The `policy.violation` event is now live for the webhook spine.
+
 The full design from the design discussion:
 
 - **Policy object** (`Off | Warn | Block`, severity **threshold**, **fail-open** for unscanned, **suppressions** = CVE/GHSA IDs ignored *with reason + who/when*, audited).
