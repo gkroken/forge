@@ -2,6 +2,9 @@
   var root = document.getElementById('rc-root');
   var REPO = root ? root.dataset.repo : '';
   var KIND = root ? root.dataset.kind : '';
+  var FORMAT = root ? root.dataset.format : '';
+  // Formats with a credible OSV source — the only ones the download gate acts on.
+  var GATEABLE = FORMAT === 'npm' || FORMAT === 'maven';
 
   // ── HTML escape helpers ────────────────────────────────────────────────────
   function esc(s) {
@@ -359,6 +362,104 @@
     }).join('');
   }
 
+  // ── Security tab ───────────────────────────────────────────────────────────
+  function modePill(mode) {
+    var m = (mode || 'off').toLowerCase();
+    var cls = m === 'block' ? 'chip-err' : m === 'warn' ? 'chip-warn' : 'chip-neutral';
+    var label = m === 'block' ? 'Block' : m === 'warn' ? 'Warn' : 'Off';
+    return '<span class="chip ' + cls + '">' + label + '</span>';
+  }
+
+  function initSecurityTab() {
+    var el = document.getElementById('security-content');
+    if (!el) return;
+    Promise.all([
+      fetch('/api/v1/repos/' + encodeURIComponent(REPO) + '/security-policy').then(function (r) { return r.json(); }),
+      fetch('/api/v1/security-policies').then(function (r) { return r.json(); })
+    ]).then(function (res) {
+      renderSecurityTab(el, res[0], res[1] || []);
+    }).catch(function () {
+      el.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px">' +
+        'Vulnerability scanning isn’t configured, so policies have nothing to enforce.</div>';
+    });
+  }
+
+  function renderSecurityTab(el, resolved, named) {
+    var pol = (resolved && resolved.policy) || { mode: 'off' };
+    var source = (resolved && resolved.source) || 'off';
+    var assigned = source.indexOf('named:') === 0 ? source.slice(6) : '';
+
+    var sourceLabel = source === 'off' ? 'Scanning not configured'
+      : assigned ? 'Named policy “' + esc(assigned) + '”'
+      : 'Global default';
+
+    var html = '';
+
+    if (!GATEABLE) {
+      html += '<div class="alert" style="background:var(--bg-alt);border:1px solid var(--border);color:var(--text-muted);' +
+        'padding:10px 14px;border-radius:6px;margin-bottom:16px;font-size:12.5px">' +
+        esc(FORMAT) + ' artifacts have no vulnerability source, so this policy never gates downloads here. ' +
+        'Supported formats: npm, Maven.</div>';
+    }
+
+    // Effective policy summary.
+    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">' +
+      '<span class="rail-card-title" style="margin-bottom:0">Effective policy</span>' + modePill(pol.mode) + '</div>';
+    html += '<table class="rc-kv" style="margin:8px 0 18px;font-size:13px;border-collapse:collapse">' +
+      kvRow('Source', sourceLabel) +
+      (pol.mode && pol.mode !== 'off' ? (
+        kvRow('Acts at severity', '<span style="text-transform:capitalize">' + esc(pol.threshold || 'high') + '</span> &amp; up') +
+        kvRow('Unscanned artifacts', pol.failOpen ? 'Served (fail open)' : '<span style="color:var(--danger)">Blocked (fail closed)</span>')
+      ) : '') +
+      '</table>';
+
+    // Suppressions, if any.
+    var supp = pol.suppressions || [];
+    if (supp.length) {
+      html += '<div class="rail-card-title" style="margin-bottom:6px">Suppressed advisories</div>' +
+        '<ul style="margin:0 0 18px;padding-left:18px;font-size:12.5px;color:var(--text-muted)">' +
+        supp.map(function (s) {
+          return '<li><code>' + esc(s.id) + '</code>' + (s.reason ? ' — ' + esc(s.reason) : '') +
+            (s.by ? ' <span style="color:var(--text-light)">(' + esc(s.by) + ')</span>' : '') + '</li>';
+        }).join('') + '</ul>';
+    }
+
+    // Assignment form.
+    html += '<div class="rail-card-title" style="margin-bottom:6px">Policy for this repository</div>' +
+      '<div class="form-group" style="max-width:420px">' +
+      '<select id="sec-assign">' +
+      '<option value="">— inherit global default —</option>' +
+      named.map(function (p) {
+        return '<option value="' + escAttr(p.name) + '"' + (p.name === assigned ? ' selected' : '') + '>' + esc(p.name) + '</option>';
+      }).join('') +
+      '</select></div>' +
+      '<div style="display:flex;align-items:center;gap:12px;margin-top:6px">' +
+      '<button class="btn btn-primary btn-sm" id="sec-save">Save</button>' +
+      '<a href="/ui/admin/security-policies" class="btn btn-sm">Manage policies</a>' +
+      '</div>';
+
+    el.innerHTML = html;
+
+    document.getElementById('sec-save').addEventListener('click', function () {
+      var name = document.getElementById('sec-assign').value;
+      fetch('/api/v1/repos/' + encodeURIComponent(REPO) + '/security-policy', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ policyName: name })
+      }).then(function (r) {
+        if (!r.ok) throw new Error(r.status);
+        return r.json();
+      }).then(function (rs) {
+        toast('Security policy updated', 'ok');
+        renderSecurityTab(el, rs, named);
+      }).catch(function () { toast('Could not update the policy', 'err'); });
+    });
+  }
+
+  function kvRow(k, v) {
+    return '<tr><td style="padding:3px 16px 3px 0;color:var(--text-muted);white-space:nowrap">' + esc(k) +
+      '</td><td style="padding:3px 0;color:var(--text)">' + v + '</td></tr>';
+  }
+
   // ── Global helpers exposed to inline onclick handlers ──────────────────────
   window.rcCopyURL = function (url) {
     if (navigator.clipboard) {
@@ -404,6 +505,7 @@
     initActionButtons();
     initContentTab();
     initAccessTab();
+    initSecurityTab();
     initActivityTab();
   });
 })();

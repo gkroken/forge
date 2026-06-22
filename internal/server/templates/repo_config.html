@@ -1,6 +1,6 @@
 {{define "content"}}
 <!-- repo + kind injected for JS via data attributes -->
-<div id="rc-root" data-repo="{{.Repo.Name}}" data-kind="{{.KindStr}}">
+<div id="rc-root" data-repo="{{.Repo.Name}}" data-kind="{{.KindStr}}" data-format="{{.Repo.Format}}">
 
 <!-- sub-header with tabs -->
 <div class="admin-subheader">
@@ -28,6 +28,7 @@
     <a href="?tab=settings"  class="admin-tab{{if eq .ActiveTab "settings"}} active{{end}}">Settings</a>
     <a href="?tab=content"   class="admin-tab{{if eq .ActiveTab "content"}}  active{{end}}">Content</a>
     <a href="?tab=access"    class="admin-tab{{if eq .ActiveTab "access"}}   active{{end}}">Access</a>
+    <a href="?tab=security"  class="admin-tab{{if eq .ActiveTab "security"}} active{{end}}">Security</a>
     <a href="?tab=activity"  class="admin-tab{{if eq .ActiveTab "activity"}} active{{end}}">Activity</a>
   </div>
 </div>
@@ -252,6 +253,13 @@
       <div class="card" style="overflow:hidden">
         <div id="access-content">
           <div style="padding:30px;text-align:center;color:var(--text-muted);font-size:13px">Loading…</div>
+        </div>
+      </div>
+
+      {{else if eq .ActiveTab "security"}}
+      <div class="card" style="padding:20px 24px">
+        <div id="security-content">
+          <div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px">Loading…</div>
         </div>
       </div>
 
