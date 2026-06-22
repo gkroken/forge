@@ -162,9 +162,20 @@ Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses du
   (leader-gated, shared lastRun, `"__vuln__:"` namespace — reuses scheduler-HA, no new lock/table);
   `/ui/admin/security` keyset page (repo+min-severity filter, in-memory over sorted List). Also fixed
   a pre-existing cleanup on-publish goroutine/TempDir flake (Scheduler WaitGroup + Wait()).
-  **NEXT = A-V2 policy** (Off/Warn/Block + threshold + suppressions, per-repo Security tab + global
-  default, admin-set, dry-run, gate in handleRepo + the now-easy policy.violation webhook event), then
-  Plan B (OCI/Trivy sidecar), Plan C (Helm).
+  **A-V2 = DONE 2026-06-23** (commits C1→C5 on `feature/foundry-remaining-tabs`, NOT pushed):
+  `internal/vuln/policy.go` (Policy Off/Warn/Block + Threshold + FailOpen + audited Suppressions; pure
+  Decision() evaluator — clean/unscored always serve; PolicyManager mirrors cleanup: named in ns
+  `vuln-policies` + global default in `vuln-policy`; Resolve = named→default→Off). New `format.VulnGate`
+  seam reverses download path→(component,version) (npm tarball / Maven jar-war-aar-ear only; sibling to
+  VulnCoordinates which can't carry path-reversal). Gate in handleRepo (`vuln_gate.go`): GET/HEAD primary
+  artifact, after auth → Block 403+advisory / Warn serve+`X-Forge-Vulnerabilities` header; each decision →
+  durable audit row (new `AuditEntry.Detail`, migration 006), `policy.violation` webhook (new event),
+  `forge_downloads_blocked_total{repo}` (block). Fails open on uncertainty; fail-closed-unscanned is
+  explicit FailOpen. Admin API (`admin_security.go`): named CRUD + `_default` + repo assignment + dry-run
+  blast radius; suppressions stamped who/when. UI: `/ui/admin/security-policies` (global default + named,
+  Findings|Policies sub-nav) + per-repo Security tab (resolved view + assign + Preview impact + ungateable
+  note); `.chip-warn` token. LIVE-VERIFIED e2e: published lodash@4.17.20, live OSV scan → high finding →
+  Block GET=403, Warn GET=200+header. NEXT = Plan B (OCI/Trivy sidecar), then Plan C (Helm).
 - **Vuln scanning design (for reference)** — `WORKPLAN-VULN.md` — three
   separate phased plans: Plan A OSV (npm+Maven, V0 slice→V1 breadth+obs→V2 warn/block policy),
   Plan B OCI (Trivy/Grype sidecar, NOT in-process), Plan C Helm (config + referenced-image).
