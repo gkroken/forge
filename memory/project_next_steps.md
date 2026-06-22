@@ -113,17 +113,34 @@ Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses du
   (instrument-panel, Foundry, frontend-design skill) live-verified. On-publish `Notify`
   scoped same as cleanup (the four `/repository/` formats; OCI `/v2/` out). Events: only
   artifact.published for now (extensible via Event.Type). Live-verified end-to-end.
-- **WEBHOOKS HARDENING = NEXT TRACK (planned, not started, WORKPLAN-WEBHOOKS-HARDENING.md).**
-  Honest audit found 12 deferrals in the shipped webhooks; user wants EVERYTHING covered.
-  4 phases, acceptance = every gap closed w/ tests+live-verify: H1 event coverage (OCI/`/v2/`
-  publish #1, format-native deletes #2, manual cleanup.completed #3, artifact.cached #4); H2
-  delivery semantics (delivery-id #9, replay/timestamp-sig #12, Retry-After #10); H3 operability
-  (honest metrics #5, delivery history UI #6, dead-letter #7); H4 mgmt/security (edit/PUT #8,
-  SSRF guard #11). See workplan for grounded approaches.
-- **NEXT after hardening:** candidates surveyed — PyPI format (the final extensibility test),
-  vuln scanning (deferred, designed in WORKPLAN-VULN.md), artifact signing/SBOM, LDAP bind,
-  editable group-map UI, SAML, more webhook event types (OCI-publish, policy-violation
-  once vuln scanning lands).
+- **WEBHOOKS HARDENING = DONE 2026-06-22 (commits 78acb8a H1, 1775a6c H2, 5cdf87a H3,
+  0098eb2 H4, 506b663 docs; WORKPLAN-WEBHOOKS-HARDENING.md — all 12 gaps closed).**
+  Webhooks feature is now genuinely complete. What landed:
+  - **H1 event coverage:** OCI `/v2/` manifest PUT→artifact.published + DELETE→artifact.deleted
+    (`ociManifestRef` in server middleware; blob/upload PUTs excluded); format-native DELETEs to
+    `/repository/`→artifact.deleted (centralized in middleware; admin component-delete keeps its
+    own richer emit, no double-fire); `Engine.EmitCleanupCompleted` unifies cleanup.completed
+    across scheduler hook + manual handlers (trigger="manual"); new `artifact.cached` via
+    `proxy.Config.OnCacheFill` (singleflight-leader fires it) threaded through
+    `format.Context.OnCacheFill`→`Server.onProxyCacheFill`; npm packument (own meta path) emits too.
+  - **H2 delivery semantics:** per-delivery `NewID()` stable across retries (X-Forge-Delivery +
+    body `id`); `Sign(secret,ts,body)` now HMACs `"{ts}.{body}"` w/ X-Forge-Timestamp + `Verify()`
+    helper (replay+tamper); body envelope `schemaVersion:2`; `parseRetryAfter` (delta-secs/HTTP-date)
+    honoured on 429/503, clamped 1h.
+  - **H3 operability:** `forge_webhook_deliveries_total{result}` via `Engine.WithMetrics` callback
+    (no obs dep in webhook pkg); `webhook.History` (meta ns "webhook-deliveries", capped 50/sub,
+    mutex-guarded) records every attempt, terminal failure flagged `dropped` = dead-letter;
+    `GET /api/v1/webhooks/{id}/deliveries`; UI "Delivery trace" drawer (Foundry voice) w/ dead-letter
+    filter. NOTE: moved webhooks page JS to `/ui/static/webhooks.js` — the old inline JS violated
+    the page CSP (`script-src 'self'`), a latent bug; convention is external JS + data-attr delegation.
+  - **H4 mgmt/security:** `PUT /api/v1/webhooks/{id}` + `Store.Update` (blank secret preserves
+    stored; CreatedAt preserved) + UI edit mode; `webhook.SSRFGuard` blocks loopback/link-local/
+    private/ULA/unspecified/multicast/169.254.169.254 — `ValidateURL` at create/update AND a
+    `net.Dialer.Control` hook on the engine transport re-checks the dialed IP (defeats DNS
+    rebinding); `WEBHOOK_ALLOW_PRIVATE` escape hatch.
+- **NEXT (candidates surveyed):** PyPI format (the final extensibility test), vuln scanning
+  (deferred, designed in WORKPLAN-VULN.md), artifact signing/SBOM, LDAP bind, editable group-map
+  UI, SAML, policy-violation webhook events (once vuln scanning lands).
 - **Vuln scanning = DEFERRED, designed.** Full spike written: `WORKPLAN-VULN.md` — three
   separate phased plans: Plan A OSV (npm+Maven, V0 slice→V1 breadth+obs→V2 warn/block policy),
   Plan B OCI (Trivy/Grype sidecar, NOT in-process), Plan C Helm (config + referenced-image).
