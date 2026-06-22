@@ -85,6 +85,18 @@ secret out of the queue table.
 
 ## STATUS: W1 + W2 COMPLETE. Webhooks feature shipped.
 
+### Event types — DONE (commit af6eff0)
+Three emittable types (`AllEventTypes`), each filterable per subscription (`Events`
+slice; empty = all):
+- `artifact.published` — successful write to a repo (publish hook).
+- `artifact.deleted` — explicit component+version delete (`DELETE .../component`);
+  Data={version}. NOT per-version during cleanup (would be N events) — see below.
+- `cleanup.completed` — automated run removed >=1 artifact; Data={policy,deleted,
+  freedBytes,trigger}. Wired via plain-typed `cleanup.Scheduler.WithRunHook` (keeps
+  cleanup decoupled from webhooks; main.go translates the hook into a Dispatch).
+`Event` gained an optional `Data map[string]any`. UI: per-event checkboxes on the
+form, an Events column, "Event types" readout.
+
 ## Out of scope (deliberate)
-- Policy/audit events — V1 is artifact.published only (extensible via Event.Type).
 - OCI `/v2/` publish events — same boundary as cleanup (the four `/repository/` formats first).
+- Policy-violation events — depend on vuln scanning (deferred, WORKPLAN-VULN.md).

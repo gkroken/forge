@@ -75,6 +75,9 @@ Three classes of per-pod control state → three homes:
   filters; history browser `/ui/admin/audit` (filter form + "Older →" cursor links, linked from
   Observability) + extended `/api/v1/audit` (additive ts/id, X-Next-Cursor-* headers,
   repo_config.js unbroken). NO deferred items remain on the scaling track.
+  WEBHOOK EVENT TYPES (commit af6eff0): 3 emittable types — artifact.published,
+  artifact.deleted (explicit delete only), cleanup.completed (automated run summary via
+  `cleanup.Scheduler.WithRunHook`, keeps cleanup decoupled from webhooks). Per-sub Events filter.
 - **Circuit breakers** (`proxy.go` + `globalHealth`) → **stay per-pod** (correct, no work).
 Data plane already replica-ready (meta→PG, blob→S3, queue→PG auto on POSTGRES_DSN).
 Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses durable audit).
@@ -112,7 +115,8 @@ Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses du
   artifact.published for now (extensible via Event.Type). Live-verified end-to-end.
 - **NEXT (unstarted):** candidates surveyed — PyPI format (the final extensibility test),
   vuln scanning (deferred, designed in WORKPLAN-VULN.md), artifact signing/SBOM, LDAP bind,
-  editable group-map UI, SAML, more webhook event types (policy/audit/OCI-publish).
+  editable group-map UI, SAML, more webhook event types (OCI-publish, policy-violation
+  once vuln scanning lands).
 - **Vuln scanning = DEFERRED, designed.** Full spike written: `WORKPLAN-VULN.md` — three
   separate phased plans: Plan A OSV (npm+Maven, V0 slice→V1 breadth+obs→V2 warn/block policy),
   Plan B OCI (Trivy/Grype sidecar, NOT in-process), Plan C Helm (config + referenced-image).
