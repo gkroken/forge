@@ -204,6 +204,15 @@ func main() {
 
 	cleanupPolicies := cleanup.NewPolicyManager(metaStore)
 	cleanupScheduler := cleanup.NewScheduler(mgr, cleanupPolicies, blobStore, metaStore)
+	// In multi-replica (Postgres) mode, gate scheduled cleanup behind a Postgres
+	// advisory lock with shared lastRun so a due job fires exactly once across
+	// pods. Eval / single-node (FS) mode keeps the in-memory single-node behavior.
+	if pgMeta != nil {
+		cleanupScheduler.WithCoordinator(cleanup.NewPGCoordinator(pgMeta.DB()))
+		slog.Info("cleanup scheduler: postgres-coordinated (advisory lock)")
+	} else {
+		slog.Info("cleanup scheduler: in-memory (eval mode)")
+	}
 	cleanupScheduler.Start(workerCtx)
 
 	// Audit log: Postgres-backed when PG is active (durable + coherent across

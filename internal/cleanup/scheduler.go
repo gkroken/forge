@@ -25,8 +25,10 @@ type Scheduler struct {
 	blob     blob.Store
 	meta     meta.Store
 
-	mu      sync.RWMutex
-	lastRun map[string]time.Time // last scheduled run time per repo name
+	// coord gates scheduled runs and owns the shared lastRun state so a due job
+	// fires exactly once across N replicas. Defaults to a single-node
+	// localCoordinator; main.go swaps in a PGCoordinator when POSTGRES_DSN is set.
+	coord Coordinator
 
 	pubMu       sync.Mutex
 	lastPublish map[string]time.Time // last on-publish run time per repo name
@@ -36,10 +38,18 @@ type Scheduler struct {
 func NewScheduler(repos *repo.Manager, policies *PolicyManager, b blob.Store, m meta.Store) *Scheduler {
 	return &Scheduler{
 		repos: repos, policies: policies, blob: b, meta: m,
-		lastRun:     map[string]time.Time{},
+		coord:       newLocalCoordinator(),
 		lastPublish: map[string]time.Time{},
 		now:         time.Now,
 	}
+}
+
+// WithCoordinator replaces the default single-node coordinator. Call it with a
+// PGCoordinator in multi-replica (Postgres) mode so scheduled cleanup is
+// leader-gated and shares lastRun across pods. Returns s for chaining.
+func (s *Scheduler) WithCoordinator(c Coordinator) *Scheduler {
+	s.coord = c
+	return s
 }
 
 // Start runs the scheduler in a background goroutine. It checks every minute
@@ -49,7 +59,6 @@ func (s *Scheduler) Start(ctx context.Context) {
 }
 
 func (s *Scheduler) loop(ctx context.Context) {
-	local := map[string]time.Time{}
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
@@ -57,25 +66,31 @@ func (s *Scheduler) loop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
-			s.RunDue(now, local)
-			s.mu.Lock()
-			for k, v := range local {
-				s.lastRun[k] = v
-			}
-			s.mu.Unlock()
+			s.Tick(ctx, now)
 		}
+	}
+}
+
+// Tick performs one scheduled-cleanup cycle: under the coordinator's leader
+// lock, fire Run for every repo whose interval has elapsed, then persist the
+// updated lastRun. If another replica holds the lock this tick is a no-op.
+// Exported so tests can drive a tick without the minute ticker.
+func (s *Scheduler) Tick(ctx context.Context, now time.Time) {
+	if err := s.coord.RunExclusive(ctx, func(lastRun map[string]time.Time) {
+		s.RunDue(now, lastRun)
+	}); err != nil {
+		slog.Warn("cleanup: scheduler tick failed", "err", err)
 	}
 }
 
 // LastRuns returns a snapshot of the most recent scheduled run time per repo name.
 func (s *Scheduler) LastRuns() map[string]time.Time {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	cp := make(map[string]time.Time, len(s.lastRun))
-	for k, v := range s.lastRun {
-		cp[k] = v
+	runs, err := s.coord.Snapshot(context.Background())
+	if err != nil {
+		slog.Warn("cleanup: load last runs failed", "err", err)
+		return map[string]time.Time{}
 	}
-	return cp
+	return runs
 }
 
 // RunDue checks every repo and fires Run for those whose interval has elapsed.
