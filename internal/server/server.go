@@ -72,7 +72,7 @@ type Server struct {
 	Metrics     *obs.Metrics           // nil = no instrumentation (tests)
 	Cleanup     *cleanup.PolicyManager // nil = cleanup-policies API returns 503
 	Scheduler   *cleanup.Scheduler     // nil = no scheduled runs (eval / tests)
-	AuditLog    *obs.AuditLog          // nil = no in-memory audit log
+	AuditLog    obs.AuditSink          // nil = no audit log (eval: ring buffer; prod: Postgres)
 	Users       auth.UserStore         // nil = user management not configured
 	Roles       auth.RoleStore         // nil = custom roles not configured
 	MaxUpload   int64                  // per-request body limit; 0 = use defaultMaxUpload
@@ -150,7 +150,7 @@ func (s *Server) WithScheduler(sc *cleanup.Scheduler) *Server {
 	return s
 }
 
-func (s *Server) WithAuditLog(al *obs.AuditLog) *Server {
+func (s *Server) WithAuditLog(al obs.AuditSink) *Server {
 	s.AuditLog = al
 	return s
 }

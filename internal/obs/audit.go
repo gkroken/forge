@@ -14,6 +14,20 @@ type AuditEntry struct {
 	Status    int
 }
 
+// AuditSink records audit events and returns the most recent ones. The eval-mode
+// implementation is the in-memory *AuditLog ring buffer; the production target is
+// a Postgres-backed sink so the Activity view stays coherent across replicas and
+// survives restarts. Implementations must be safe for concurrent use.
+type AuditSink interface {
+	// Append records one event. It must not block the request path.
+	Append(e AuditEntry)
+	// Recent returns at most n entries, newest first.
+	Recent(n int) []AuditEntry
+}
+
+// compile-time assertion that the ring buffer satisfies the sink interface.
+var _ AuditSink = (*AuditLog)(nil)
+
 // AuditLog is a fixed-capacity thread-safe ring buffer of AuditEntry records.
 type AuditLog struct {
 	mu      sync.Mutex
