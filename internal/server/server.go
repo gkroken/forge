@@ -34,6 +34,7 @@ import (
 	"forge/internal/oidc"
 	"forge/internal/queue"
 	"forge/internal/repo"
+	"forge/internal/vuln"
 	"forge/internal/webhook"
 )
 
@@ -77,6 +78,8 @@ type Server struct {
 	Users       auth.UserStore         // nil = user management not configured
 	Roles       auth.RoleStore         // nil = custom roles not configured
 	Webhooks    *webhook.Engine        // nil = webhooks not configured (no event emission)
+	Vuln        *vuln.Store            // nil = vulnerability scanning not configured
+	OSV         *vuln.Client           // nil = no OSV producer (scans disabled)
 	MaxUpload   int64                  // per-request body limit; 0 = use defaultMaxUpload
 	reg         prometheus.Gatherer
 	client      *http.Client
@@ -145,7 +148,19 @@ func (s *Server) WithQueue(ctx context.Context, q queue.Queue) *Server {
 	if s.Webhooks != nil {
 		w.Register(webhook.JobType, s.Webhooks.Handle)
 	}
+	if s.Vuln != nil && s.OSV != nil {
+		w.Register(vulnScanJobType, s.handleVulnScanJob)
+	}
 	go w.Work(ctx, q) //nolint:errcheck
+	return s
+}
+
+// WithVuln attaches the vulnerability findings store and OSV producer. Call
+// before WithQueue (which registers the scan handler) and before Routes() (so
+// the publish hook enqueues scans). nil store or client leaves scanning disabled.
+func (s *Server) WithVuln(store *vuln.Store, client *vuln.Client) *Server {
+	s.Vuln = store
+	s.OSV = client
 	return s
 }
 
@@ -632,6 +647,9 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			if s.Scheduler != nil && repoName != "" {
 				s.Scheduler.Notify(repoName)
 			}
+			// Enqueue an OSV scan of the repo. Off the request path and
+			// failure-isolated — a missing OSV egress never breaks a publish.
+			s.enqueueVulnScan(repoName)
 			// Emit an artifact.published webhook event. Off the request path: the
 			// engine only enqueues durable delivery jobs here. Background context
 			// so the enqueue outlives the request.

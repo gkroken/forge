@@ -172,6 +172,15 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// /api/v1/repos/{name}/scan — enqueue an OSV vulnerability scan (admin only).
+	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "scan" {
+		if !s.Enforcer.RequireAdmin(w, r) {
+			return
+		}
+		s.handleVulnScan(w, r, repoName)
+		return
+	}
+
 	// /api/v1/repos/{name}/cache-stats — hourly hit/miss ring buffer (admin only).
 	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "cache-stats" {
 		if !s.Enforcer.RequireAdmin(w, r) {

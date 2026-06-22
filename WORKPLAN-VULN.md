@@ -103,12 +103,24 @@ and a versioned purl is a documented 400). HTTP/2 negotiated automatically over 
    `groupId:artifactId`, exactly OSV's Maven name (guarded on the `:` separator). helm/oci/cran
    don't implement → skipped. Compile-time `var _ format.VulnCoordinates` assertions on each.
    Tests: both mappings.
-4. **Commit 4 — scan triggers (async only).** Scan job registered via existing
-   `indexer.Worker.Register(typ, handler)` (webhook precedent — NO second worker, which would
-   race+discard). Handler: coordinates → OSV → `vuln.Store.Put`. **On-publish enqueue** at the
-   same point webhooks emit (the four `/repository/` formats), **failure-isolated — a missing OSV
-   egress must never block or fail a publish.** Manual admin `POST /api/v1/repos/{repo}/scan`
-   ("Scan now"). Tests: on-publish enqueues, handler writes finding, unknown-coordinate skips.
+4. **Commit 4 — scan triggers (async only). DONE.** `vuln.scan` job registered via
+   `indexer.Worker.Register` (webhook precedent — NO second worker). Orchestration lives in
+   `server` (it has the registry + context building, like webhooks): `scanRepo` enumerates the
+   repo via `format.Browsable.BrowseRepo` (uniform for npm/Maven, no path-parsing; naturally
+   handles npm where the version isn't in the publish path), maps each component via
+   `VulnCoordinates`, issues ONE OSV `querybatch` for all component@versions, and writes a Finding
+   per version — **including clean results** (empty Advisories = "scanned, no issues" + ScannedAt,
+   distinct from "never scanned"). **On-publish enqueue** beside `Scheduler.Notify` (the four
+   `/repository/` formats), in a goroutine, **failure-isolated — a missing OSV egress never blocks
+   or fails a publish.** Manual admin `POST /api/v1/repos/{repo}/scan` → 202 (501 for
+   non-scannable formats, 503 when unconfigured). Handler returns nil on OSV egress failure (logs)
+   so the PG queue can't retry-spin/hammer OSV — the A-V1 scheduled re-scan is the safety net.
+   Wired in main.go via `WithVuln(store, client)` (before WithQueue + Routes). Tests: scanRepo
+   writes findings, skips non-scannable formats, manual endpoint enqueues/202/501/503, enqueue
+   no-ops when unconfigured. (Also fixed a pre-existing webhook test-harness cleanup race
+   surfaced during this work — separate commit.) **Granularity note:** on-publish re-scans the
+   whole repo (one batch call + cached hydration = cheap); per-publish burst redundancy and finer
+   granularity are A-V1 concerns (scheduled re-scan + debounce).
 5. **Commit 5 — surface: severity badge in browse detail.** npm + Maven detail path carries the
    worst-severity finding per version; render a badge in the right (detail) pane. Rebuild the
    binary after JS/CSS. Live-verify: publish a known-vuln npm pkg (e.g. old `lodash`) and a

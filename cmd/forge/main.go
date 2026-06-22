@@ -35,6 +35,7 @@ import (
 	"forge/internal/queue"
 	"forge/internal/repo"
 	"forge/internal/server"
+	"forge/internal/vuln"
 	"forge/internal/webhook"
 )
 
@@ -217,6 +218,13 @@ func main() {
 			metrics.WebhookDeliveries.WithLabelValues(result).Inc()
 		})
 
+	// Vulnerability scanning: source-agnostic findings store + OSV producer
+	// (npm + Maven). Construct before WithQueue so the scan handler is registered
+	// before the worker starts, and before Routes() so the publish hook enqueues
+	// scans. Pure stdlib HTTP against OSV.dev (no key, no new dependency).
+	vulnStore := vuln.NewStore(metaStore)
+	osvClient := vuln.NewClient(&http.Client{Timeout: 20 * time.Second})
+
 	cleanupPolicies := cleanup.NewPolicyManager(metaStore)
 	cleanupScheduler := cleanup.NewScheduler(mgr, cleanupPolicies, blobStore, metaStore).
 		// Emit a cleanup.completed webhook after an automated run removes artifacts.
@@ -256,6 +264,7 @@ func main() {
 		WithMetrics(metrics, promReg).
 		WithGlobalStats(globalStats).
 		WithWebhooks(webhookEngine).
+		WithVuln(vulnStore, osvClient).
 		WithQueue(workerCtx, q).
 		WithCleanup(cleanupPolicies).
 		WithScheduler(cleanupScheduler).
