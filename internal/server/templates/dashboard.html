@@ -36,6 +36,15 @@
         <div class="inst-value">{{if .CacheHitPct}}{{printf "%.1f" .CacheHitPct}}<span class="inst-value-unit">%</span>{{else}}—{{end}}</div>
         <div class="inst-unit">proxy repositories</div>
       </div>
+      {{if .VulnEnabled}}
+      <div class="inst-readout">
+        <div class="inst-label">Vulnerable</div>
+        <div class="inst-value{{if .VulnCritical}} is-warn-value{{end}}">
+          {{if .VulnComponents}}<a href="/ui/admin/security">{{.VulnComponents}}</a><span class="inst-value-unit">comp</span>{{else}}0{{end}}
+        </div>
+        <div class="inst-unit">{{if .VulnCritical}}{{.VulnCritical}} critical{{else}}known advisories{{end}}</div>
+      </div>
+      {{end}}
     </div>
   </section>
 

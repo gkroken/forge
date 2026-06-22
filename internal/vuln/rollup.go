@@ -129,6 +129,23 @@ func (r Rollup) VersionSeverity(component, version string) string {
 	return ""
 }
 
+// WorstSeverity returns the highest severity label across all vulnerable
+// components in the repo, or "" if none are vulnerable. Used for the single
+// repo-level badge in the admin table / dashboard.
+func (r Rollup) WorstSeverity() string {
+	worst := SeverityUnknown
+	seen := false
+	for _, s := range r.WorstByComponent {
+		if !seen || s > worst {
+			worst, seen = s, true
+		}
+	}
+	if !seen {
+		return ""
+	}
+	return worst.String()
+}
+
 func rollupNS(repo string) string { return repo + ":vuln-rollup" }
 
 const rollupKey = "rollup"

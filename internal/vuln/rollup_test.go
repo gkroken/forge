@@ -46,6 +46,12 @@ func TestBuildRollup_HistogramAndCount(t *testing.T) {
 	if r.BySeverity["critical"] != 1 || r.BySeverity["high"] != 2 {
 		t.Errorf("BySeverity = %v, want critical:1 high:2", r.BySeverity)
 	}
+	if r.WorstSeverity() != "critical" {
+		t.Errorf("WorstSeverity = %q, want critical", r.WorstSeverity())
+	}
+	if vuln.BuildRollup("empty", nil).WorstSeverity() != "" {
+		t.Error("WorstSeverity of empty rollup should be empty")
+	}
 	// Each vulnerable component counted exactly once → histogram sums to count.
 	sum := 0
 	for _, n := range r.BySeverity {

@@ -24,6 +24,7 @@
           <th class="col-num">Artifacts</th>
           <th class="col-num">Size</th>
           <th>Health</th>
+          <th>Security</th>
           <th></th>
         </tr>
       </thead>
@@ -46,6 +47,12 @@
               {{else}}<span class="health-dot health-unknown" title="No data yet">●</span>{{end}}
             {{else}}—{{end}}
           </td>
+          <td class="col-security">
+            {{if .VulnWorst}}
+              {{sevBadge .VulnWorst}}
+              <span class="vuln-count" title="{{.VulnTotal}} vulnerable component{{if ne .VulnTotal 1}}s{{end}}{{if .VulnCritical}}, {{.VulnCritical}} critical{{end}}">{{.VulnTotal}}{{if .VulnCritical}} · {{.VulnCritical}} crit{{end}}</span>
+            {{else}}<span class="vuln-none">—</span>{{end}}
+          </td>
           <td class="col-actions">
             <a href="/ui/browse/{{.Name}}" class="btn btn-sm">Browse</a>
             <a href="/ui/admin/repos/{{.Name}}/edit" class="btn btn-sm">Configure</a>
@@ -57,7 +64,7 @@
           </td>
         </tr>
         {{else}}
-        <tr><td colspan="7" class="empty">No repositories. <a href="/ui/admin/repos/new">Create one</a>.</td></tr>
+        <tr><td colspan="8" class="empty">No repositories. <a href="/ui/admin/repos/new">Create one</a>.</td></tr>
         {{end}}
       </tbody>
     </table>

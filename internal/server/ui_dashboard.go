@@ -60,6 +60,9 @@ type dashboardPage struct {
 	LatencyP50Ms    int64
 	LatencyP95Ms    int64
 	ThroughputRPS   float64
+	VulnEnabled     bool // scanning configured → show the security tile
+	VulnComponents  int  // vulnerable components across all repos
+	VulnCritical    int  // of those, how many are critical
 }
 
 type formatStat struct {
@@ -291,6 +294,16 @@ func (s *Server) uiDashboard(w http.ResponseWriter, r *http.Request) {
 		statusLabel, statusDot = "DEGRADED", "dot-warn"
 	}
 
+	// Aggregate vulnerability counts across all repos from the persisted rollups.
+	var vulnComponents, vulnCritical int
+	if s.Vuln != nil {
+		for _, rp := range s.Repos.All() {
+			vr := s.vulnRollupFor(rp.Name)
+			vulnComponents += vr.VulnerableCount
+			vulnCritical += vr.BySeverity["critical"]
+		}
+	}
+
 	render(w, tmplDashboard, "admin_shell.html", dashboardPage{
 		Title:           "Dashboard",
 		ActiveNav:       "dashboard",
@@ -313,6 +326,9 @@ func (s *Server) uiDashboard(w http.ResponseWriter, r *http.Request) {
 		LatencyP50Ms:    latP50,
 		LatencyP95Ms:    latP95,
 		ThroughputRPS:   rps,
+		VulnEnabled:     s.Vuln != nil,
+		VulnComponents:  vulnComponents,
+		VulnCritical:    vulnCritical,
 	})
 }
 

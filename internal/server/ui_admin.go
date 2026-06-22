@@ -49,6 +49,9 @@ type adminRepoRow struct {
 	ArtifactCount int
 	SizeBytes     int64
 	Health        string // "ok" | "down" | "" (proxy only)
+	VulnTotal     int    // vulnerable components in this repo (0 = none / not scanned)
+	VulnCritical  int    // of those, how many are critical
+	VulnWorst     string // worst severity label for the row badge ("" = none)
 }
 
 type adminFormPage struct {
@@ -257,6 +260,12 @@ func (s *Server) uiAdminHome(w http.ResponseWriter, r *http.Request) {
 		}
 		if rp.Kind == repo.Proxy && rp.Upstream != "" {
 			row.Health = proxy.HealthOf(rp.Upstream)
+		}
+		if s.Vuln != nil {
+			vr := s.vulnRollupFor(rp.Name)
+			row.VulnTotal = vr.VulnerableCount
+			row.VulnCritical = vr.BySeverity["critical"]
+			row.VulnWorst = vr.WorstSeverity()
 		}
 		rows = append(rows, row)
 	}
