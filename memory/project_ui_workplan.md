@@ -1,97 +1,117 @@
 ---
 name: project-ui-workplan
-description: UI workplan status as of 2026-06-18. Foundry shell landed. W1 done. W3 plan confirmed (3 commits). Source of truth: WORKPLAN-UI.md.
+description: Foundry UI redesign status as of 2026-06-20. F0–F3 + BE-A/B/C/D shipped. WORKPLAN.md §10 is authoritative. Next: BE-E/F (parallel) + BE-G → F4/F2.
 metadata:
   type: project
 ---
 
-UI workplan lives in `WORKPLAN-UI.md`. `WORKPLAN.md` is prototype-era, NOT authoritative for UI.
+The UI redesign plan lives in **`WORKPLAN.md §10`** (not any separate file).
+Branch: `feature/foundry-remaining-tabs` — not yet merged to main.
 
-**Why:** Accurate status needed to plan next UI work.
+**Why:** Full Foundry redesign (Forge Admin UI.dc.html + remaining tabs mockup).
+WORKPLAN.md §10 contains: color tokens, what changed, phase specs, and three
+gap analyses (§10.5 repo config, §10.6 dashboard/observability).
 
-**How to apply:** Check WORKPLAN-UI.md §1 status table before assuming anything is done.
-
----
-
-## Phase summary (legacy U0–U3 — all complete)
-
-U0 (auth guard), U1 (handler test suite), U2 (token mgmt, search, upload, component detail), U3 (dark mode, nav, icons, proxy browse, dep links) — all shipped. These phases are closed.
-
----
-
-## Foundry design — what landed (branch feature/foundry-remaining-tabs, commit ed687ab)
-
-214px left sidebar shell, steel-blue accent `#3a6ea5` (W1 done), Dashboard, Tokens, Cleanup, Observability pages all wired. Not yet merged to main.
-
-**CSS sidebar bug fixed (same session):** global `nav` selector was leaking dark `--nav-bg` into `<nav class="sidebar-nav">`. Fix: all top-nav rules scoped to `body > nav`. Also added `height: 100%` to `.admin-sidebar` so `margin-top: auto` works on footer.
+**How to apply:** Before starting any UI or metrics work, read §10.4 for the
+active phase and §10.5/§10.6 for the gap analyses — they specify data sources
+and endpoints at the level needed to implement without ambiguity.
 
 ---
 
-## Open work (W1–W5 from WORKPLAN-UI.md §3)
+## Phase status (Foundry UI redesign — ALL phases shipped as of 2026-06-21)
 
-Build order: W1(done) → W2a → W5 → W3a → W3b → W2b → W4
+The Foundry redesign (F0–F4 + BE-A…G + F2-charts) is complete. Active cleanup
+work now lives in `WORKPLAN-CLEANUP.md`, not here.
 
-| Item | Status | Notes |
-|------|--------|-------|
-| W1 — steel-blue accent | ✅ done | `--accent: #3a6ea5` in light + dark |
-| W2a — audit log ring buffer | ❌ open | `internal/obs.AuditLog`; feeds Dashboard activity + Observability audit table |
-| W2b — rate chart (real vs representative) | ❌ decision pending | Currently hardcoded bell curve |
-| W3 — Cleanup U4 (full named-policy system) | ❌ open — plan confirmed | See W3 plan below |
-| W4 — Dashboard completeness | ❌ open | Stored bytes KPI + real scheduler task list. Blocked on W3a scheduler exposure |
-| W5 — Per-version publish timestamps | ❌ open | npm (packument `time` map) + Helm (chartRecord.UploadedAt); CRAN/Maven leave blank |
-
----
-
-## W3 plan (confirmed 2026-06-18, ready to implement)
-
-**What exists today:**
-- `repo.go:105` — `Repository.CleanupPolicy *CleanupPolicy` (inline, optional)
-- `cleanup.go:36` — `Run(r repo.Repository, b, m)` reads `r.CleanupPolicy`
-- `scheduler.go:49` — reads `r.CleanupPolicy` directly per repo
-- `ui_admin.go:484` — `parseCleanupPolicy()`, called at lines 237 + 282
-- `admin.go:249` — `handleCleanup()` calls `cleanup.Run(rp, s.Blob, s.Meta)`
-- `internal/cleanup/` — only has `cleanup.go`, `cleanup_test.go`, `scheduler.go`, `scheduler_test.go`
-- `Server` struct — no `Cleanup` field yet
-- **`main.go` does NOT seed any repos with inline `CleanupPolicy`** — only `cleanup.NewScheduler(mgr, blobStore, metaStore).Start(workerCtx)` is wired there
-
-**Three commits:**
-
-**Commit 1 — additive (no existing code changes):**
-- `internal/cleanup/policy.go` — `NamedPolicy`, `PolicyManager` (CRUD to meta.Store, namespace `cleanup-policies`)
-- `internal/cleanup/dryrun.go` — `DryRun()`: same logic as `Run()`, returns `[]Candidate` instead of deleting
-- `internal/cleanup/history.go` — `CleanupRun`, `RecordRun()`, `GetHistory()` (keep last 20 per repo)
-- New API routes: `GET/POST/DELETE /api/v1/cleanup-policies`, `GET /api/v1/cleanup-policies/{name}`, `POST /api/v1/repos/{name}/cleanup?dry=true`
-- Tests for all new code
-
-**Commit 2 — breaking (must leave `go test ./...` green):**
-- Remove `Repository.CleanupPolicy *CleanupPolicy`, add `CleanupPolicyName string`
-- Change `cleanup.Run()` to take `repoName string, p *CleanupPolicy, b, m` (decoupled from repo model)
-- `Scheduler` gains `*PolicyManager` dep, resolves policy by name at run time
-- Add `Cleanup *cleanup.PolicyManager` to `Server` struct; wire in `main.go`
-- Delete `parseCleanupPolicy()` from `ui_admin.go`; add `cleanupPolicyName` dropdown handling
-- Update `handleCleanup()` to resolve named policy
-- Update all tests (`cleanup_test.go`, `scheduler_test.go`, `admin_test.go`)
-- Data migration: none needed — Go JSON decoder silently ignores removed `cleanupPolicy` field
-
-**Commit 3 — UI:**
-- Rewrite `ui_cleanup.go` — list named policies, CRUD handlers, per-repo run panel
-- New templates: `cleanup_policy_form.html` (create/edit), `cleanup_run.html` (dry-run + history panel)
-- Rewrite `cleanup_policies.html` — named policy table, CRUD links
-- Update `admin_repo_form.html` — replace inline fieldset with `<select>` dropdown (hosted repos only, extend `syncKind()`)
-- Add all new routes to `security_headers_test.go`
-
-**Deferred:** `LastDownloadedDays` rule field + UI included but blob-read timestamp tracking deferred — rule silently no-ops on artifacts without download timestamp.
+| Phase | Status | What it covered |
+|---|---|---|
+| F0 — Font bundle | ✅ done | IBM Plex Sans/Mono + Material Symbols as go:embed static assets |
+| F1 — CSS + shell | ✅ done | Foundry palette, sidebar, topbar, KPI card slots |
+| F2 — Admin pages | ✅ done | Dashboard, Observability, Cleanup, Tokens & Access reskin |
+| BE-A — Metrics + cleanup | ✅ done | Blob walker, latency histogram, cleanup PolicyManager, token Owner/LastUsed |
+| BE-B — Browse data | ✅ done | Artifact count, file size, PublishedAt all formats, download counter, CB health, tree API |
+| F3 — Repository pages | ✅ done | Repos list new columns, global 3-panel Browse, repo config tab strip |
+| BE-C — Users + Roles | ✅ done | User model (bcrypt), user CRUD, Roles CRUD, Users/Roles tabs in Tokens & Access, username/password login |
+| BE-D — Repo model ext | ✅ done | Enabled, BlobStore, ContentMaxAge, MetadataMaxAge, NegativeCache, AutoBlock, TimeoutSecs, Retries, QuotaGB |
+| BE-E — Proxy wiring | ✅ done | proxy.ConfigForRepo() |
+| BE-F — Cache metrics | ✅ done | Per-repo hourly hit/miss ring buffer, cache-stats + invalidate endpoints |
+| BE-G — System metrics | ✅ done | Global ring buffers, status counters, task API, store capacity, retry counter, DB latency EMA |
+| F4 — Repo config UI | ✅ done | `ee07631` — Settings form new fields, Content/Access/Activity tabs, right rail, action buttons |
+| F2 (charts) | ✅ done | `402b64f` — Dashboard 24-bar chart, system tasks panel, Observability req/p95 chart, status breakdown |
 
 ---
 
-## Key design decisions (locked)
+## What shipped (2026-06-19 session)
 
-- Auth: `RequireAdminUI` checks `Authorization: Bearer` then `forge_token` HttpOnly SameSite=Strict cookie
-- Session cookie: `auth.UISessionCookie = "forge_token"`
-- CSP: `script-src 'self' https://unpkg.com` — no additional external scripts
-- Dark mode: token-only via `:root` + `[data-theme="dark"]` overrides; no per-component dark rules
-- All assets embedded via `//go:embed templates static`; CSS rebuild requires `go build` + restart
-- `cssVer` is a content hash computed at startup — browser cache-busts on rebuild automatically
-- No build step; stdlib + htmx 2.0.3 only
-</content>
-</invoke>
+- **Global browse**: all repos as collapsible nodes in one left pane; format-aware
+  expansion (Maven → folder tree, others → flat searchable list). URL syncs via
+  pushState. `/ui/repos/{name}` now redirects to `/ui/browse/{name}`.
+- **Repo list**: clicking a repo name goes to config/settings page, not browse.
+- **Collapse bug fixed**: CSS `display:none` default + `.expanded > .browse-repo-content`
+  pattern (was broken because `:empty` doesn't re-hide after content loads).
+- **Upload button** on hosted repo nodes in browse header.
+- **Gap analyses written** into WORKPLAN.md §10.5 (repo config) and §10.6
+  (dashboard + observability). BE-D through BE-G phases defined.
+
+## What shipped (2026-06-20 session)
+
+- **BE-C — Users + Roles**: `auth.UserStore` (bcrypt passwords), `auth.RoleStore`
+  (predefined Reader/Publisher/Administrator + custom), user CRUD API at
+  `/api/v1/users` + `/api/v1/roles`, Users + Roles tabs in Tokens & Access admin
+  page, username/password login flow in `ui.go` + `login.html`.
+- **BE-D — Repository model extension**: 9 new fields on `Repository` (Enabled,
+  BlobStore, ContentMaxAge, MetadataMaxAge, NegativeCache, AutoBlock, TimeoutSecs,
+  Retries, QuotaGB). `Enabled=false` → 503 in `handleRepo` + `handleOCI`. Backward
+  compat: old JSON without `"enabled"` defaults to `true`; legacy `"proxyTTL"` copied
+  into `ContentMaxAge`. Admin form edit preserves BE-D fields not yet in the form.
+
+---
+
+## Key design decisions (locked this session)
+
+**Browse scope**: shows only locally stored artifacts (blob.Store + meta.Store).
+Proxy repos show what's been cached, not upstream catalog. Proxy nodes need a
+"Showing locally cached artifacts" subtitle (implement in F4).
+
+**Repo config tabs:**
+- *Content*: package+version list with delete and expire-cache actions per version.
+  Admin management surface (not read-only like Browse). Extend DELETE to all formats;
+  new `DELETE /api/v1/repos/{name}/cache/{pkg}/{ver}` expire endpoint.
+- *Access*: `{principal, principal_type, role}` binding table. SSO-safe — new auth
+  types add `principal_type` values without changing the table shape. Pre-BE-C:
+  token scope only. Post-BE-C: users + groups. New `GET/PUT /api/v1/repos/{name}/access`.
+- *Activity*: audit log filtered to this repo via `?repo=` query param on existing
+  audit endpoint. No new storage.
+
+**Repo config Settings form new fields**: all new fields on `Repository` use pointer
+types so nil = server default. `ProxyTTL` kept as legacy JSON alias for `ContentMaxAge`.
+`Enabled bool` false → 503 enforced in routing before format handler dispatch.
+
+---
+
+## Recommended build order
+
+```
+BE-C  (Users + Roles — unblocks Access tab and Users/Roles UI)
+  ↓
+BE-D  (repo model extension)
+  ├── BE-E  (proxy per-repo wiring)   ← parallel
+  └── BE-F  (per-repo cache metrics)  ← parallel
+  ↓
+BE-G  (global system metrics — fully parallel with BE-D/E/F)
+  ↓
+F4    (repo config UI: Settings form + tabs + right rail)
+F2-charts  (dashboard 24-bar + tasks panel, obs chart — needs BE-G)
+```
+
+---
+
+## Locked technical decisions (carry forward)
+
+- CSP: `script-src 'self' https://unpkg.com` — all JS in external files, no inline handlers
+- All JS uses event delegation (no inline onclick/oninput)
+- Charts: inline SVG `<rect>` elements — no external charting library
+- Static files served at `/ui/static/` prefix
+- `admin_shell.html` layout: `{{block "content-class"}}` overrides the wrapper class
+- `admin-browse` CSS class for full-bleed 3-panel (no admin-content padding)
+- Format-aware browse dispatch keyed on `data-format` attribute (maven → tree, others → flat)
