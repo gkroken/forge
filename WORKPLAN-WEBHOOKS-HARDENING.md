@@ -7,22 +7,26 @@ The base webhooks feature shipped (WORKPLAN-WEBHOOKS.md: durable delivery, HMAC,
 left behind. **Acceptance for the whole track: every gap below is closed, each with
 unit tests + a live end-to-end check; `go test ./...`, `go vet`, `bash test.sh` green.**
 
+**STATUS: ALL 12 GAPS CLOSED (H1–H4 complete).** Every row below is done with unit
+tests + a live end-to-end check; `go test ./...` (incl. `-race`), `go vet`, and
+`bash test.sh` (20/20) all green. The webhooks feature is genuinely complete.
+
 ## Gap → phase matrix (the definition of "everything covered")
 
-| # | Gap | Phase |
-|---|-----|-------|
-| 1 | OCI/Docker pushes emit nothing (`/v2/` not hooked) | H1 |
-| 2 | Format-native deletes don't emit `artifact.deleted` (npm unpublish, helm/maven delete) | H1 |
-| 3 | Manual cleanup runs don't emit `cleanup.completed` | H1 |
-| 4 | No `artifact.cached` for proxy cache fills | H1 |
-| 9 | No delivery ID for receiver-side dedup | H2 |
-| 10 | `Retry-After` on 429 not honored | H2 |
-| 12 | No replay protection (timestamp in signature) | H2 |
-| 5 | Delivery metrics dishonest (always "success") | H3 |
-| 6 | No delivery history/log in the UI | H3 |
-| 7 | Dropped deliveries vanish (no dead-letter) | H3 |
-| 8 | No edit of subscriptions (create/delete only) | H4 |
-| 11 | No SSRF guard on webhook target URLs | H4 |
+| # | Gap | Phase | Status |
+|---|-----|-------|--------|
+| 1 | OCI/Docker pushes emit nothing (`/v2/` not hooked) | H1 | ✅ |
+| 2 | Format-native deletes don't emit `artifact.deleted` (npm unpublish, helm/maven delete) | H1 | ✅ |
+| 3 | Manual cleanup runs don't emit `cleanup.completed` | H1 | ✅ |
+| 4 | No `artifact.cached` for proxy cache fills | H1 | ✅ |
+| 9 | No delivery ID for receiver-side dedup | H2 | ✅ |
+| 10 | `Retry-After` on 429 not honored | H2 | ✅ |
+| 12 | No replay protection (timestamp in signature) | H2 | ✅ |
+| 5 | Delivery metrics dishonest (always "success") | H3 | ✅ |
+| 6 | No delivery history/log in the UI | H3 | ✅ |
+| 7 | Dropped deliveries vanish (no dead-letter) | H3 | ✅ |
+| 8 | No edit of subscriptions (create/delete only) | H4 | ✅ |
+| 11 | No SSRF guard on webhook target URLs | H4 | ✅ |
 
 ---
 
