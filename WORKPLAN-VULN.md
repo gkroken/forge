@@ -144,6 +144,31 @@ Maven on-publish coverage is already live (the mapping shipped in V0); A-V1 adds
 via the now-HA scheduler, the `/ui/admin/security` keyset page, the dashboard tile, and the
 `forge_vulnerable_components` gauge.
 
+### DESIGN — TO DISCUSS: surface vuln data on more than the version-detail page
+**Open design question raised 2026-06-22 (decide before/within A-V1).** Today the only surface for
+findings is the *version-specific* browse **detail pane** (`renderSecurity` in the right panel) —
+i.e. a user only sees a vulnerability after drilling into one exact `component@version`. That's too
+narrow: the signal should be visible at the points where someone is *scanning a list*, not only
+after they've already picked a single artifact. Reconsider whether detail-pane-only is the right
+scope and decide which additional surfaces carry a (worst-)severity badge / count. Candidates:
+- **Browse component list** (left/flat pane) — badge next to each package showing its worst
+  severity across versions, so a vulnerable package stands out without drilling in.
+- **Version list** (center pane) — per-version severity badge, so you see which versions are
+  affected vs fixed at a glance.
+- **Repo list / `/ui/admin/` repos table** — a per-repo "N vulnerable / M critical" column.
+- **Search results** — severity badge on each hit.
+- **Repo config → Content tab** — same per-component badge as Browse (manage-in-context).
+- **Dashboard tile + Security page + Prometheus gauge** — already planned in A-V1 (the aggregate
+  surfaces); this point is specifically about the *per-artifact* signal in list views.
+Design considerations: (a) cost — list views enumerate many components, so a per-row
+`vuln.Store.Get` per version could be N reads; may want a cheap per-component "worst severity"
+rollup cached in the store (or a `List`→map built once per page). (b) the four-state distinction
+(unsupported / unscanned / clean / vulnerable) must degrade gracefully in a compact badge (e.g. no
+badge when clean/unscanned, grey when unsupported). (c) keep it DRY — one severity-badge component
+shared across surfaces. **Recommend deciding the surface set + the rollup-vs-per-version-read
+approach as the first task of A-V1**, since the Security page and dashboard tile already need a
+repo-wide findings rollup and a shared badge — build that rollup once and reuse it everywhere.
+
 ### A-V1 — Breadth + observability
 1. Maven `OSVCoordinates` (`groupId:artifactId`).
 2. **Daily re-scan** via the Scheduler — advisories are published *retroactively*, so periodic re-scan is mandatory. **Hard-depends on scheduler-HA** (else N replicas re-scan in parallel).
