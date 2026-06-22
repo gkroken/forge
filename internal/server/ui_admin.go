@@ -240,6 +240,8 @@ func (s *Server) handleUIAdmin(w http.ResponseWriter, r *http.Request, sub strin
 		s.uiAuditHistory(w, r)
 	case sub == "/security":
 		s.uiSecurity(w, r)
+	case sub == "/security-policies":
+		s.uiSecurityPolicies(w, r)
 	default:
 		http.NotFound(w, r)
 	}

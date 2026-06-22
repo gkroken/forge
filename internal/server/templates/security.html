@@ -8,6 +8,11 @@
     </span>
   </div>
 
+  <div class="admin-tabs" style="margin-bottom:16px;">
+    <a href="/ui/admin/security"          class="admin-tab active">Findings</a>
+    <a href="/ui/admin/security-policies" class="admin-tab">Policies</a>
+  </div>
+
   {{if not .Enabled}}
   <div class="empty" style="padding:2rem;text-align:center;color:var(--text-muted);">
     Vulnerability scanning is not configured.

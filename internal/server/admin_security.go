@@ -5,10 +5,26 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"forge/internal/repo"
 	"forge/internal/vuln"
 )
+
+// stampSuppressions records who added each suppression and when, so a silenced
+// advisory carries an audit trail (the spec requires reason + who + when). It
+// only fills blanks — an existing By/At from a prior save is preserved.
+func stampSuppressions(p *vuln.NamedPolicy, actor string) {
+	now := time.Now().UTC()
+	for i := range p.Suppressions {
+		if p.Suppressions[i].At.IsZero() {
+			p.Suppressions[i].At = now
+		}
+		if p.Suppressions[i].By == "" {
+			p.Suppressions[i].By = actor
+		}
+	}
+}
 
 // securityPolicyNames returns a sorted list of named security-policy names for
 // dropdowns. Empty when the policy manager is unconfigured.
@@ -93,6 +109,7 @@ func (s *Server) handleSecurityPoliciesList(w http.ResponseWriter, r *http.Reque
 			http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 			return
 		}
+		stampSuppressions(&p, actorLabel(r, s.Auth))
 		if err := s.VulnPolicy.Put(p); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -125,6 +142,7 @@ func (s *Server) handleSecurityPolicyByName(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		p.Name = name // URL name wins
+		stampSuppressions(&p, actorLabel(r, s.Auth))
 		if err := s.VulnPolicy.Put(p); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

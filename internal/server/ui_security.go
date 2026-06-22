@@ -42,6 +42,28 @@ type securityRow struct {
 	ScannedAt string
 }
 
+// securityPoliciesPage backs GET /ui/admin/security-policies. The page is
+// JS-driven against the security-policy API; the handler only renders the shell
+// and reports whether enforcement is configured at all.
+type securityPoliciesPage struct {
+	Title     string
+	ActiveNav string
+	Enabled   bool
+}
+
+// uiSecurityPolicies renders the policy-authoring page: the global default plus
+// the named-policy table. Admin-only.
+func (s *Server) uiSecurityPolicies(w http.ResponseWriter, r *http.Request) {
+	if !s.Enforcer.RequireAdminUI(w, r) {
+		return
+	}
+	render(w, tmplSecurityPolicies, "admin_shell.html", securityPoliciesPage{
+		Title:     "Security policies",
+		ActiveNav: "security",
+		Enabled:   s.Vuln != nil && s.VulnPolicy != nil,
+	})
+}
+
 // uiSecurity renders GET /ui/admin/security — every vulnerable finding across
 // all repos, filterable by repo and minimum severity, keyset-paginated by
 // (repo, component, version). It pages in memory over the per-repo sorted

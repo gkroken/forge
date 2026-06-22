@@ -1353,6 +1353,7 @@ thead th { font-size: var(--fs-eyebrow); letter-spacing: .1em; }
 .chip-ok      { background: var(--alert-ok-bg);  color: var(--alert-ok-fg);  border-color: var(--alert-ok-border); }
 .chip-err     { background: var(--alert-err-bg); color: var(--alert-err-fg); border-color: var(--alert-err-border); }
 .chip-neutral { background: var(--bg-alt);        color: var(--text-muted);   border-color: var(--border); }
+.chip-warn    { background: var(--sev-mod-bg);    color: var(--sev-mod-fg);   border-color: var(--sev-mod-fg); }
 
 /* ── confirm modal ───────────────────────────────────────────────────────── */
 .modal-overlay { position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; }
