@@ -1,6 +1,7 @@
 package obs
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -12,6 +13,42 @@ type AuditEntry struct {
 	Method    string
 	Path      string
 	Status    int
+}
+
+// AuditRecord is an AuditEntry plus its durable row ID, used as the tiebreaker
+// in keyset pagination cursors (timestamps can collide).
+type AuditRecord struct {
+	AuditEntry
+	ID int64
+}
+
+// AuditFilter narrows an audit history query. Zero-valued fields mean "no
+// filter"; a zero Cursor means "from the newest entry".
+type AuditFilter struct {
+	Actor    string      // exact actor match when non-empty
+	PathLike string      // case-insensitive substring of Path when non-empty
+	Cursor   AuditCursor // return only entries strictly older than this
+	Limit    int         // max rows; clamped by the implementation
+}
+
+// AuditCursor is a keyset-pagination position. IsZero reports the first page.
+type AuditCursor struct {
+	Timestamp time.Time
+	ID        int64
+}
+
+// IsZero reports whether the cursor is unset (first page).
+func (c AuditCursor) IsZero() bool { return c.ID == 0 && c.Timestamp.IsZero() }
+
+// AuditQuerier is an optional capability for sinks that can serve filtered,
+// paginated history beyond the recent window. Only the durable (Postgres) sink
+// implements it; callers detect support with a type assertion and fall back to
+// Recent otherwise. Implementations must use keyset (not OFFSET) pagination.
+type AuditQuerier interface {
+	// Query returns up to filter.Limit records, newest first, matching the
+	// filter and strictly older than filter.Cursor. The caller forms the next
+	// cursor from the last record's (Timestamp, ID).
+	Query(ctx context.Context, filter AuditFilter) ([]AuditRecord, error)
 }
 
 // AuditSink records audit events and returns the most recent ones. The eval-mode

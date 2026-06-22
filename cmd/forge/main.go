@@ -55,6 +55,7 @@ func main() {
 	oidcGroupsClaim := flag.String("oidc-groups-claim", os.Getenv("OIDC_GROUPS_CLAIM"), "ID-token claim holding group membership (default \"groups\") (env OIDC_GROUPS_CLAIM)")
 	oidcGroupMappings := flag.String("oidc-group-mappings", os.Getenv("OIDC_GROUP_MAPPINGS"), "IdP group→role map, e.g. forge-admins:admin,devs:write,staff:read (env OIDC_GROUP_MAPPINGS)")
 	oidcTokenTTL := flag.String("oidc-token-ttl", os.Getenv("OIDC_TOKEN_TTL"), "lifetime of an SSO session (default 8h) (env OIDC_TOKEN_TTL)")
+	auditRetention := flag.String("audit-retention", os.Getenv("AUDIT_RETENTION"), "how long to keep Postgres audit_log entries, e.g. 2160h (default 90d); 0 disables pruning (env AUDIT_RETENTION)")
 	flag.Parse()
 
 	obs.InitLog(*logFormat)
@@ -209,8 +210,14 @@ func main() {
 	// replicas), else the in-memory ring buffer for eval / single-node mode.
 	var auditSink obs.AuditSink
 	if pgMeta != nil {
-		auditSink = obs.NewPGAuditSink(workerCtx, pgMeta.DB())
-		slog.Info("audit log: postgres")
+		retention := 90 * 24 * time.Hour
+		if *auditRetention != "" {
+			d, err := time.ParseDuration(*auditRetention)
+			must(err)
+			retention = d
+		}
+		auditSink = obs.NewPGAuditSink(workerCtx, pgMeta.DB(), retention)
+		slog.Info("audit log: postgres", "retention", retention)
 	} else {
 		auditSink = obs.NewAuditLog(500)
 		slog.Info("audit log: in-memory (eval mode)")
