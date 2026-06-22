@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -362,6 +364,60 @@ func TestUpstreamAuth_HeaderForwarded(t *testing.T) {
 func TestErrNotFound_IsDistinctFromErrUpstreamFailed(t *testing.T) {
 	if ErrNotFound == ErrUpstreamFailed {
 		t.Error("sentinel errors must be distinct")
+	}
+}
+
+// ── Request coalescing (single-flight) ───────────────────────────────────────
+
+// TestSingleFlight_CoalescesConcurrentMisses fires N simultaneous cache misses
+// for the same key and asserts the upstream is contacted exactly once, while
+// every caller still receives the body.
+func TestSingleFlight_CoalescesConcurrentMisses(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		time.Sleep(75 * time.Millisecond) // upstream latency widens the herd window
+		w.Header().Set("Content-Type", "text/plain")
+		io.WriteString(w, "payload")
+	}))
+	defer srv.Close()
+
+	b, m := newStores(t)
+	f := New(http.DefaultClient, Config{TTL: time.Hour})
+
+	const N = 20
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	bodies := make([]string, N)
+	errs := make([]error, N)
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start // release all goroutines together
+			rc, _, err := f.Fetch("k/coalesce", "ns", srv.URL+"/item", b, m)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			data, _ := io.ReadAll(rc)
+			rc.Close()
+			bodies[i] = string(data)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("expected exactly 1 upstream call (coalesced), got %d", got)
+	}
+	for i := 0; i < N; i++ {
+		if errs[i] != nil {
+			t.Errorf("goroutine %d: unexpected error %v", i, errs[i])
+		}
+		if bodies[i] != "payload" {
+			t.Errorf("goroutine %d: got %q, want %q", i, bodies[i], "payload")
+		}
 	}
 }
 

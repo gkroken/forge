@@ -273,6 +273,8 @@ type Fetcher struct {
 
 	mu       sync.Mutex
 	breakers map[string]*breaker // keyed by "scheme://host"
+
+	flight flightGroup // coalesces concurrent cache-miss fetches per blobKey
 }
 
 // New returns a Fetcher backed by client with the given config.
@@ -283,6 +285,55 @@ func New(client *http.Client, cfg Config) *Fetcher {
 		now:      time.Now,
 		breakers: make(map[string]*breaker),
 	}
+}
+
+// ── Request coalescing (single-flight) ─────────────────────────────────────────
+//
+// flightGroup deduplicates concurrent cache-miss fetches for the same blobKey so
+// a thundering herd of N simultaneous requests triggers exactly one upstream
+// fetch. The leader runs the fetch+store; followers block until it finishes, then
+// read the freshly-cached blob themselves. Hand-rolled rather than pulling in
+// golang.org/x/sync/singleflight to honour the project's stdlib-only rule — the
+// needs here are narrow: no DoChan, no Forget, and followers re-read the blob
+// store instead of sharing the leader's io.ReadCloser.
+type flightGroup struct {
+	mu sync.Mutex
+	m  map[string]*flightCall
+}
+
+// flightCall is the shared outcome of one in-flight fetch. hasBlob reports that a
+// servable blob is now in the store (the caller must Get it for its own reader).
+type flightCall struct {
+	wg      sync.WaitGroup
+	ct      string
+	hasBlob bool
+	err     error
+}
+
+// do runs fn at most once per concurrent key: the first caller (leader) executes
+// fn; concurrent callers (followers) block on wg and replay its result.
+func (g *flightGroup) do(key string, fn func() (string, bool, error)) (string, bool, error) {
+	g.mu.Lock()
+	if g.m == nil {
+		g.m = make(map[string]*flightCall)
+	}
+	if c, ok := g.m[key]; ok {
+		g.mu.Unlock()
+		c.wg.Wait()
+		return c.ct, c.hasBlob, c.err
+	}
+	c := &flightCall{}
+	c.wg.Add(1)
+	g.m[key] = c
+	g.mu.Unlock()
+
+	c.ct, c.hasBlob, c.err = fn()
+
+	g.mu.Lock()
+	delete(g.m, key)
+	g.mu.Unlock()
+	c.wg.Done()
+	return c.ct, c.hasBlob, c.err
 }
 
 func (f *Fetcher) getBreaker(host string) *breaker {
@@ -364,87 +415,98 @@ func (f *Fetcher) Fetch(blobKey, cacheNS, upURL string, blobs blob.Store, metas 
 		}
 	}
 
-	// ── 3. Circuit breaker check ───────────────────────────────────────────
-	host := upstreamHost(upURL)
-	cb := f.getBreaker(host)
-	if !cb.allow(now) {
-		if !f.cfg.DisableStaleOnError && blobExists {
-			if rc, err := blobs.Get(blobKey); err == nil {
-				return rc, entry.ContentType, nil
+	// ── 3–6. Coalesced upstream fetch ──────────────────────────────────────
+	// Concurrent cache misses for the same blobKey collapse into one upstream
+	// fetch. The leader runs the closure below; followers block, then fall
+	// through to read the blob the leader just cached. The closure returns
+	// (contentType, hasBlob, err): hasBlob means a servable blob is in the store.
+	ct, hasBlob, err := f.flight.do(blobKey, func() (string, bool, error) {
+		// ── 3. Circuit breaker check ───────────────────────────────────
+		host := upstreamHost(upURL)
+		cb := f.getBreaker(host)
+		if !cb.allow(now) {
+			if !f.cfg.DisableStaleOnError && blobExists {
+				return entry.ContentType, true, nil
+			}
+			return "", false, fmt.Errorf("%w: circuit open for %s", ErrUpstreamFailed, host)
+		}
+
+		// ── 4. Build conditional request headers ───────────────────────
+		condHeaders := map[string]string{}
+		if blobExists && hasMeta && !entry.NotFound {
+			if entry.ETag != "" {
+				condHeaders["If-None-Match"] = entry.ETag
+			} else if entry.LastModified != "" {
+				condHeaders["If-Modified-Since"] = entry.LastModified
 			}
 		}
-		return nil, "", fmt.Errorf("%w: circuit open for %s", ErrUpstreamFailed, host)
-	}
 
-	// ── 4. Build conditional request headers ───────────────────────────────
-	condHeaders := map[string]string{}
-	if blobExists && hasMeta && !entry.NotFound {
-		if entry.ETag != "" {
-			condHeaders["If-None-Match"] = entry.ETag
-		} else if entry.LastModified != "" {
-			condHeaders["If-Modified-Since"] = entry.LastModified
-		}
-	}
-
-	// ── 5. Upstream fetch (with retries and optional auth) ─────────────────
-	upResp, fetchErr := f.fetchUpstream(upURL, condHeaders)
-	if fetchErr != nil {
-		cb.failure(now)
-		metas.PutJSON(cacheNS, HealthKey, HealthRecord{OK: false, CheckedAt: now, ErrMsg: fetchErr.Error()}) //nolint:errcheck
-		if !f.cfg.DisableStaleOnError && blobExists {
-			if rc, err := blobs.Get(blobKey); err == nil {
-				return rc, entry.ContentType, nil
+		// ── 5. Upstream fetch (with retries and optional auth) ──────────
+		upResp, fetchErr := f.fetchUpstream(upURL, condHeaders)
+		if fetchErr != nil {
+			cb.failure(now)
+			metas.PutJSON(cacheNS, HealthKey, HealthRecord{OK: false, CheckedAt: now, ErrMsg: fetchErr.Error()}) //nolint:errcheck
+			if !f.cfg.DisableStaleOnError && blobExists {
+				return entry.ContentType, true, nil
 			}
+			return "", false, fmt.Errorf("%w: %v", ErrUpstreamFailed, fetchErr)
 		}
-		return nil, "", fmt.Errorf("%w: %v", ErrUpstreamFailed, fetchErr)
-	}
-	cb.success()
+		cb.success()
 
-	// ── 6. Handle upstream response ────────────────────────────────────────
-	switch upResp.statusCode {
-	case http.StatusNotModified:
-		entry.FetchedAt = now
-		metas.PutJSON(cacheNS, blobKey, entry)
-		metas.PutJSON(cacheNS, HealthKey, HealthRecord{OK: true, CheckedAt: now}) //nolint:errcheck
-		if rc, err := blobs.Get(blobKey); err == nil {
+		// ── 6. Handle upstream response ─────────────────────────────────
+		switch upResp.statusCode {
+		case http.StatusNotModified:
+			entry.FetchedAt = now
+			metas.PutJSON(cacheNS, blobKey, entry)
+			metas.PutJSON(cacheNS, HealthKey, HealthRecord{OK: true, CheckedAt: now}) //nolint:errcheck
 			if f.cfg.RecordRevalidation != nil {
 				f.cfg.RecordRevalidation()
 			}
-			return rc, entry.ContentType, nil
-		}
-		return nil, "", fmt.Errorf("%w: blob disappeared after 304", ErrUpstreamFailed)
+			return entry.ContentType, true, nil
 
-	case http.StatusOK:
-		ct := upResp.contentType
-		newEntry := CacheEntry{
-			FetchedAt:    now,
-			ETag:         upResp.etag,
-			LastModified: upResp.lastMod,
-			ContentType:  ct,
-		}
-		blobs.Put(blobKey, bytes.NewReader(upResp.body))
-		metas.PutJSON(cacheNS, blobKey, newEntry)
-		metas.PutJSON(cacheNS, HealthKey, HealthRecord{OK: true, CheckedAt: now}) //nolint:errcheck
-		if f.cfg.RecordMiss != nil {
-			f.cfg.RecordMiss()
-		}
-		return io.NopCloser(bytes.NewReader(upResp.body)), ct, nil
-
-	case http.StatusNotFound:
-		metas.PutJSON(cacheNS, blobKey, CacheEntry{FetchedAt: now, NotFound: true})
-		metas.PutJSON(cacheNS, HealthKey, HealthRecord{OK: false, CheckedAt: now, ErrMsg: "upstream returned 404"}) //nolint:errcheck
-		return nil, "", ErrNotFound
-
-	default:
-		errMsg := fmt.Sprintf("upstream returned %d", upResp.statusCode)
-		metas.PutJSON(cacheNS, HealthKey, HealthRecord{OK: false, CheckedAt: now, ErrMsg: errMsg}) //nolint:errcheck
-		if !f.cfg.DisableStaleOnError && blobExists {
-			if rc, err := blobs.Get(blobKey); err == nil {
-				return rc, entry.ContentType, nil
+		case http.StatusOK:
+			ct := upResp.contentType
+			newEntry := CacheEntry{
+				FetchedAt:    now,
+				ETag:         upResp.etag,
+				LastModified: upResp.lastMod,
+				ContentType:  ct,
 			}
+			blobs.Put(blobKey, bytes.NewReader(upResp.body))
+			metas.PutJSON(cacheNS, blobKey, newEntry)
+			metas.PutJSON(cacheNS, HealthKey, HealthRecord{OK: true, CheckedAt: now}) //nolint:errcheck
+			if f.cfg.RecordMiss != nil {
+				f.cfg.RecordMiss()
+			}
+			return ct, true, nil
+
+		case http.StatusNotFound:
+			metas.PutJSON(cacheNS, blobKey, CacheEntry{FetchedAt: now, NotFound: true})
+			metas.PutJSON(cacheNS, HealthKey, HealthRecord{OK: false, CheckedAt: now, ErrMsg: "upstream returned 404"}) //nolint:errcheck
+			return "", false, ErrNotFound
+
+		default:
+			errMsg := fmt.Sprintf("upstream returned %d", upResp.statusCode)
+			metas.PutJSON(cacheNS, HealthKey, HealthRecord{OK: false, CheckedAt: now, ErrMsg: errMsg}) //nolint:errcheck
+			if !f.cfg.DisableStaleOnError && blobExists {
+				return entry.ContentType, true, nil
+			}
+			return "", false, fmt.Errorf("%w: %s", ErrUpstreamFailed, errMsg)
 		}
-		return nil, "", fmt.Errorf("%w: %s", ErrUpstreamFailed, errMsg)
+	})
+
+	if err != nil {
+		return nil, "", err
 	}
+	if !hasBlob {
+		// Defensive: hasBlob is always true when err is nil.
+		return nil, "", ErrUpstreamFailed
+	}
+	rc, gerr := blobs.Get(blobKey)
+	if gerr != nil {
+		return nil, "", fmt.Errorf("%w: %v", ErrUpstreamFailed, gerr)
+	}
+	return rc, ct, nil
 }
 
 // upstreamResult holds the parsed outcome of one upstream HTTP request.
