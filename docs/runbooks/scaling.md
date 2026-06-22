@@ -75,9 +75,11 @@ Key metrics: `forge_http_requests_total`, `forge_http_request_duration_seconds`,
 - **Per-pod circuit breakers are intentional.** Each replica independently fast-fails
   a flapping upstream; there is no shared breaker. One pod may be probing while another
   is open — expected, not a bug.
-- **Audit retention is not yet automated.** The `audit_log` table grows unbounded.
-  Until retention ships (scheduled `DELETE` / monthly partitions — see WORKPLAN-SCALING),
-  prune manually: `DELETE FROM audit_log WHERE ts < now() - interval '90 days';`
+- **Audit retention is automated.** A pruner deletes `audit_log` entries older than
+  `-audit-retention` (env `AUDIT_RETENTION`, default 90d; `0` disables) in bounded
+  batches. Tune it to your compliance window. Browse the full durable history with
+  filters/pagination at **`/ui/admin/audit`** (linked from Observability → Audit log),
+  or via `GET /api/v1/audit` (keyset cursor in `X-Next-Cursor-*` headers).
 - **Drain on scale-down.** `terminationGracePeriodSeconds` (35s) must exceed
   `-drain-timeout` (30s) so in-flight requests finish on rollout / scale-in. The chart
   keeps these aligned; preserve the gap if you override either.

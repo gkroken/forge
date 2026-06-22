@@ -1,11 +1,13 @@
 # WORKPLAN — Horizontal Scaling (N replicas behind a load balancer)
 
-**Status:** S1–S4 **DONE** (2026-06-22). Decision locked and implemented; multi-replica
-ready with external storage. Deferred follow-up: audit_log retention (see Phase S2 / Gotchas).
+**Status:** S1–S4 **DONE** (2026-06-22), plus audit retention + history browsing.
+Decision locked and implemented; multi-replica ready with external storage.
 **Date:** 2026-06-22.
 
 **Shipped:** S1 `obs.AuditSink` iface (14578aa) · S2 `PGAuditSink` + migration 003 (3ee8ca1) ·
-S3 per-replica UI labels (a62a2b1) · S4 scaling runbook + Helm fs-multi-replica guard (4cc623f).
+S3 per-replica UI labels (a62a2b1) · S4 scaling runbook + Helm fs-multi-replica guard (4cc623f) ·
+audit retention pruner + keyset query engine (29a2181) · audit history page + API (a8aa931).
+No deferred items remaining on this track.
 
 ## Decision
 

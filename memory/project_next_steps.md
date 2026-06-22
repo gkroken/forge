@@ -69,7 +69,12 @@ Three classes of per-pod control state → three homes:
   **S4 DONE** (commit 4cc623f): docs/runbooks/scaling.md (external-storage prereq, per-pod
   vs fleet-wide state table, Prometheus/Grafana wiring) + Helm guard that fails render on
   storage.type=fs with replicaCount>1 or autoscaling. **WHOLE SCALING TRACK S1–S4 COMPLETE.**
-  Multi-replica ready with external storage (S3+PG). Only deferred item = audit_log retention.
+  Multi-replica ready with external storage (S3+PG). **Audit retention + history DONE**
+  (commits 29a2181, a8aa931): automated batched pruner (`-audit-retention`/`AUDIT_RETENTION`,
+  default 90d, 0=off); `obs.AuditQuerier` keyset (ts,id) pagination — NO OFFSET — w/ actor/path
+  filters; history browser `/ui/admin/audit` (filter form + "Older →" cursor links, linked from
+  Observability) + extended `/api/v1/audit` (additive ts/id, X-Next-Cursor-* headers,
+  repo_config.js unbroken). NO deferred items remain on the scaling track.
 - **Circuit breakers** (`proxy.go` + `globalHealth`) → **stay per-pod** (correct, no work).
 Data plane already replica-ready (meta→PG, blob→S3, queue→PG auto on POSTGRES_DSN).
 Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses durable audit).
