@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"log/slog"
 	"net/http"
@@ -42,6 +43,18 @@ func main() {
 	drainTimeout := flag.Duration("drain-timeout", 30*time.Second, "graceful shutdown drain timeout")
 	enableAuth := flag.Bool("auth", false, "enable token authentication (creates token store in data dir)")
 	logFormat := flag.String("log-format", "json", "log format: json or text")
+
+	// OIDC / SSO. Each flag defaults to its OIDC_* env var so either works; a
+	// flag value overrides the env. Setting the issuer enables SSO. Works with
+	// any OIDC IdP — Keycloak, Entra/Azure AD, Okta, ADFS — which is how forge
+	// integrates with Active Directory (the IdP brokers AD).
+	oidcIssuer := flag.String("oidc-issuer", os.Getenv("OIDC_ISSUER"), "OIDC issuer URL — enables SSO (env OIDC_ISSUER)")
+	oidcClientID := flag.String("oidc-client-id", os.Getenv("OIDC_CLIENT_ID"), "OIDC client ID (env OIDC_CLIENT_ID)")
+	oidcClientSecret := flag.String("oidc-client-secret", os.Getenv("OIDC_CLIENT_SECRET"), "OIDC client secret — prefer the env var; flags are visible in ps (env OIDC_CLIENT_SECRET)")
+	oidcRedirectURL := flag.String("oidc-redirect-url", os.Getenv("OIDC_REDIRECT_URL"), "OIDC redirect URL, e.g. https://forge.example.com/auth/oidc/callback (env OIDC_REDIRECT_URL)")
+	oidcGroupsClaim := flag.String("oidc-groups-claim", os.Getenv("OIDC_GROUPS_CLAIM"), "ID-token claim holding group membership (default \"groups\") (env OIDC_GROUPS_CLAIM)")
+	oidcGroupMappings := flag.String("oidc-group-mappings", os.Getenv("OIDC_GROUP_MAPPINGS"), "IdP group→role map, e.g. forge-admins:admin,devs:write,staff:read (env OIDC_GROUP_MAPPINGS)")
+	oidcTokenTTL := flag.String("oidc-token-ttl", os.Getenv("OIDC_TOKEN_TTL"), "lifetime of an SSO session (default 8h) (env OIDC_TOKEN_TTL)")
 	flag.Parse()
 
 	obs.InitLog(*logFormat)
@@ -205,17 +218,45 @@ func main() {
 		WithRoles(roleStore).
 		WithBlobWalker(workerCtx)
 
-	if oidcCfg, err := oidc.FromEnv(); err != nil {
-		slog.Error("oidc: invalid configuration", "err", err)
-		os.Exit(1)
-	} else if oidcCfg != nil {
-		oidcProvider, err := oidc.New(context.Background(), *oidcCfg)
+	if *oidcIssuer != "" {
+		grants := []auth.Grant{{Repo: "*", Role: auth.RoleRead}}
+		if raw := os.Getenv("OIDC_DEFAULT_GRANTS"); raw != "" {
+			if err := json.Unmarshal([]byte(raw), &grants); err != nil {
+				slog.Error("oidc: invalid OIDC_DEFAULT_GRANTS", "err", err)
+				os.Exit(1)
+			}
+		}
+		ttl := 8 * time.Hour
+		if *oidcTokenTTL != "" {
+			d, err := time.ParseDuration(*oidcTokenTTL)
+			if err != nil {
+				slog.Error("oidc: invalid -oidc-token-ttl", "err", err)
+				os.Exit(1)
+			}
+			ttl = d
+		}
+		mappings, err := oidc.ParseGroupMappings(*oidcGroupMappings)
+		if err != nil {
+			slog.Error("oidc: invalid -oidc-group-mappings", "err", err)
+			os.Exit(1)
+		}
+		cfg := oidc.Config{
+			Issuer: *oidcIssuer, ClientID: *oidcClientID, ClientSecret: *oidcClientSecret,
+			RedirectURL: *oidcRedirectURL, GroupsClaim: *oidcGroupsClaim,
+			GroupMappings: mappings, DefaultGrants: grants, TokenTTL: ttl,
+		}
+		if err := cfg.Validate(); err != nil {
+			slog.Error("oidc: invalid configuration", "err", err)
+			os.Exit(1)
+		}
+		provider, err := oidc.New(context.Background(), cfg)
 		if err != nil {
 			slog.Error("oidc: provider discovery failed", "err", err)
 			os.Exit(1)
 		}
-		forgeSrv = forgeSrv.WithOIDC(oidcProvider)
-		slog.Info("oidc: configured", "issuer", oidcCfg.Issuer)
+		forgeSrv = forgeSrv.WithOIDC(provider, auth.NewGroupRoleMapper(mappings))
+		slog.Info("oidc: configured", "issuer", cfg.Issuer,
+			"groups_claim", cfg.GroupsClaim, "group_rules", len(mappings))
 	}
 
 	srv := &http.Server{

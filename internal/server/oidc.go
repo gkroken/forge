@@ -110,32 +110,95 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Mint a forge token for this OIDC identity.
-	label := info.Email
-	if label == "" {
-		label = info.Subject
-	}
-	desc := "oidc:" + label
-	expiry := time.Now().Add(s.OIDC.TokenTTL())
-	tok, secret, err := s.Auth.Create(desc, s.OIDC.DefaultGrants(), &expiry)
-	if err != nil {
-		slog.Error("oidc: token create failed", "err", err)
+	if err := s.establishSSOSession(w, r, "oidc", info.Subject, info.Email, info.Groups,
+		s.OIDC.DefaultGrants(), s.OIDC.TokenTTL()); err != nil {
+		slog.Error("oidc: establish session failed", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
 	}
-	slog.Info("audit", "audit", true, "event", "oidc.login",
-		"token_id", tok.ID, "subject", info.Subject, "email", info.Email)
+}
+
+// establishSSOSession is the transport-neutral tail of any single-sign-on login.
+// Given an already-authenticated identity (subject, email, groups), it resolves a
+// role from group membership, provisions/refreshes the User record, mints a forge
+// session token, sets the session cookie, and redirects to the UI.
+//
+// handleOIDCCallback calls it today; a future LDAP-bind handler would call it the
+// same way, passing source="ldap" and its own fallback grants/TTL — which is why
+// role mapping and user provisioning live here rather than in the OIDC package.
+//
+// On success it writes the redirect itself and returns nil. It returns a non-nil
+// error only for internal failures the caller should surface as 500; the
+// disabled-account path is handled inline with a redirect and returns nil.
+func (s *Server) establishSSOSession(w http.ResponseWriter, r *http.Request,
+	source, subject, email string, groups []string,
+	fallback []auth.Grant, ttl time.Duration) error {
+
+	label := email
+	if label == "" {
+		label = subject
+	}
+
+	// Resolve grants from group membership; fall back when no group matches.
+	role, matched := s.GroupMapper.Resolve(groups)
+	var grants []auth.Grant
+	if matched {
+		grants = []auth.Grant{{Repo: "*", Role: role}}
+	} else {
+		grants = fallback
+		role = bestGrantRole(fallback)
+	}
+
+	// Provision / refresh the user record so SSO identities show in the Users tab.
+	if s.Users != nil {
+		if existing, ok, _ := s.Users.Get(label); ok && existing.Disabled {
+			slog.Warn("sso: login denied for disabled user", "source", source, "user", label)
+			http.Redirect(w, r, "/ui/login?error=disabled", http.StatusSeeOther)
+			return nil
+		}
+		now := time.Now().UTC()
+		if err := s.Users.Upsert(auth.User{
+			Username:    label,
+			DisplayName: email,
+			Role:        role.String(),
+			LastLogin:   &now,
+		}); err != nil {
+			slog.Warn("sso: user upsert failed", "source", source, "user", label, "err", err)
+			// non-fatal: still issue the session token
+		}
+	}
+
+	expiry := time.Now().Add(ttl)
+	tok, secret, err := s.Auth.Create(source+":"+label, grants, &expiry)
+	if err != nil {
+		return err
+	}
+	slog.Info("audit", "audit", true, "event", source+".login",
+		"token_id", tok.ID, "subject", subject, "email", email,
+		"role", role.String(), "group_matched", matched)
 
 	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure set via isSecureContext; HttpOnly+SameSiteStrict already present
 		Name:     auth.UISessionCookie,
 		Value:    secret,
 		Path:     "/",
-		MaxAge:   int(s.OIDC.TokenTTL().Seconds()),
+		MaxAge:   int(ttl.Seconds()),
 		HttpOnly: true,
 		Secure:   isSecureContext(r),
 		SameSite: http.SameSiteStrictMode,
 	})
 	http.Redirect(w, r, "/ui/", http.StatusSeeOther)
+	return nil
+}
+
+// bestGrantRole returns the highest Role across a set of grants, used to label a
+// provisioned SSO user when no group rule matched.
+func bestGrantRole(grants []auth.Grant) auth.Role {
+	best := auth.RoleNone
+	for _, g := range grants {
+		if g.Role > best {
+			best = g.Role
+		}
+	}
+	return best
 }
 
 // ── state cookie signing ──────────────────────────────────────────────────────

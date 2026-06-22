@@ -194,6 +194,84 @@ func TestHandleOIDCCallback_MintedTokenHasDefaultGrants(t *testing.T) {
 	}
 }
 
+func TestHandleOIDCCallback_GroupMapsToAdmin(t *testing.T) {
+	srv, authStore, fake := newOIDCServer(t)
+	srv.GroupMapper = auth.NewGroupRoleMapper([]auth.GroupRule{
+		{Group: "forge-admins", Role: auth.RoleAdmin},
+		{Group: "devs", Role: auth.RoleWrite},
+	})
+	fake.defaultGrants = []auth.Grant{{Repo: "*", Role: auth.RoleRead}}
+	fake.exchangeInfo = forgeoidc.UserInfo{Subject: "u1", Email: "a@x.com", Groups: []string{"devs", "forge-admins"}}
+
+	rw := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw, callbackReq(t, srv, "s", "n", "code", ""))
+	tok, _ := authStore.Verify(sessionCookieValue(rw))
+	if tok == nil || len(tok.Grants) != 1 || tok.Grants[0].Repo != "*" || tok.Grants[0].Role != auth.RoleAdmin {
+		t.Fatalf("expected admin grant on *, got %+v", tok)
+	}
+}
+
+func TestHandleOIDCCallback_NoGroupMatchUsesFallback(t *testing.T) {
+	srv, authStore, fake := newOIDCServer(t)
+	srv.GroupMapper = auth.NewGroupRoleMapper([]auth.GroupRule{{Group: "forge-admins", Role: auth.RoleAdmin}})
+	fake.defaultGrants = []auth.Grant{{Repo: "npm-hosted", Role: auth.RoleRead}}
+	fake.exchangeInfo = forgeoidc.UserInfo{Subject: "u1", Groups: []string{"contractors"}}
+
+	rw := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw, callbackReq(t, srv, "s", "n", "code", ""))
+	tok, _ := authStore.Verify(sessionCookieValue(rw))
+	if tok == nil || len(tok.Grants) != 1 || tok.Grants[0].Repo != "npm-hosted" || tok.Grants[0].Role != auth.RoleRead {
+		t.Fatalf("expected fallback grant, got %+v", tok)
+	}
+}
+
+func TestHandleOIDCCallback_ProvisionsUser(t *testing.T) {
+	srv, _, fake := newOIDCServer(t)
+	srv.Users = auth.NewUserStore(srv.Meta)
+	srv.GroupMapper = auth.NewGroupRoleMapper([]auth.GroupRule{{Group: "forge-admins", Role: auth.RoleAdmin}})
+	fake.exchangeInfo = forgeoidc.UserInfo{Subject: "u1", Email: "alice@x.com", Groups: []string{"forge-admins"}}
+
+	rw := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw, callbackReq(t, srv, "s", "n", "code", ""))
+
+	u, ok, _ := srv.Users.Get("alice@x.com")
+	if !ok {
+		t.Fatal("SSO user was not provisioned")
+	}
+	if auth.BaseRoleFor(u.Role) != auth.RoleAdmin {
+		t.Errorf("provisioned role: got %q, want admin", u.Role)
+	}
+	if u.LastLogin == nil {
+		t.Error("LastLogin should be set on SSO login")
+	}
+}
+
+func TestHandleOIDCCallback_DisabledUserDenied(t *testing.T) {
+	srv, authStore, fake := newOIDCServer(t)
+	srv.Users = auth.NewUserStore(srv.Meta)
+	// Pre-create then disable the user.
+	if err := srv.Users.Upsert(auth.User{Username: "blocked@x.com", Role: "read"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.Users.SetDisabled("blocked@x.com", true); err != nil {
+		t.Fatal(err)
+	}
+	fake.exchangeInfo = forgeoidc.UserInfo{Subject: "u1", Email: "blocked@x.com"}
+
+	rw := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw, callbackReq(t, srv, "s", "n", "code", ""))
+
+	if loc := rw.Header().Get("Location"); !strings.Contains(loc, "error=disabled") {
+		t.Fatalf("expected error=disabled redirect, got %q", loc)
+	}
+	if sessionCookieValue(rw) != "" {
+		t.Error("no session cookie should be set for a disabled user")
+	}
+	if n, _ := authStore.Count(); n != 0 {
+		t.Errorf("no token should be minted for a disabled user, got %d", n)
+	}
+}
+
 func TestHandleOIDCCallback_IdPErrorRedirectsToLogin(t *testing.T) {
 	srv, _, _ := newOIDCServer(t)
 	rw := httptest.NewRecorder()

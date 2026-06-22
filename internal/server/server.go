@@ -60,24 +60,25 @@ type BlobSizes struct {
 }
 
 type Server struct {
-	Repos     *repo.Manager
-	Handlers  *format.Registry
-	Blob      blob.Store
-	Meta      meta.Store
-	Auth      auth.Store             // nil = auth not enabled (eval mode)
-	Enforcer  *auth.Enforcer         // always non-nil; uses AllowAll when Auth is nil
-	OIDC      oidcProvider           // nil = OIDC not configured; *oidc.Provider satisfies this
-	Queue     queue.Queue            // nil = no async index regen (eval / tests)
-	Metrics   *obs.Metrics           // nil = no instrumentation (tests)
-	Cleanup   *cleanup.PolicyManager // nil = cleanup-policies API returns 503
-	Scheduler *cleanup.Scheduler     // nil = no scheduled runs (eval / tests)
-	AuditLog  *obs.AuditLog          // nil = no in-memory audit log
-	Users     auth.UserStore         // nil = user management not configured
-	Roles     auth.RoleStore         // nil = custom roles not configured
-	MaxUpload int64                  // per-request body limit; 0 = use defaultMaxUpload
-	reg       prometheus.Gatherer
-	client    *http.Client
-	oidcKey   []byte // HMAC key for signing OIDC state cookies; set by WithOIDC
+	Repos       *repo.Manager
+	Handlers    *format.Registry
+	Blob        blob.Store
+	Meta        meta.Store
+	Auth        auth.Store             // nil = auth not enabled (eval mode)
+	Enforcer    *auth.Enforcer         // always non-nil; uses AllowAll when Auth is nil
+	OIDC        oidcProvider           // nil = OIDC not configured; *oidc.Provider satisfies this
+	GroupMapper *auth.GroupRoleMapper  // nil = no group→role mapping; SSO logins use fallback grants
+	Queue       queue.Queue            // nil = no async index regen (eval / tests)
+	Metrics     *obs.Metrics           // nil = no instrumentation (tests)
+	Cleanup     *cleanup.PolicyManager // nil = cleanup-policies API returns 503
+	Scheduler   *cleanup.Scheduler     // nil = no scheduled runs (eval / tests)
+	AuditLog    *obs.AuditLog          // nil = no in-memory audit log
+	Users       auth.UserStore         // nil = user management not configured
+	Roles       auth.RoleStore         // nil = custom roles not configured
+	MaxUpload   int64                  // per-request body limit; 0 = use defaultMaxUpload
+	reg         prometheus.Gatherer
+	client      *http.Client
+	oidcKey     []byte // HMAC key for signing OIDC state cookies; set by WithOIDC
 
 	started time.Time // process start; powers the dashboard uptime readout
 
@@ -110,10 +111,12 @@ func (s *Server) WithMetrics(metrics *obs.Metrics, gatherer prometheus.Gatherer)
 	return s
 }
 
-// WithOIDC attaches an OIDC provider and generates the HMAC signing key used
-// for state cookies.  Call before Routes().
-func (s *Server) WithOIDC(p *oidc.Provider) *Server {
+// WithOIDC attaches an OIDC provider and its group→role mapper, and generates
+// the HMAC signing key used for state cookies.  mapper may be nil (SSO logins
+// then fall back to the provider's default grants).  Call before Routes().
+func (s *Server) WithOIDC(p *oidc.Provider, mapper *auth.GroupRoleMapper) *Server {
 	s.OIDC = p
+	s.GroupMapper = mapper
 	s.oidcKey = make([]byte, 32)
 	if _, err := rand.Read(s.oidcKey); err != nil {
 		panic("server: crypto/rand unavailable: " + err.Error())

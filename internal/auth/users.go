@@ -28,6 +28,10 @@ type storedUser struct {
 // UserStore manages human user accounts.
 type UserStore interface {
 	Create(username, password, role string) (User, error)
+	// Upsert creates or updates an externally-authenticated user (SSO/LDAP) that
+	// has no local password. On an existing user it updates DisplayName, Role and
+	// LastLogin but preserves the password hash, CreatedAt, and Disabled flag.
+	Upsert(u User) error
 	List() ([]User, error)
 	Get(username string) (User, bool, error)
 	Delete(username string) error
@@ -60,6 +64,27 @@ func (s *userMetaStore) Create(username, password, role string) (User, error) {
 		return User{}, err
 	}
 	return u, nil
+}
+
+func (s *userMetaStore) Upsert(u User) error {
+	if u.Username == "" {
+		return fmt.Errorf("username required")
+	}
+	var su storedUser
+	if ok, _ := s.m.GetJSON(nsUsers, u.Username, &su); ok {
+		// Existing user: update mutable fields, preserve password/CreatedAt/Disabled.
+		su.DisplayName = u.DisplayName
+		su.Role = u.Role
+		if u.LastLogin != nil {
+			su.LastLogin = u.LastLogin
+		}
+	} else {
+		if u.CreatedAt.IsZero() {
+			u.CreatedAt = time.Now().UTC()
+		}
+		su = storedUser{User: u} // no PasswordHash → password login impossible
+	}
+	return s.m.PutJSON(nsUsers, u.Username, su)
 }
 
 func (s *userMetaStore) List() ([]User, error) {
