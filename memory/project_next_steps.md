@@ -80,11 +80,20 @@ Data plane already replica-ready (meta→PG, blob→S3, queue→PG auto on POSTG
 Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses durable audit).
 
 **4. ROADMAP after scaling (decided 2026-06-22):**
-- **NEXT = scheduler-HA single-firing and/or webhooks.** CONFIRMED GAP: `cleanup.Scheduler`
-  (`internal/cleanup/scheduler.go:53`) ticks every minute per-pod with an in-memory `lastRun`
-  map, NO leader election/advisory lock → under N replicas every pod fires scheduled cleanup
-  (PG queue dedups index-regen jobs but NOT scheduled cleanup runs). Fix = PG advisory lock or
-  leader election. This is ALSO a prerequisite for vuln re-scan. Startup prompt drafted for this.
+- **Scheduler-HA single-firing — DONE 2026-06-22 (commit 23038ae, WORKPLAN-SCHEDULER-HA.md).**
+  Was: `cleanup.Scheduler` ticked per-pod with in-memory `lastRun`, no leader election → every
+  pod fired every due scheduled cleanup under N replicas. Fix = `cleanup.Coordinator` seam,
+  gated on POSTGRES_DSN (mirrors queue.NewPG/NewMem): `localCoordinator` (eval/FS, default =
+  unchanged single-node) vs `PGCoordinator` (`pg_try_advisory_lock` elects one leader per tick
+  + shared `lastRun` in `cleanup_schedule_state`, migration 004). Lock alone insufficient —
+  shared lastRun load-bearing (follower re-acquiring after release would see its own zero map).
+  `scheduler.go` dropped mu/lastRun, gained `WithCoordinator`+exported `Tick`; `RunDue` sig
+  unchanged. On-publish `Notify` left per-pod ON PURPOSE (publish hits one pod = already
+  single-fire; ticker was the only fan-out gap). Integration test: 2 PGCoordinators race Tick
+  on one PG → exactly 1 run. This was ALSO the prereq for the future vuln re-scan scheduler.
+- **NEXT = webhooks** (on-publish events to HTTP endpoints for CI/Slack). Delivery-model
+  decision pending: synchronous best-effort vs durable via the PG queue (lean = reuse
+  `queue.Queue` for replica-safe at-least-once + HMAC-signed payloads). Not yet started.
 - **Vuln scanning = DEFERRED, designed.** Full spike written: `WORKPLAN-VULN.md` — three
   separate phased plans: Plan A OSV (npm+Maven, V0 slice→V1 breadth+obs→V2 warn/block policy),
   Plan B OCI (Trivy/Grype sidecar, NOT in-process), Plan C Helm (config + referenced-image).
