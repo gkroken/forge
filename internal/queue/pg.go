@@ -28,12 +28,21 @@ type PG struct {
 func NewPG(db *sql.DB) *PG { return &PG{db: db} }
 
 func (p *PG) Enqueue(ctx context.Context, typ string, payload any) error {
+	return p.EnqueueAfter(ctx, typ, payload, 0)
+}
+
+func (p *PG) EnqueueAfter(ctx context.Context, typ string, payload any, delay time.Duration) error {
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("queue.PG: marshal payload: %w", err)
 	}
+	visibleAfter := time.Now()
+	if delay > 0 {
+		visibleAfter = visibleAfter.Add(delay)
+	}
 	_, err = p.db.ExecContext(ctx,
-		`INSERT INTO jobs (type, payload) VALUES ($1, $2)`, typ, b)
+		`INSERT INTO jobs (type, payload, visible_after) VALUES ($1, $2, $3)`,
+		typ, b, visibleAfter.UTC())
 	if err != nil {
 		return fmt.Errorf("queue.PG: enqueue: %w", err)
 	}
@@ -88,6 +97,7 @@ func (p *PG) dequeue(ctx context.Context) (*Job, error) {
 		DELETE FROM jobs
 		WHERE id = (
 			SELECT id FROM jobs
+			WHERE visible_after <= now()
 			ORDER BY id
 			LIMIT 1
 			FOR UPDATE SKIP LOCKED

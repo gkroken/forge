@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // Mem is an in-process, channel-backed Queue. It is safe for concurrent use
@@ -25,6 +26,16 @@ func NewMem(cap int) *Mem {
 // Enqueue buffers a job. If the buffer is full it blocks until space is
 // available or ctx is cancelled.
 func (m *Mem) Enqueue(ctx context.Context, typ string, payload any) error {
+	return m.EnqueueAfter(ctx, typ, payload, 0)
+}
+
+// EnqueueAfter buffers a job, delaying its availability by delay. With delay<=0
+// it behaves like Enqueue (blocking on a full buffer until space or ctx).
+// With delay>0 it returns immediately and schedules the buffered send via a
+// timer; the job is counted toward Drain at call time so test synchronisation
+// still accounts for in-flight delayed retries. Delayed sends are best-effort
+// across shutdown (the in-memory queue is not durable).
+func (m *Mem) EnqueueAfter(ctx context.Context, typ string, payload any, delay time.Duration) error {
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("queue.Mem: marshal payload: %w", err)
@@ -35,13 +46,23 @@ func (m *Mem) Enqueue(ctx context.Context, typ string, payload any) error {
 		Payload: b,
 	}
 	m.wg.Add(1)
-	select {
-	case m.ch <- j:
-		return nil
-	case <-ctx.Done():
-		m.wg.Done() // undo the Add; job was never queued
-		return ctx.Err()
+	if delay <= 0 {
+		select {
+		case m.ch <- j:
+			return nil
+		case <-ctx.Done():
+			m.wg.Done() // undo the Add; job was never queued
+			return ctx.Err()
+		}
 	}
+	time.AfterFunc(delay, func() {
+		select {
+		case m.ch <- j:
+		case <-ctx.Done():
+			m.wg.Done() // shutting down before the delayed send landed
+		}
+	})
+	return nil
 }
 
 // Work processes jobs until ctx is cancelled. fn errors are logged but do

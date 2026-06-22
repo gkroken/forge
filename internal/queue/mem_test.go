@@ -88,3 +88,26 @@ func TestMem_JobPayloadRoundTrip(t *testing.T) {
 		t.Errorf("payload X: got %d", got.X)
 	}
 }
+
+// TestMem_EnqueueAfter_Delays verifies a delayed job isn't delivered before its
+// delay elapses, then is.
+func TestMem_EnqueueAfter_Delays(t *testing.T) {
+	q := NewMem(10)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var seen atomic.Int32
+	go q.Work(ctx, func(_ context.Context, _ Job) error { seen.Add(1); return nil }) //nolint:errcheck
+
+	if err := q.EnqueueAfter(ctx, "t", map[string]int{"n": 1}, 120*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(40 * time.Millisecond)
+	if got := seen.Load(); got != 0 {
+		t.Fatalf("delayed job delivered too early: %d", got)
+	}
+	time.Sleep(150 * time.Millisecond)
+	if got := seen.Load(); got != 1 {
+		t.Fatalf("delayed job not delivered after its delay: %d", got)
+	}
+}

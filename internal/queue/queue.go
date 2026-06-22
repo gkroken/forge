@@ -52,7 +52,15 @@ type TaskInfo struct {
 type Queue interface {
 	// Enqueue adds a job with the given type and a JSON-serialisable payload.
 	// It returns as soon as the job is accepted; processing is asynchronous.
+	// Equivalent to EnqueueAfter with a zero delay.
 	Enqueue(ctx context.Context, typ string, payload any) error
+
+	// EnqueueAfter adds a job that only becomes eligible for processing once
+	// delay has elapsed (delay <= 0 means immediately). This backs delayed
+	// retries such as webhook-delivery backoff: the durable PG impl persists the
+	// visibility time so a delayed retry survives restarts; the in-memory impl
+	// schedules the enqueue.
+	EnqueueAfter(ctx context.Context, typ string, payload any, delay time.Duration) error
 
 	// Work blocks until ctx is cancelled, calling fn for each job.
 	// If fn returns a non-nil error the job may be retried (impl-specific).

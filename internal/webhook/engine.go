@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"time"
 
@@ -18,11 +19,30 @@ import (
 // as a handler on the shared async worker (see indexer.Worker.Register).
 const JobType = "webhook.deliver"
 
-// defaultMaxAttempts bounds delivery retries. The queue has no delay primitive,
-// so retries are immediate; this caps a dead endpoint instead of retrying it
-// forever. Delayed/exponential backoff is deferred (needs a queue visible-after
-// column) — see WORKPLAN-WEBHOOKS.md.
+// defaultMaxAttempts bounds delivery retries before a delivery is dropped.
 const defaultMaxAttempts = 5
+
+// Retry backoff: delayed re-enqueue (EnqueueAfter) so a temporarily-unavailable
+// endpoint gets time to recover and the single worker isn't pinned on a doomed
+// delivery. Equal-jitter exponential: backoffBase·2^(n-1), half-fixed plus
+// random half to de-synchronise herds of failing deliveries, capped at maxBackoff.
+const (
+	backoffBase = 2 * time.Second
+	maxBackoff  = 5 * time.Minute
+)
+
+// expBackoff returns the delay before retry attempt n (n >= 1).
+func expBackoff(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	d := backoffBase << (attempt - 1) // base * 2^(attempt-1)
+	if d <= 0 || d > maxBackoff {      // overflow or past the ceiling
+		d = maxBackoff
+	}
+	half := d / 2
+	return half + time.Duration(rand.Int64N(int64(half)+1))
+}
 
 // delivery is the enqueued job payload. It carries the subscription ID (not the
 // secret) so the secret never lands in the queue table and a since-disabled or
@@ -40,6 +60,7 @@ type Engine struct {
 	q           queue.Queue
 	client      *http.Client
 	maxAttempts int
+	backoff     func(attempt int) time.Duration
 }
 
 // New returns an Engine persisting subscriptions in m and delivering via q.
@@ -48,7 +69,18 @@ func New(m meta.Store, q queue.Queue, client *http.Client) *Engine {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
-	return &Engine{store: NewStore(m), q: q, client: client, maxAttempts: defaultMaxAttempts}
+	return &Engine{
+		store: NewStore(m), q: q, client: client,
+		maxAttempts: defaultMaxAttempts,
+		backoff:     expBackoff,
+	}
+}
+
+// WithBackoff overrides the retry backoff schedule (delay before retry attempt
+// n). Used by tests to avoid real waits; returns e for chaining.
+func (e *Engine) WithBackoff(fn func(attempt int) time.Duration) *Engine {
+	e.backoff = fn
+	return e
 }
 
 // Store exposes the subscription store for the admin API/UI.
@@ -96,7 +128,8 @@ func (e *Engine) Handle(ctx context.Context, j queue.Job) error {
 	if derr := e.Deliver(ctx, sub, d.Event); derr != nil {
 		if d.Attempt+1 < e.maxAttempts {
 			d.Attempt++
-			if eqErr := e.q.Enqueue(ctx, JobType, d); eqErr != nil {
+			delay := e.backoff(d.Attempt)
+			if eqErr := e.q.EnqueueAfter(ctx, JobType, d, delay); eqErr != nil {
 				slog.Warn("webhook: re-enqueue failed", "sub", sub.ID, "err", eqErr)
 			}
 		} else {

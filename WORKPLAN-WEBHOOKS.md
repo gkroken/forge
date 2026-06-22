@@ -23,12 +23,17 @@ generic `Worker.Register(typ, handler)` seam; the indexer's `npm.regen` stays
 built-in. Bonus: webhook jobs then inherit the existing per-type metrics
 (`QueueJobsTotal`) + tasks-ring instrumentation for free.
 
-### Retry policy (V1)
-The queue has no delay/visibility-timeout primitive. V1 = bounded attempts carried
-in the payload (`Attempt`), self-managed by the handler which ALWAYS returns nil
-(so the queue's generic immediate-retry doesn't double-fire). On failure: re-enqueue
-`Attempt+1` until `maxAttempts`, then log a dropped delivery. **Deferred:** delayed
-exponential backoff (needs a queue `visible_after` column — note in this file).
+### Retry policy
+Bounded attempts carried in the payload (`Attempt`), self-managed by the handler
+which ALWAYS returns nil (so the queue's generic immediate-retry doesn't double-fire).
+On failure: re-enqueue `Attempt+1` until `maxAttempts`, then log a dropped delivery.
+**Delayed exponential backoff — DONE** (commit pending): added a `visible_after`
+primitive to the queue (`EnqueueAfter(ctx, typ, payload, delay)` on the Queue
+interface; migration 005 adds `jobs.visible_after`; PG dequeue filters
+`visible_after <= now()`; Mem schedules via `time.AfterFunc`). Webhook retries use
+equal-jitter exponential backoff (`backoffBase` 2s · 2^(n-1), cap 5m). So a
+temporarily-down endpoint gets time to recover and the single worker isn't pinned on
+a doomed delivery. `WithBackoff` injects a fast schedule in tests.
 
 ### Payload carries subID, not the secret
 Enqueue `{subID, event, attempt}`; the worker loads the subscription at delivery
@@ -82,5 +87,4 @@ secret out of the queue table.
 
 ## Out of scope (deliberate)
 - Policy/audit events — V1 is artifact.published only (extensible via Event.Type).
-- Delayed/exponential backoff (see Retry policy above).
 - OCI `/v2/` publish events — same boundary as cleanup (the four `/repository/` formats first).

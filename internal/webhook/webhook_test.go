@@ -154,7 +154,9 @@ func TestHandle_BoundedRetry(t *testing.T) {
 
 	m := newStore(t)
 	q := queue.NewMem(64)
-	eng := webhook.New(m, q, srv.Client())
+	// Near-zero backoff so the test doesn't wait out the real schedule.
+	eng := webhook.New(m, q, srv.Client()).
+		WithBackoff(func(int) time.Duration { return time.Millisecond })
 	if _, err := eng.Store().Create(webhook.Subscription{
 		Name: "ci", URL: srv.URL, Secret: "k", Enabled: true,
 	}); err != nil {
