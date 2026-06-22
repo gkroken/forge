@@ -761,7 +761,14 @@ func (s *Server) handleExpireCache(w http.ResponseWriter, r *http.Request, name,
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-// handleAuditAPI serves GET /api/v1/audit?repo=&limit=.
+// handleAuditAPI serves GET /api/v1/audit, returning recent audit entries
+// newest-first as a JSON array. Query params (all optional): repo, actor, path
+// (case-insensitive substring), limit (1–200, default 50), and the keyset
+// cursor before_ts/before_id. When the active sink is durable (Postgres) the
+// full history is queryable and the next-page cursor is returned in the
+// X-Next-Cursor-Ts / X-Next-Cursor-Id response headers; otherwise the in-memory
+// recent window is filtered. The base fields are stable for existing callers;
+// ts/id are additive.
 func (s *Server) handleAuditAPI(w http.ResponseWriter, r *http.Request) {
 	if !s.Enforcer.RequireAdmin(w, r) {
 		return
@@ -770,7 +777,11 @@ func (s *Server) handleAuditAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	repoFilter := r.URL.Query().Get("repo")
+	actor := r.URL.Query().Get("actor")
+	pathLike := r.URL.Query().Get("path")
+	if repoFilter := r.URL.Query().Get("repo"); repoFilter != "" && pathLike == "" {
+		pathLike = "/" + repoFilter + "/"
+	}
 	limit := 50
 	if l, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && l > 0 && l <= 200 {
 		limit = l
@@ -778,6 +789,8 @@ func (s *Server) handleAuditAPI(w http.ResponseWriter, r *http.Request) {
 
 	type auditEntry struct {
 		Time     string `json:"time"`
+		TS       string `json:"ts"`
+		ID       int64  `json:"id,omitempty"`
 		Actor    string `json:"actor"`
 		Initials string `json:"initials"`
 		Method   string `json:"method"`
@@ -785,26 +798,46 @@ func (s *Server) handleAuditAPI(w http.ResponseWriter, r *http.Request) {
 		Status   int    `json:"status"`
 		OK       bool   `json:"ok"`
 	}
+	conv := func(e obs.AuditEntry, id int64) auditEntry {
+		return auditEntry{
+			Time:     e.Timestamp.UTC().Format("15:04:05"),
+			TS:       e.Timestamp.UTC().Format(time.RFC3339),
+			ID:       id,
+			Actor:    e.Actor,
+			Initials: actorInitials(e.Actor),
+			Method:   e.Method,
+			Path:     e.Path,
+			Status:   e.Status,
+			OK:       e.Status < 400,
+		}
+	}
 
 	entries := []auditEntry{}
-	if s.AuditLog != nil {
-		needle := ""
-		if repoFilter != "" {
-			needle = "/" + repoFilter + "/"
+	if q, ok := s.AuditLog.(obs.AuditQuerier); ok {
+		recs, err := q.Query(r.Context(), obs.AuditFilter{
+			Actor: actor, PathLike: pathLike, Cursor: parseAuditCursor(r), Limit: limit,
+		})
+		if err != nil {
+			http.Error(w, "audit query failed", http.StatusInternalServerError)
+			return
 		}
+		for _, rec := range recs {
+			entries = append(entries, conv(rec.AuditEntry, rec.ID))
+		}
+		if len(recs) == limit && len(recs) > 0 {
+			last := recs[len(recs)-1]
+			w.Header().Set("X-Next-Cursor-Ts", last.Timestamp.UTC().Format(time.RFC3339Nano))
+			w.Header().Set("X-Next-Cursor-Id", strconv.FormatInt(last.ID, 10))
+		}
+	} else if s.AuditLog != nil {
 		for _, e := range s.AuditLog.Recent(200) {
-			if needle != "" && !strings.Contains(e.Path, needle) {
+			if pathLike != "" && !strings.Contains(strings.ToLower(e.Path), strings.ToLower(pathLike)) {
 				continue
 			}
-			entries = append(entries, auditEntry{
-				Time:     e.Timestamp.UTC().Format("15:04:05"),
-				Actor:    e.Actor,
-				Initials: actorInitials(e.Actor),
-				Method:   e.Method,
-				Path:     e.Path,
-				Status:   e.Status,
-				OK:       e.Status < 400,
-			})
+			if actor != "" && e.Actor != actor {
+				continue
+			}
+			entries = append(entries, conv(e, 0))
 			if len(entries) >= limit {
 				break
 			}

@@ -378,42 +378,10 @@ func (s *Server) uiObservability(w http.ResponseWriter, r *http.Request) {
 		rps = s.Metrics.Throughput.RatePerSec()
 	}
 
-	methodColors := map[string]string{
-		"POST": "var(--dot-ok)", "PUT": "#c08a2d",
-		"DELETE": "#c0503f", "PATCH": "#c08a2d",
-	}
-	methodVerbs := map[string]string{
-		"POST": "Published", "PUT": "Uploaded",
-		"DELETE": "Deleted", "PATCH": "Updated",
-		"GET": "Downloaded",
-	}
 	var auditEntries []auditRow
 	if s.AuditLog != nil {
 		for _, e := range s.AuditLog.Recent(100) {
-			color := methodColors[e.Method]
-			if color == "" {
-				color = "var(--text-muted)"
-			}
-			action := methodVerbs[e.Method]
-			if action == "" {
-				action = e.Method
-			}
-			if e.Status >= 400 {
-				action = "Denied"
-			}
-			target := auditTarget(e.Path)
-			auditEntries = append(auditEntries, auditRow{
-				Time:        e.Timestamp.UTC().Format("15:04:05"),
-				Actor:       e.Actor,
-				Initials:    actorInitials(e.Actor),
-				Action:      action,
-				Target:      target,
-				Method:      e.Method,
-				MethodColor: color,
-				Path:        e.Path,
-				Status:      strconv.Itoa(e.Status),
-				OK:          e.Status < 400,
-			})
+			auditEntries = append(auditEntries, buildAuditRow(e, "15:04:05"))
 		}
 	}
 
@@ -492,6 +460,45 @@ func (s *Server) gatherCounterByLabelPrefix(name, labelName, prefix string) int6
 }
 
 // ── audit helpers ─────────────────────────────────────────────────────────────
+
+var auditMethodColors = map[string]string{
+	"POST": "var(--dot-ok)", "PUT": "#c08a2d",
+	"DELETE": "#c0503f", "PATCH": "#c08a2d",
+}
+var auditMethodVerbs = map[string]string{
+	"POST": "Published", "PUT": "Uploaded",
+	"DELETE": "Deleted", "PATCH": "Updated",
+	"GET": "Downloaded",
+}
+
+// buildAuditRow maps an audit entry to its display row, formatting the timestamp
+// with the given layout (recent views use a time-only layout; the history page
+// uses a full date-time so entries spanning days stay unambiguous).
+func buildAuditRow(e obs.AuditEntry, timeLayout string) auditRow {
+	color := auditMethodColors[e.Method]
+	if color == "" {
+		color = "var(--text-muted)"
+	}
+	action := auditMethodVerbs[e.Method]
+	if action == "" {
+		action = e.Method
+	}
+	if e.Status >= 400 {
+		action = "Denied"
+	}
+	return auditRow{
+		Time:        e.Timestamp.UTC().Format(timeLayout),
+		Actor:       e.Actor,
+		Initials:    actorInitials(e.Actor),
+		Action:      action,
+		Target:      auditTarget(e.Path),
+		Method:      e.Method,
+		MethodColor: color,
+		Path:        e.Path,
+		Status:      strconv.Itoa(e.Status),
+		OK:          e.Status < 400,
+	}
+}
 
 // actorInitials derives up to 2 uppercase initials from a token description.
 // "ci-publish-token" → "CP", "anonymous" → "AN", "Alice B" → "AB".

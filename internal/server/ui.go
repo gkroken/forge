@@ -166,6 +166,7 @@ var (
 	tmplCleanupPolicyForm = parseUITmpl("templates/admin_shell.html", "templates/cleanup_policy_form.html")
 	tmplCleanupRun        = parseUITmpl("templates/admin_shell.html", "templates/cleanup_run.html")
 	tmplObservability     = parseUITmpl("templates/admin_shell.html", "templates/observability.html")
+	tmplAuditHistory      = parseUITmpl("templates/admin_shell.html", "templates/audit_history.html")
 	tmplRepoConfig        = parseUITmpl("templates/admin_shell.html", "templates/repo_config.html")
 )
 

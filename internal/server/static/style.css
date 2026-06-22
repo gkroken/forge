@@ -1032,6 +1032,10 @@ thead th { font-size: var(--fs-eyebrow); letter-spacing: .1em; }
 .replica-note { margin-top: 8px; font-size: 10.5px; color: var(--text-light); }
 .replica-note code { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 10px; }
 .replica-note a { color: var(--accent); text-decoration: none; }
+.audit-filter { display: flex; gap: 8px; align-items: center; }
+.audit-filter-input { padding: 5px 9px; font-size: 12.5px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); min-width: 180px; }
+.audit-pager { display: flex; gap: 10px; align-items: center; margin-top: 14px; }
+.audit-pager-end { font-size: 11.5px; color: var(--text-light); }
 
 /* ── storage bars ────────────────────────────────────────────────────────── */
 .store-rows      { display: flex; flex-direction: column; gap: 13px; }

@@ -1,0 +1,57 @@
+{{define "content"}}
+<div class="admin-content">
+
+  <div style="display:flex;align-items:center;margin-bottom:14px;">
+    <span class="section-title" style="margin-bottom:0;">Audit history</span>
+    <span style="margin-left:auto;font-size:12px;color:var(--text-muted);">
+      {{if .Durable}}Full durable history · write &amp; auth events{{else}}Recent window (in-memory) · enable Postgres for full history{{end}}
+    </span>
+  </div>
+
+  <form method="get" action="/ui/admin/audit" class="audit-filter">
+    <input type="text" name="actor" value="{{.Actor}}" placeholder="actor (exact)" class="audit-filter-input">
+    <input type="text" name="path" value="{{.Path}}" placeholder="path contains…" class="audit-filter-input">
+    <button type="submit" class="btn btn-sm">Filter</button>
+    {{if or .Actor .Path}}<a href="/ui/admin/audit" class="btn btn-sm btn-ghost">Clear</a>{{end}}
+  </form>
+
+  <div class="admin-table-wrap" style="margin-top:14px;">
+    <table class="admin-table">
+      <thead>
+        <tr>
+          <th style="width:170px;">Time (UTC)</th>
+          <th style="width:170px;">Actor</th>
+          <th style="width:110px;">Action</th>
+          <th>Target</th>
+          <th style="width:80px;">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Rows}}
+        <tr>
+          <td class="col-mono">{{.Time}}</td>
+          <td>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="audit-avatar">{{.Initials}}</span>
+              <span style="color:var(--text);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:110px;">{{.Actor}}</span>
+            </div>
+          </td>
+          <td style="font-size:12.5px;color:var(--text);">{{.Action}}</td>
+          <td class="col-mono" title="{{.Path}}" style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-muted);">{{.Target}}</td>
+          <td><span class="status-pill {{if .OK}}pill-ok{{else}}pill-err{{end}}">{{if .OK}}OK{{else}}DENY{{end}}</span></td>
+        </tr>
+        {{end}}
+        {{if eq (len .Rows) 0}}
+        <tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:2rem;">No matching audit events.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="audit-pager">
+    <a href="{{.ResetURL}}" class="btn btn-sm btn-ghost">⟲ Newest</a>
+    {{if .OlderURL}}<a href="{{.OlderURL}}" class="btn btn-sm">Older →</a>{{else}}<span class="audit-pager-end">end of history</span>{{end}}
+  </div>
+
+</div>
+{{end}}
