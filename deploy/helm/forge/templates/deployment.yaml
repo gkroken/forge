@@ -1,3 +1,15 @@
+{{- /*
+Guard: the fs storage backend (PVC + local JSON/blob files) cannot be shared
+across pods, so it only supports a single replica. Running N replicas requires
+storage.type=external (S3 + Postgres) — that is what makes audit, queue and
+artifact state coherent across the fleet. Fail fast rather than silently
+corrupting data or crash-looping.
+*/}}
+{{- if eq .Values.storage.type "fs" }}
+{{- if or .Values.autoscaling.enabled (gt (int .Values.replicaCount) 1) }}
+{{- fail "storage.type=fs supports only a single replica. Set storage.type=external (S3 + Postgres via extraEnv) to run multiple replicas or enable autoscaling." }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
