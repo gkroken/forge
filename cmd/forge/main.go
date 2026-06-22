@@ -212,14 +212,8 @@ func main() {
 	cleanupScheduler := cleanup.NewScheduler(mgr, cleanupPolicies, blobStore, metaStore).
 		// Emit a cleanup.completed webhook after an automated run removes artifacts.
 		WithRunHook(func(ev cleanup.RunEvent) {
-			webhookEngine.Dispatch(context.Background(), webhook.Event{
-				Type: webhook.EventCleanupCompleted, Repo: ev.Repo,
-				Actor: "scheduler", Timestamp: time.Now().UTC(),
-				Data: map[string]any{
-					"policy": ev.Policy, "deleted": ev.Deleted,
-					"freedBytes": ev.FreedBytes, "trigger": ev.Trigger,
-				},
-			})
+			webhookEngine.EmitCleanupCompleted(context.Background(),
+				ev.Repo, ev.Policy, ev.Deleted, ev.FreedBytes, ev.Trigger)
 		})
 	// In multi-replica (Postgres) mode, gate scheduled cleanup behind a Postgres
 	// advisory lock with shared lastRun so a due job fires exactly once across

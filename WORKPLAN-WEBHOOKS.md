@@ -98,5 +98,8 @@ slice; empty = all):
 form, an Events column, "Event types" readout.
 
 ## Out of scope (deliberate)
-- OCI `/v2/` publish events — same boundary as cleanup (the four `/repository/` formats first).
 - Policy-violation events — depend on vuln scanning (deferred, WORKPLAN-VULN.md).
+
+(OCI `/v2/` publish, format-native deletes, manual cleanup.completed, and proxy
+artifact.cached were all closed in the hardening track — WORKPLAN-WEBHOOKS-HARDENING.md
+phase H1.)

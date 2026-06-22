@@ -125,6 +125,13 @@ type Config struct {
 	// contacting upstream. May be nil.
 	RecordNegative func()
 
+	// OnCacheFill is called once after a full upstream 200 OK fetch has been
+	// stored — i.e. a genuine cache fill, not a hit, revalidation, or negative
+	// cache. Fired by the singleflight leader only, so a herd of concurrent
+	// misses yields one call. blobKey is the stored key ("{repo}/{sub}"). The
+	// server translates this into an artifact.cached webhook. May be nil.
+	OnCacheFill func(blobKey string)
+
 	// Timeout is the per-request deadline for upstream HTTP calls.
 	// Zero means no deadline beyond what the http.Client sets.
 	Timeout time.Duration
@@ -477,6 +484,9 @@ func (f *Fetcher) Fetch(blobKey, cacheNS, upURL string, blobs blob.Store, metas 
 			metas.PutJSON(cacheNS, HealthKey, HealthRecord{OK: true, CheckedAt: now}) //nolint:errcheck
 			if f.cfg.RecordMiss != nil {
 				f.cfg.RecordMiss()
+			}
+			if f.cfg.OnCacheFill != nil {
+				f.cfg.OnCacheFill(blobKey)
 			}
 			return ct, true, nil
 

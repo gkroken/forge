@@ -177,6 +177,55 @@ func TestHandle_BoundedRetry(t *testing.T) {
 	}
 }
 
+// TestEmitCleanupCompleted_DeliversSummary verifies the unified cleanup-event
+// helper delivers a cleanup.completed event whose Data carries the run summary,
+// and that the actor reflects the trigger ("manual" → "admin").
+func TestEmitCleanupCompleted_DeliversSummary(t *testing.T) {
+	var got atomic.Value
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var ev webhook.Event
+		_ = json.Unmarshal(body, &ev)
+		got.Store(ev)
+		hits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	m := newStore(t)
+	q := queue.NewMem(16)
+	eng := webhook.New(m, q, srv.Client())
+	if _, err := eng.Store().Create(webhook.Subscription{
+		Name: "ops", URL: srv.URL, Secret: "k", Enabled: true,
+		Events: []string{webhook.EventCleanupCompleted},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go q.Work(ctx, eng.Handle) //nolint:errcheck
+
+	eng.EmitCleanupCompleted(ctx, "maven-hosted", "keep-10", 3, 4096, "manual")
+
+	waitFor(t, func() bool { return hits.Load() == 1 }, "cleanup delivery")
+	ev, _ := got.Load().(webhook.Event)
+	if ev.Type != webhook.EventCleanupCompleted {
+		t.Fatalf("type = %q, want %q", ev.Type, webhook.EventCleanupCompleted)
+	}
+	if ev.Actor != "admin" {
+		t.Fatalf("actor = %q, want admin (manual trigger)", ev.Actor)
+	}
+	if ev.Data["trigger"] != "manual" || ev.Data["policy"] != "keep-10" {
+		t.Fatalf("unexpected data: %+v", ev.Data)
+	}
+	// JSON numbers decode to float64.
+	if d, _ := ev.Data["deleted"].(float64); d != 3 {
+		t.Fatalf("deleted = %v, want 3", ev.Data["deleted"])
+	}
+}
+
 func waitFor(t *testing.T, cond func() bool, what string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)

@@ -86,6 +86,28 @@ func (e *Engine) WithBackoff(fn func(attempt int) time.Duration) *Engine {
 // Store exposes the subscription store for the admin API/UI.
 func (e *Engine) Store() *Store { return e.store }
 
+// EmitCleanupCompleted dispatches a cleanup.completed event for a run that
+// removed at least one artifact. It unifies payload construction across the
+// automated scheduler hook (trigger "scheduled"/"on-publish") and the manual
+// admin handlers (trigger "manual"), so the event shape is identical whatever
+// triggered the run. Actor is derived from the trigger.
+func (e *Engine) EmitCleanupCompleted(ctx context.Context, repo, policy string, deleted int, freedBytes int64, trigger string) {
+	actor := "scheduler"
+	if trigger == "manual" {
+		actor = "admin"
+	}
+	e.Dispatch(ctx, Event{
+		Type:      EventCleanupCompleted,
+		Repo:      repo,
+		Actor:     actor,
+		Timestamp: time.Now().UTC(),
+		Data: map[string]any{
+			"policy": policy, "deleted": deleted,
+			"freedBytes": freedBytes, "trigger": trigger,
+		},
+	})
+}
+
 // Dispatch enqueues one delivery job per enabled subscription matching ev. It is
 // best-effort and non-blocking past the enqueue: errors are logged, not returned,
 // so a publish is never failed by webhook plumbing.

@@ -27,15 +27,21 @@ const (
 	// Deletions made by automated cleanup are summarised by EventCleanupCompleted
 	// instead, so a retention run doesn't emit one event per removed version.
 	EventArtifactDeleted = "artifact.deleted"
-	// EventCleanupCompleted — an automated cleanup run finished having removed at
-	// least one artifact. Data carries policy, deleted, freedBytes, trigger.
+	// EventCleanupCompleted — a cleanup run finished having removed at least one
+	// artifact. Data carries policy, deleted, freedBytes, trigger ("scheduled",
+	// "on-publish", or "manual").
 	EventCleanupCompleted = "cleanup.completed"
+	// EventArtifactCached — a proxy repository filled its cache from upstream
+	// (a cache miss that fetched and stored the artifact). Fires once per herd
+	// (the singleflight leader), not for fresh hits or revalidations.
+	EventArtifactCached = "artifact.cached"
 )
 
 // AllEventTypes lists every emittable event type, for the admin UI.
 var AllEventTypes = []string{
 	EventArtifactPublished,
 	EventArtifactDeleted,
+	EventArtifactCached,
 	EventCleanupCompleted,
 }
 

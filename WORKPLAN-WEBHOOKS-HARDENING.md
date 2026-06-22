@@ -31,24 +31,24 @@ Acceptance: every artifact-lifecycle action emits the correct event across **all
 formats — publish (incl. OCI), cache-fill, delete (incl. format-native) — and cleanup
 emits whether **manual or automated**.
 
-- [ ] **#1 OCI publish.** Emit `artifact.published` on a successful OCI manifest PUT
-      (`PUT /v2/{name}/manifests/{ref}` — the moment an image becomes tag-addressable).
-      Extend the middleware publish hook to also match manifest PUTs under `/v2/`, or emit
-      from the OCI handler via the engine. Map the `/v2/` path → forge repo + image ref;
-      include format="oci", path={name}:{ref}. (Blob/upload PUTs are NOT publishes.)
-- [ ] **#2 Format-native deletes.** Centralize an `artifact.deleted` emit in the middleware
-      for `DELETE` to `/repository/` (and the OCI manifest DELETE) on 2xx, carrying the
-      path; derive component/version where cheap. Covers npm unpublish, helm/maven/cran delete.
-- [ ] **#3 Manual cleanup.** Emit `cleanup.completed` from `handleCleanup` + `handleRunPolicy`
-      on a non-dry run that deleted >0. Unify construction: add `Engine.EmitCleanupCompleted(
-      repo, policy, deleted, freed, trigger)` and call it from BOTH the scheduler run-hook
-      (main.go) and the manual handlers. trigger="manual" for the latter.
-- [ ] **#4 `artifact.cached`.** New event type `artifact.cached`; emit on a proxy cache FILL
-      (cache miss that fetched+stored upstream). Add a callback seam on the proxy (mirrors
-      `Scheduler.WithRunHook`) fired by the singleflight leader after store; main.go translates
-      to Dispatch. Add to `AllEventTypes` + the UI checkboxes.
-- [ ] Tests per event; live-verify each fires once (OCI push, npm unpublish, manual policy
-      run, proxy cache fill). Commit.
+- [x] **#1 OCI publish.** Emit `artifact.published` on a successful OCI manifest PUT
+      (`PUT /v2/{name}/manifests/{ref}`). Middleware publish hook extended to match manifest
+      PUTs under `/v2/` via `ociManifestRef`; format="oci", path={image}:{ref}. Blob/upload
+      PUTs are excluded (no `/manifests/` segment). Live-verified (201 PUT → published).
+- [x] **#2 Format-native deletes.** Centralized `artifact.deleted` emit in the middleware for
+      `DELETE` to `/repository/` (path carried, format resolved) and OCI manifest DELETE (path
+      {image}:{ref}) on 2xx. Covers npm unpublish, helm/maven/cran delete. Admin-API component
+      delete keeps its richer emit (different path prefix → no double-fire). Live-verified.
+- [x] **#3 Manual cleanup.** Added `Engine.EmitCleanupCompleted(ctx, repo, policy, deleted,
+      freed, trigger)` (actor derived from trigger). Called from the scheduler run-hook
+      (main.go) AND `handleCleanup`/`handleRunPolicy` on a non-dry run that deleted >0
+      (trigger="manual"). Live-verified (manual run, deleted=1, trigger=manual).
+- [x] **#4 `artifact.cached`.** New event type added to `AllEventTypes` (→ UI checkboxes).
+      `proxy.Config.OnCacheFill(blobKey)` fired by the singleflight leader after a 200 store;
+      threaded via `format.Context.OnCacheFill` → server `onProxyCacheFill` → Dispatch. npm
+      packument fills (own meta-backed path) emit too. Live-verified (tarball, jar, packument).
+- [x] Tests per event (webhook EmitCleanupCompleted, proxy OnCacheFill, server OCI publish/
+      delete + repository delete + ociManifestRef table); live-verified each fires. Committed.
 
 ## Phase H2 — Delivery semantics & correctness
 Acceptance: each delivery carries a stable unique id + signed timestamp; a receiver can

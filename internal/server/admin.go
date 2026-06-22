@@ -412,6 +412,10 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request, name stri
 		FreedBytes: result.FreedBytes,
 		DurationMs: time.Since(start).Milliseconds(),
 	})
+	if s.Webhooks != nil && result.Deleted > 0 {
+		s.Webhooks.EmitCleanupCompleted(context.Background(),
+			rp.Name, rp.CleanupPolicyName, result.Deleted, result.FreedBytes, "manual")
+	}
 	json.NewEncoder(w).Encode(result)
 }
 
@@ -545,6 +549,10 @@ func (s *Server) handleRunPolicy(w http.ResponseWriter, r *http.Request, name st
 			Timestamp: start, PolicyName: name, Deleted: res.Deleted,
 			FreedBytes: res.FreedBytes, DurationMs: time.Since(start).Milliseconds(),
 		})
+		if s.Webhooks != nil && res.Deleted > 0 {
+			s.Webhooks.EmitCleanupCompleted(context.Background(),
+				rp.Name, name, res.Deleted, res.FreedBytes, "manual")
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)

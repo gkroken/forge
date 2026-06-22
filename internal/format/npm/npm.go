@@ -550,6 +550,12 @@ func (h *Handler) fetchPackument(baseURL string, c *format.Context, pkg string) 
 	if c.Metrics != nil {
 		c.Metrics.CacheMisses.WithLabelValues(c.Repo.Name).Inc()
 	}
+	// Packuments are cached on their own meta-backed path (not the shared proxy
+	// Fetcher), so fire the cache-fill seam here too — otherwise npm metadata
+	// fills would be the only proxy fill that doesn't emit artifact.cached.
+	if c.OnCacheFill != nil {
+		c.OnCacheFill(c.Key(pkg))
+	}
 	return doc, true
 }
 

@@ -358,7 +358,33 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		Repos: s.Repos, Queue: s.Queue, Metrics: s.Metrics,
 		RepoStats: repoStats, RepoStatsFn: s.lookupRepoStats,
 		GlobalStats: s.GlobalStats, RetryGauge: &s.retryGauge,
+		OnCacheFill: s.onProxyCacheFill,
 	})
+}
+
+// onProxyCacheFill emits an artifact.cached webhook when a proxy repository
+// fills its cache from upstream. The proxy passes the stored blob key
+// ("{repo}/{sub}"); the repo is its first segment, so this works for both
+// direct proxy repos and proxy members of a group. No-op without webhooks.
+func (s *Server) onProxyCacheFill(blobKey string) {
+	if s.Webhooks == nil {
+		return
+	}
+	repoName, path, _ := strings.Cut(blobKey, "/")
+	if repoName == "" {
+		return
+	}
+	ev := webhook.Event{
+		Type:      webhook.EventArtifactCached,
+		Repo:      repoName,
+		Path:      path,
+		Actor:     "proxy",
+		Timestamp: time.Now().UTC(),
+	}
+	if rp, ok := s.Repos.Get(repoName); ok {
+		ev.Format = rp.Format
+	}
+	go s.Webhooks.Dispatch(context.Background(), ev)
 }
 
 func (s *Server) lookupRepoStats(name string) *obs.RepoStats {
@@ -624,7 +650,79 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			}
 		}
 
+		// OCI manifest PUT under /v2/ makes an image tag- (or digest-) addressable:
+		// that is the publish moment. Blob and upload PUTs are NOT publishes, and
+		// cleanup/walk don't cover OCI, so this emits the webhook only.
+		if s.Webhooks != nil && r.Method == http.MethodPut && status >= 200 && status < 300 &&
+			strings.HasPrefix(r.URL.Path, "/v2/") {
+			repoName, sub, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/v2/"), "/")
+			if image, ref, ok := ociManifestRef(sub); ok && repoName != "" {
+				go s.Webhooks.Dispatch(context.Background(), webhook.Event{
+					Type:      webhook.EventArtifactPublished,
+					Repo:      repoName,
+					Format:    "oci",
+					Path:      image + ":" + ref,
+					Actor:     actorLabel(r, s.Auth),
+					Timestamp: start,
+				})
+			}
+		}
+
+		// Format-native deletes: a successful DELETE to a repository (npm unpublish,
+		// helm/maven/cran delete) or an OCI manifest DELETE removes an artifact.
+		// Emit artifact.deleted centrally so every format is covered. (Admin-API
+		// component deletes emit from their own handler with richer component/version
+		// data and a different path prefix, so there is no double-fire.)
+		if s.Webhooks != nil && r.Method == http.MethodDelete && status >= 200 && status < 300 {
+			switch {
+			case strings.HasPrefix(r.URL.Path, "/repository/"):
+				repoName, subPath, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/repository/"), "/")
+				if repoName != "" {
+					ev := webhook.Event{
+						Type:      webhook.EventArtifactDeleted,
+						Repo:      repoName,
+						Path:      subPath,
+						Actor:     actorLabel(r, s.Auth),
+						Timestamp: start,
+					}
+					if rp, ok := s.Repos.Get(repoName); ok {
+						ev.Format = rp.Format
+					}
+					go s.Webhooks.Dispatch(context.Background(), ev)
+				}
+			case strings.HasPrefix(r.URL.Path, "/v2/"):
+				repoName, sub, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/v2/"), "/")
+				if image, ref, ok := ociManifestRef(sub); ok && repoName != "" {
+					go s.Webhooks.Dispatch(context.Background(), webhook.Event{
+						Type:      webhook.EventArtifactDeleted,
+						Repo:      repoName,
+						Format:    "oci",
+						Path:      image + ":" + ref,
+						Actor:     actorLabel(r, s.Auth),
+						Timestamp: start,
+					})
+				}
+			}
+		}
+
 	})
+}
+
+// ociManifestRef extracts the image name and reference from an OCI sub-path of
+// the form "{image}/manifests/{ref}" (the image may itself contain slashes).
+// ok is false for blob, upload, and tag-list paths — those are not manifest
+// operations and so are not artifact publishes/deletes.
+func ociManifestRef(sub string) (image, ref string, ok bool) {
+	const marker = "/manifests/"
+	idx := strings.Index(sub, marker)
+	if idx < 0 {
+		return "", "", false
+	}
+	image, ref = sub[:idx], sub[idx+len(marker):]
+	if image == "" || ref == "" || strings.Contains(ref, "/") {
+		return "", "", false
+	}
+	return image, ref, true
 }
 
 // isWriteMethod reports whether method carries a request body that counts

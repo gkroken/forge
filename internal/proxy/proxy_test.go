@@ -67,6 +67,37 @@ func fetchOnce(t *testing.T, f *Fetcher, up *fake, b blob.Store, m meta.Store) (
 	return string(data), nil
 }
 
+// ── OnCacheFill seam ───────────────────────────────────────────────────────────
+
+// TestOnCacheFill_FiresOnceOnFillNotOnHit verifies the OnCacheFill callback is
+// invoked with the blob key exactly when a cache miss fetches+stores upstream,
+// and not on a subsequent fresh hit (which must not re-emit artifact.cached).
+func TestOnCacheFill_FiresOnceOnFillNotOnHit(t *testing.T) {
+	up := newFake(t, 200, "payload")
+	b, m := newStores(t)
+	var fills []string
+	f := New(http.DefaultClient, Config{
+		TTL:         time.Hour,
+		OnCacheFill: func(key string) { fills = append(fills, key) },
+	})
+
+	// First fetch — cache miss → fill → one callback with the blob key.
+	if _, err := fetchOnce(t, f, up, b, m); err != nil {
+		t.Fatal(err)
+	}
+	// Second fetch — fresh hit → no additional callback.
+	if _, err := fetchOnce(t, f, up, b, m); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(fills) != 1 {
+		t.Fatalf("expected exactly 1 cache-fill callback, got %d (%v)", len(fills), fills)
+	}
+	if fills[0] != "key/item" {
+		t.Fatalf("callback key = %q, want %q", fills[0], "key/item")
+	}
+}
+
 // ── TTL ──────────────────────────────────────────────────────────────────────
 
 func TestTTL_CacheMiss_FetchesUpstream(t *testing.T) {

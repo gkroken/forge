@@ -38,6 +38,11 @@ type Context struct {
 	GlobalStats *obs.GlobalStats
 	// RetryGauge is a shared atomic counter of in-flight proxy retries.
 	RetryGauge *atomic.Int32
+
+	// OnCacheFill, if set, is called by the proxy after a cache miss fetched and
+	// stored an artifact from upstream (blobKey = "{repo}/{sub}"). The server
+	// wires it to emit an artifact.cached webhook event. May be nil.
+	OnCacheFill func(blobKey string)
 }
 
 // Key namespaces a blob key under the repo so repos never collide in storage.
@@ -63,6 +68,7 @@ func (c *Context) MemberCtx(name string) (*Context, bool) {
 		Repos: c.Repos, Queue: c.Queue, Metrics: c.Metrics,
 		RepoStats: memberStats, RepoStatsFn: c.RepoStatsFn,
 		GlobalStats: c.GlobalStats, RetryGauge: c.RetryGauge,
+		OnCacheFill: c.OnCacheFill,
 	}, true
 }
 
@@ -72,6 +78,7 @@ func (c *Context) MemberCtx(name string) (*Context, bool) {
 func (c *Context) ProxyConfig() proxy.Config {
 	cfg := proxy.ConfigForRepo(c.Repo)
 	cfg.RetryGauge = c.RetryGauge
+	cfg.OnCacheFill = c.OnCacheFill
 
 	if c.Metrics != nil {
 		m, rname := c.Metrics, c.Repo.Name
