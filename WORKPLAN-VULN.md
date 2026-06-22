@@ -50,7 +50,7 @@ CRAN gets an explicit "unsupported" state in the UI, never a misleading green "0
 ## Existing seams this builds on (grounded)
 
 - **Coordinate enumeration:** `format.Inspectable` (`Inspect`, `ComponentDetail`) — `internal/format/format.go:174`.
-- **Per-format coordinate mapping:** a *new* optional Handler interface (same idiom as `Inspectable`) — npm/Maven implement it; cran/helm/oci return `ok=false` and are skipped. Keeps format knowledge in the plugin, not the spine.
+- **Per-format coordinate mapping:** `format.VulnCoordinates` (new optional Handler interface, same idiom as `Inspectable`) — npm/Maven implement it; cran/helm/oci don't and are skipped. Keeps format knowledge in the plugin, not the spine. **DONE** (commit 3).
 - **Async scan jobs:** `queue.Queue` (`internal/queue/queue.go:52`), `queue.NewPG` dedups across replicas via `FOR UPDATE SKIP LOCKED`.
 - **Periodic re-scan:** `cleanup.Scheduler` (`internal/cleanup/scheduler.go`) — **but see Dependencies: it is not multi-replica-safe yet.**
 - **Findings cache:** `meta.Store` namespace `{repo}:vuln` (FS in eval, Postgres in prod — backend-agnostic, like the proxy cache).
@@ -95,10 +95,14 @@ and a versioned purl is a documented 400). HTTP/2 negotiated automatically over 
    `internal/proxy`); **graceful degrade** on egress failure (return cleanly, never panic/block).
    Tests: httptest OSV stub — batch→hydrate, cache hit skips re-fetch, clean result, 5xx retry,
    timeout/egress-fail returns cleanly.
-3. **Commit 3 — coordinate seam + npm & Maven mappings.** Optional Handler iface
-   `OSVCoordinates(component, version) (eco, name string, ok bool)` (same idiom as `Inspectable`).
-   npm → `("npm", component, true)`; Maven → `("Maven", "groupId:artifactId", true)`;
-   helm/oci/cran don't implement → skipped. Tests: both mappings.
+3. **Commit 3 — coordinate seam + npm & Maven mappings. DONE.** Optional Handler iface
+   `format.VulnCoordinates`: `OSVCoordinates(component) (ecosystem, name string, ok bool)` (same
+   idiom as `Inspectable`; no version param — the caller already holds the version and passes it
+   through, so a speculative unused arg is avoided). npm → `("npm", component, true)` (scoped
+   names included); Maven → `("Maven", component, true)` — the maven component key is *already*
+   `groupId:artifactId`, exactly OSV's Maven name (guarded on the `:` separator). helm/oci/cran
+   don't implement → skipped. Compile-time `var _ format.VulnCoordinates` assertions on each.
+   Tests: both mappings.
 4. **Commit 4 — scan triggers (async only).** Scan job registered via existing
    `indexer.Worker.Register(typ, handler)` (webhook precedent — NO second worker, which would
    race+discard). Handler: coordinates → OSV → `vuln.Store.Put`. **On-publish enqueue** at the

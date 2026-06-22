@@ -865,3 +865,14 @@ func (h *Handler) Inspect(c *format.Context, baseURL, pkg string) (format.Compon
 		InstallSnippet: snippet,
 	}, true
 }
+
+var _ format.VulnCoordinates = (*Handler)(nil)
+
+// OSVCoordinates implements format.VulnCoordinates. An npm package name maps
+// directly to the OSV "npm" ecosystem (scoped names like @scope/pkg included).
+func (h *Handler) OSVCoordinates(component string) (ecosystem, name string, ok bool) {
+	if component == "" {
+		return "", "", false
+	}
+	return "npm", component, true
+}

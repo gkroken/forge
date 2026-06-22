@@ -851,6 +851,18 @@ func (h *Handler) Inspect(c *format.Context, baseURL, comp string) (format.Compo
 	}, true
 }
 
+var _ format.VulnCoordinates = (*Handler)(nil)
+
+// OSVCoordinates implements format.VulnCoordinates. The maven component key is
+// already "groupId:artifactId", which is exactly OSV's Maven package name, so
+// the mapping is identity (guarded on the ":" separator being present).
+func (h *Handler) OSVCoordinates(component string) (ecosystem, name string, ok bool) {
+	if !strings.Contains(component, ":") {
+		return "", "", false
+	}
+	return "Maven", component, true
+}
+
 // inspectFromUpstream fetches maven-metadata.xml from the upstream to discover
 // versions, then fetches and caches the POM for the latest version so that the
 // component detail page works on a cold proxy cache.  The metadata XML is not

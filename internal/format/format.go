@@ -185,6 +185,18 @@ type Inspectable interface {
 	Inspect(c *Context, baseURL, component string) (ComponentDetail, bool)
 }
 
+// VulnCoordinates is an optional Handler extension that maps a forge component
+// name to OSV's package vocabulary, so the vulnerability scanner can look up
+// advisories for it. It mirrors the Inspectable idiom: format knowledge stays in
+// the plugin, the scanner spine stays format-agnostic. ecosystem is OSV's
+// ecosystem string (e.g. "npm", "Maven"); name is the OSV package name (which
+// may differ from the forge component). Formats without a credible OSV source
+// (helm, oci, cran) simply don't implement it and are skipped. The version is
+// not needed to derive the coordinate, so callers pass it through separately.
+type VulnCoordinates interface {
+	OSVCoordinates(component string) (ecosystem, name string, ok bool)
+}
+
 // GroupBrowse merges BrowseRepo results from every member of a group context.
 // First member that contains a given Name wins; output is sorted by Name.
 func GroupBrowse(h Browsable, c *Context) ([]BrowseEntry, error) {
