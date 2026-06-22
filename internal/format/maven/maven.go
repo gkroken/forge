@@ -863,6 +863,42 @@ func (h *Handler) OSVCoordinates(component string) (ecosystem, name string, ok b
 	return "Maven", component, true
 }
 
+var _ format.VulnGate = (*Handler)(nil)
+
+// gateExtensions are the primary Maven artifact types subject to vuln
+// enforcement. POMs, modules, checksums (.md5/.sha1/.sha256) and signatures
+// (.asc) carry a different extension and are not gated.
+var gateExtensions = map[string]bool{"jar": true, "war": true, "aar": true, "ear": true}
+
+// VulnGateTarget implements format.VulnGate. It mirrors BrowseRepo's path model:
+// the first path segment beginning with a digit is the version directory, the
+// segment before it is the artifactId, and the dotted prefix is the groupId, so
+// the component is "groupId:artifactId" and the version is that directory — the
+// same keys vuln.Store holds. Only primary artifact files (jar/war/aar/ear) are
+// gated; POMs, metadata, checksums and signatures return ok=false.
+func (h *Handler) VulnGateTarget(sub string) (component, version string, ok bool) {
+	parts := strings.Split(sub, "/")
+	if len(parts) < 4 {
+		return "", "", false
+	}
+	verIdx := -1
+	for i, p := range parts {
+		if len(p) > 0 && p[0] >= '0' && p[0] <= '9' {
+			verIdx = i
+			break
+		}
+	}
+	if verIdx < 1 || verIdx+1 >= len(parts) {
+		return "", "", false
+	}
+	filename := parts[len(parts)-1]
+	dot := strings.LastIndex(filename, ".")
+	if dot < 0 || !gateExtensions[filename[dot+1:]] {
+		return "", "", false
+	}
+	return strings.Join(parts[:verIdx-1], ".") + ":" + parts[verIdx-1], parts[verIdx], true
+}
+
 // inspectFromUpstream fetches maven-metadata.xml from the upstream to discover
 // versions, then fetches and caches the POM for the latest version so that the
 // component detail page works on a cold proxy cache.  The metadata XML is not

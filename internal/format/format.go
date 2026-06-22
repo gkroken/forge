@@ -197,6 +197,18 @@ type VulnCoordinates interface {
 	OSVCoordinates(component string) (ecosystem, name string, ok bool)
 }
 
+// VulnGate is an optional Handler extension used by the download-policy gate. It
+// reverses a download sub-path back to the (component, version) the artifact
+// belongs to, reporting ok=false for paths that are not primary artifacts
+// (packuments, POMs, metadata, checksums, signatures) and therefore not subject
+// to vulnerability enforcement. Only formats with a credible OSV source (npm,
+// Maven) implement it; others are never gated. The returned component and
+// version match the keys used by vuln.Store, so the gate looks findings up
+// directly without re-deriving OSV coordinates.
+type VulnGate interface {
+	VulnGateTarget(sub string) (component, version string, ok bool)
+}
+
 // GroupBrowse merges BrowseRepo results from every member of a group context.
 // First member that contains a given Name wins; output is sorted by Name.
 func GroupBrowse(h Browsable, c *Context) ([]BrowseEntry, error) {

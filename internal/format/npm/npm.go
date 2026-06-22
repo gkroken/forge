@@ -876,3 +876,27 @@ func (h *Handler) OSVCoordinates(component string) (ecosystem, name string, ok b
 	}
 	return "npm", component, true
 }
+
+var _ format.VulnGate = (*Handler)(nil)
+
+// VulnGateTarget implements format.VulnGate. npm primary artifacts are tarball
+// downloads at "{pkg}/-/{name}-{version}.tgz"; the package name is the component
+// and the version is parsed from the tarball filename (same derivation as
+// deleteTarball). Packuments, dist-tags and the /-/ registry endpoints are not
+// primary artifacts and return ok=false.
+func (h *Handler) VulnGateTarget(sub string) (component, version string, ok bool) {
+	i := strings.Index(sub, "/-/")
+	if i <= 0 {
+		return "", "", false
+	}
+	pkg := sub[:i]
+	filename := sub[i+3:]
+	if strings.Contains(filename, "/") || !strings.HasSuffix(filename, ".tgz") {
+		return "", "", false
+	}
+	ver := strings.TrimPrefix(strings.TrimSuffix(filename, ".tgz"), lastPathSeg(pkg)+"-")
+	if pkg == "" || ver == "" {
+		return "", "", false
+	}
+	return pkg, ver, true
+}
