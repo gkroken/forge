@@ -60,7 +60,12 @@ Three classes of per-pod control state → three homes:
   `server.go:529` (writes/auth-failures only, low volume); `.Recent(n)` read in 5 sites.
   Plan: `obs.AuditSink` iface (**S1 DONE**, commit 14578aa) → `PGAuditSink` (**S2 DONE**,
   commit 3ee8ca1: migration 003 audit_log table, async non-blocking writer, auto-on when
-  POSTGRES_DSN set, testcontainers PG16 round-trip test) → UI labels (S3 NEXT) → docs/IaC (S4).
+  POSTGRES_DSN set, testcontainers PG16 round-trip test) → UI per-replica labels (**S3 DONE**,
+  commit a62a2b1: REPLICA hostname chip + "per-replica · see Prometheus/Grafana" notes on
+  dashboard/observability charts; `replicaID()` in ui_dashboard.go) → **S4 NEXT = docs/IaC**
+  (scaling runbook, confirm K8s manifests set replicas & don't rely on pod-local audit).
+  DEFERRED follow-up: audit_log retention (table grows unbounded — scheduled DELETE or
+  monthly partitions; noted in WORKPLAN-SCALING.md S2).
 - **Circuit breakers** (`proxy.go` + `globalHealth`) → **stay per-pod** (correct, no work).
 Data plane already replica-ready (meta→PG, blob→S3, queue→PG auto on POSTGRES_DSN).
 Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses durable audit).
