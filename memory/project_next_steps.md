@@ -141,7 +141,22 @@ Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses du
 - **NEXT (candidates surveyed):** PyPI format (the final extensibility test), vuln scanning
   (deferred, designed in WORKPLAN-VULN.md), artifact signing/SBOM, LDAP bind, editable group-map
   UI, SAML, policy-violation webhook events (once vuln scanning lands).
-- **Vuln scanning = DEFERRED, designed.** Full spike written: `WORKPLAN-VULN.md` — three
+- **Vuln scanning = A-V0 SHIPPED (2026-06-22).** Plan A (OSV) vertical slice landed across 5
+  commits on `feature/foundry-remaining-tabs`: `internal/vuln` source-agnostic findings model +
+  `meta`-backed store (`{repo}:vuln`); OSV client (querybatch→hydrate, id+modified advisory cache,
+  exp-backoff, graceful degrade) + stdlib CVSS v3.1 base-score scorer; `format.VulnCoordinates`
+  seam (npm→"npm", Maven→"Maven" since the maven component key is already groupId:artifactId;
+  helm/oci/cran skipped); `vuln.scan` job on the shared worker (server orchestration enumerates via
+  `format.Browsable`, one OSV batch/scan, writes a Finding/version incl. clean=scanned-no-issues);
+  on-publish enqueue (goroutine, failure-isolated — never blocks a publish) + manual admin
+  `POST /api/v1/repos/{repo}/scan`; severity surfaced in the browse detail pane (4 states:
+  unsupported/unscanned/clean/vulnerable). Handler returns nil on OSV egress fail (no PG retry-spin;
+  re-scan is the safety net). Live-verified end-to-end (lodash@4.17.20→high, log4j-core@2.14.1→
+  critical Log4Shell). Also fixed a pre-existing webhook test-harness cleanup race surfaced en route.
+  **NEXT = A-V1**: daily re-scan via the now-HA scheduler, `/ui/admin/security` keyset page,
+  dashboard tile, `forge_vulnerable_components` gauge. Then A-V2 policy (Off/Warn/Block + the
+  easy policy-violation webhook event), then Plan B (OCI/Trivy sidecar), Plan C (Helm).
+- **Vuln scanning design (for reference)** — `WORKPLAN-VULN.md` — three
   separate phased plans: Plan A OSV (npm+Maven, V0 slice→V1 breadth+obs→V2 warn/block policy),
   Plan B OCI (Trivy/Grype sidecar, NOT in-process), Plan C Helm (config + referenced-image).
   Key design: SOURCE-AGNOSTIC findings store + Security UI + policy engine are the durable
