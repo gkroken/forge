@@ -121,12 +121,28 @@ and a versioned purl is a documented 400). HTTP/2 negotiated automatically over 
    surfaced during this work — separate commit.) **Granularity note:** on-publish re-scans the
    whole repo (one batch call + cached hydration = cheap); per-publish burst redundancy and finer
    granularity are A-V1 concerns (scheduled re-scan + debounce).
-5. **Commit 5 — surface: severity badge in browse detail.** npm + Maven detail path carries the
-   worst-severity finding per version; render a badge in the right (detail) pane. Rebuild the
-   binary after JS/CSS. Live-verify: publish a known-vuln npm pkg (e.g. old `lodash`) and a
-   known-CVE Maven artifact → badge shows the advisory.
+5. **Commit 5 — surface: severity badge in browse detail. DONE.** The detail endpoint
+   (`/ui/browse/{repo}/detail`) carries a `vuln` block distinguishing four states the UI renders
+   differently: unsupported format, supported-but-unscanned, scanned-and-clean (green "no known
+   vulnerabilities"), and scanned-with-advisories (worst-severity badge + per-advisory list with
+   ID/severity dot/summary/fixed-in/link). Severity tokens themed (light+dark) like the format
+   badges; `browse.js` renders `renderSecurity()`; CSP-safe (external JS, no inline). Rebuilt the
+   binary after CSS/JS. Tests: `TestBrowseDetail_VulnStates` (all three reachable states).
 
-*Exit:* publish a known-vulnerable npm or Maven artifact → badge shows the advisory.
+*Exit (MET):* live-verified end-to-end through the binary — published `lodash@4.17.20` to
+npm-hosted, auto + manual scan hit the real OSV API, detail endpoint returned `severity:"high"`
+with 5 advisories (summaries, NVD URLs, fixed-in, CVE aliases). The OSV client was also validated
+directly against live OSV for npm (lodash) and Maven (log4j-core@2.14.1 → critical Log4Shell),
+confirming the `groupId:artifactId` mapping and severity derivation (curated label + CVSS v3.1
+scorer; v4.0 vectors stored raw) against real wire data.
+
+## A-V0 STATUS: COMPLETE (2026-06-22)
+
+All five commits landed; `go test ./...` + `go vet` + `bash test.sh` (20/20) green. A pre-existing
+webhook test-harness cleanup race surfaced during the work was fixed separately. **Next: A-V1** —
+Maven on-publish coverage is already live (the mapping shipped in V0); A-V1 adds the daily re-scan
+via the now-HA scheduler, the `/ui/admin/security` keyset page, the dashboard tile, and the
+`forge_vulnerable_components` gauge.
 
 ### A-V1 — Breadth + observability
 1. Maven `OSVCoordinates` (`groupId:artifactId`).

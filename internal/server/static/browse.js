@@ -328,11 +328,68 @@ function renderDetail(d) {
          '<div class="browse-cksum-val">' + esc(d.sha1) + '</div>' +
          '</div>';
   }
+  // Security (vulnerability findings). Omitted entirely when scanning is off.
+  h += renderSecurity(d.vuln);
+
   h += '</div>';
   document.getElementById('detail-pane').innerHTML = h;
 
   const copyBtn = document.getElementById('copy-url-btn');
   if (copyBtn) copyBtn.addEventListener('click', () => navigator.clipboard.writeText(d.download_url));
+}
+
+// renderSecurity renders the Security block from the detail response's `vuln`
+// object. Four states: unsupported format, supported-but-unscanned,
+// scanned-and-clean, scanned-with-advisories.
+function renderSecurity(v) {
+  if (!v) return ''; // scanning not configured
+
+  let h = '<div class="browse-detail-asset-label" style="margin-top:16px;">Security</div>';
+
+  if (!v.supported) {
+    h += '<div class="sec-note">Not scanned — no advisory source for this format.</div>';
+    return h;
+  }
+  if (!v.scanned) {
+    h += '<div class="sec-note">Not yet scanned.</div>';
+    return h;
+  }
+  const adv = v.advisories || [];
+  if (adv.length === 0) {
+    h += '<div class="sec-clean"><span class="ms">verified_user</span> No known vulnerabilities</div>';
+    h += scannedAtLine(v.scanned_at);
+    return h;
+  }
+
+  const sev = (v.severity || 'unknown').toLowerCase();
+  h += '<div class="sec-summary">';
+  h += '<span class="badge sev-' + esc(sev) + '">' + esc(sev) + '</span>';
+  h += '<span class="sec-count">' + adv.length + (adv.length === 1 ? ' advisory' : ' advisories') + '</span>';
+  h += '</div>';
+
+  h += '<ul class="sec-list">';
+  for (const a of adv) {
+    const asev = (a.severity || 'unknown').toLowerCase();
+    h += '<li class="sec-item">';
+    h += '<div class="sec-item-head">';
+    h += '<span class="sev-dot sev-' + esc(asev) + '"></span>';
+    const id = a.url ? '<a href="' + esc(a.url) + '" target="_blank" rel="noopener">' + esc(a.id) + '</a>' : esc(a.id);
+    h += '<span class="sec-id">' + id + '</span>';
+    h += '</div>';
+    if (a.summary) h += '<div class="sec-item-summary">' + esc(a.summary) + '</div>';
+    if (a.fixed_in && a.fixed_in.length) {
+      h += '<div class="sec-item-fix">Fixed in ' + esc(a.fixed_in.join(', ')) + '</div>';
+    }
+    h += '</li>';
+  }
+  h += '</ul>';
+  h += scannedAtLine(v.scanned_at);
+  return h;
+}
+
+function scannedAtLine(ts) {
+  if (!ts || ts.startsWith('0001')) return '';
+  return '<div class="sec-scanned-at">Scanned ' + esc(ts.substring(0, 10)) + '</div>';
 }
 
 // ── Unified event delegation for the left pane ────────────────────────────────

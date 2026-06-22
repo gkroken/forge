@@ -386,7 +386,43 @@ func (s *Server) uiBrowseDetail(w http.ResponseWriter, r *http.Request, repoName
 	if resp.DownloadURL == "" {
 		resp.DownloadURL = publicBase(r) + "/repository/" + repoName + "/" + pkg
 	}
+	resp.Vuln = s.vulnInfoFor(rp, h, pkg, ver)
 	writeJSON(w, resp)
+}
+
+// vulnInfoFor builds the security panel data for one component@version. nil when
+// scanning isn't configured. Distinguishes four states the UI renders
+// differently: unsupported format, supported-but-unscanned, scanned-and-clean,
+// and scanned-with-advisories.
+func (s *Server) vulnInfoFor(rp repo.Repository, h format.Handler, pkg, ver string) *vulnInfo {
+	if s.Vuln == nil {
+		return nil
+	}
+	vi := &vulnInfo{}
+	_, vi.Supported = h.(format.VulnCoordinates)
+	if !vi.Supported {
+		return vi // e.g. helm/oci/cran: "not scanned — unsupported"
+	}
+	f, ok, _ := s.Vuln.Get(rp.Name, pkg, ver)
+	if !ok {
+		return vi // supported but no finding yet: "not yet scanned"
+	}
+	vi.Scanned = true
+	vi.ScannedAt = f.ScannedAt
+	if len(f.Advisories) > 0 {
+		vi.Severity = f.Worst().String()
+	}
+	for _, a := range f.Advisories {
+		vi.Advisories = append(vi.Advisories, vulnAdvisoryDTO{
+			ID:       a.ID,
+			Severity: a.Severity.String(),
+			Summary:  a.Summary,
+			URL:      a.URL,
+			FixedIn:  a.FixedIn,
+			Aliases:  a.Aliases,
+		})
+	}
+	return vi
 }
 
 // ── types ─────────────────────────────────────────────────────────────────────
@@ -418,6 +454,25 @@ type browseDetailResponse struct {
 	SHA1        string    `json:"sha1,omitempty"`
 	ContentType string    `json:"content_type,omitempty"`
 	FileName    string    `json:"file_name,omitempty"`
+	Vuln        *vulnInfo `json:"vuln,omitempty"`
+}
+
+// vulnInfo is the security panel payload for a component version.
+type vulnInfo struct {
+	Supported  bool              `json:"supported"`            // format has an OSV coordinate mapping
+	Scanned    bool              `json:"scanned"`              // a finding exists for this version
+	Severity   string            `json:"severity,omitempty"`   // worst advisory severity (omitted when clean)
+	ScannedAt  time.Time         `json:"scanned_at,omitempty"` //
+	Advisories []vulnAdvisoryDTO `json:"advisories,omitempty"`
+}
+
+type vulnAdvisoryDTO struct {
+	ID       string   `json:"id"`
+	Severity string   `json:"severity"`
+	Summary  string   `json:"summary,omitempty"`
+	URL      string   `json:"url,omitempty"`
+	FixedIn  []string `json:"fixed_in,omitempty"`
+	Aliases  []string `json:"aliases,omitempty"`
 }
 
 // treeNode is one entry in the browse-tree API response.

@@ -212,6 +212,52 @@ func TestEnqueueVulnScan_NoopWhenUnconfigured(t *testing.T) {
 	}
 }
 
+func TestBrowseDetail_VulnStates(t *testing.T) {
+	srv := newVulnServer(t, "http://unused.example")
+	srv.Vuln.Put("npm-hosted", vuln.Finding{ //nolint:errcheck
+		Component: "lodash", Version: "4.17.20", Source: vuln.SourceOSV,
+		Advisories: []vuln.Advisory{{
+			ID: "GHSA-x", Severity: vuln.SeverityHigh, Summary: "bad", URL: "https://e/x", FixedIn: []string{"4.17.21"},
+		}},
+	})
+
+	get := func(repoName, pkg, ver string) browseDetailResponse {
+		t.Helper()
+		rw := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/ui/browse/"+repoName+"/detail?pkg="+pkg+"&ver="+ver, nil)
+		srv.uiBrowseDetail(rw, req, repoName)
+		if rw.Code != http.StatusOK {
+			t.Fatalf("%s %s@%s: status %d body=%s", repoName, pkg, ver, rw.Code, rw.Body.String())
+		}
+		var d browseDetailResponse
+		if err := json.Unmarshal(rw.Body.Bytes(), &d); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+
+	// Scanned + vulnerable.
+	d := get("npm-hosted", "lodash", "4.17.20")
+	if d.Vuln == nil || !d.Vuln.Supported || !d.Vuln.Scanned {
+		t.Fatalf("vulnerable: state = %+v", d.Vuln)
+	}
+	if d.Vuln.Severity != "high" || len(d.Vuln.Advisories) != 1 || d.Vuln.Advisories[0].ID != "GHSA-x" {
+		t.Errorf("vulnerable: %+v", d.Vuln)
+	}
+
+	// Supported format, no finding for this version → scanned=false.
+	d = get("npm-hosted", "lodash", "4.17.21")
+	if d.Vuln == nil || !d.Vuln.Supported || d.Vuln.Scanned {
+		t.Errorf("unscanned: state = %+v", d.Vuln)
+	}
+
+	// Unsupported format (helm has no OSV mapping).
+	d = get("helm-hosted", "mychart", "1.0.0")
+	if d.Vuln == nil || d.Vuln.Supported {
+		t.Errorf("unsupported: state = %+v", d.Vuln)
+	}
+}
+
 func TestEnqueueVulnScan_Enqueues(t *testing.T) {
 	srv := newVulnServer(t, "http://unused.example")
 	q := &fakeQueue{}
