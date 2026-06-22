@@ -343,6 +343,17 @@ h2 { font-size: .9rem; font-weight: 600; margin-bottom: .75rem; color: var(--tex
 .sev-low      { background: var(--sev-low-bg);  color: var(--sev-low-fg);  }
 .sev-unknown  { background: var(--sev-unk-bg);  color: var(--sev-unk-fg);  }
 
+/* Compact severity pill for list/row surfaces (Browse list, version list,
+   search, admin repos table). Smaller than the detail-pane .badge; same
+   colour tokens. Shared by browse.js sevBadge() and the Go sevBadge helper. */
+.badge-sev {
+  padding: 0 6px;
+  font-size: 9px;
+  line-height: 15px;
+  letter-spacing: .02em;
+  flex: 0 0 auto;
+}
+
 /* Security panel in the browse detail pane */
 .sec-note { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
 .sec-clean { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--alert-ok-fg, #1a7f37); margin-top: 6px; }

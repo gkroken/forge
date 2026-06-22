@@ -145,6 +145,62 @@ func TestScanRepo_WritesFindings(t *testing.T) {
 	}
 }
 
+func TestBrowseSurfaces_CarrySeverity(t *testing.T) {
+	osv := osvTestServer(t, "GHSA-test-0001")
+	srv := newVulnServer(t, osv.URL)
+	if err := srv.scanRepo(context.Background(), "npm-hosted"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Component list carries the worst severity per package.
+	rec := httptest.NewRecorder()
+	srv.handleComponents(rec, httptest.NewRequest(http.MethodGet, "/api/v1/repos/npm-hosted/components?limit=0", nil), "npm-hosted")
+	var comps componentsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &comps); err != nil {
+		t.Fatalf("decode components: %v", err)
+	}
+	var found bool
+	for _, c := range comps.Components {
+		if c.Name == "lodash" {
+			found = true
+			if c.Severity != "high" {
+				t.Errorf("lodash component severity = %q, want high", c.Severity)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("lodash not in component list")
+	}
+
+	// Version list carries per-version severity.
+	rec = httptest.NewRecorder()
+	srv.uiBrowseVersions(rec, httptest.NewRequest(http.MethodGet, "/ui/browse/npm-hosted/versions?pkg=lodash", nil), "npm-hosted")
+	var vers browseVersionsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &vers); err != nil {
+		t.Fatalf("decode versions: %v", err)
+	}
+	if len(vers.Versions) == 0 || vers.Versions[0].Severity != "high" {
+		t.Errorf("version severity = %+v, want first high", vers.Versions)
+	}
+}
+
+func TestBrowseSurfaces_NoBadgeWhenUnconfigured(t *testing.T) {
+	srv := newVulnServer(t, "http://unused.example")
+	srv.Vuln = nil // scanning not configured → severity must be empty, never "unknown"
+
+	rec := httptest.NewRecorder()
+	srv.handleComponents(rec, httptest.NewRequest(http.MethodGet, "/api/v1/repos/npm-hosted/components?limit=0", nil), "npm-hosted")
+	var comps componentsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &comps); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range comps.Components {
+		if c.Severity != "" {
+			t.Errorf("component %q severity = %q, want empty when unconfigured", c.Name, c.Severity)
+		}
+	}
+}
+
 func TestScanRepo_SkipsNonScannableFormat(t *testing.T) {
 	osv := osvTestServer(t, "GHSA-should-not-appear")
 	srv := newVulnServer(t, osv.URL)

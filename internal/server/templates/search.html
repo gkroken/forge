@@ -60,7 +60,7 @@
       <tbody>
         {{range .Results}}
         <tr>
-          <td class="col-name"><a href="/ui/browse/{{.Repo}}?pkg={{.Name}}">{{.Name}}</a></td>
+          <td class="col-name"><a href="/ui/browse/{{.Repo}}?pkg={{.Name}}">{{.Name}}</a> {{sevBadge .Severity}}</td>
           <td><a href="/ui/browse/{{.Repo}}">{{.Repo}}</a></td>
           <td><span class="badge fmt-{{.Format}}">{{formatIcon .Format}}{{.Format}}</span></td>
           <td class="col-latest">{{if .Versions}}{{index .Versions 0}}{{end}}</td>

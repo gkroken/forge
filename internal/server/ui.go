@@ -77,6 +77,17 @@ var uiFuncs = template.FuncMap{
 		return ss[:3]
 	},
 	"fmtBytes": humanBytes,
+	// sevBadge renders a compact severity pill for server-rendered list surfaces
+	// (admin repos table, dashboard). Empty severity → no badge. Mirrors the
+	// browse.js sevBadge() helper so every surface looks identical; the severity
+	// label comes from the controlled vuln.Severity enum.
+	"sevBadge": func(sev string) template.HTML {
+		if sev == "" {
+			return ""
+		}
+		s := template.HTMLEscapeString(strings.ToLower(sev))
+		return template.HTML(`<span class="badge badge-sev sev-` + s + `">` + s + `</span>`) // #nosec G203 -- s is escaped above
+	},
 	"durStr": func(d time.Duration) string {
 		if d == 0 {
 			return ""
@@ -383,11 +394,13 @@ func (s *Server) uiSearch(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
+			rollup := s.vulnRollupFor(rp.Name) // one O(1) lookup per repo
 			for _, e := range entries {
 				if strings.Contains(strings.ToLower(e.Name), ql) {
 					results = append(results, searchResult{
 						Repo: rp.Name, Format: rp.Format,
 						Name: e.Name, Versions: e.Versions,
+						Severity: rollup.ComponentSeverity(e.Name),
 					})
 				}
 			}

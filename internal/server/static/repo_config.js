@@ -10,6 +10,13 @@
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
   function escAttr(s) { return String(s).replace(/'/g, '&#39;').replace(/"/g, '&quot;'); }
+  // Compact severity pill, mirroring browse.js sevBadge() / the Go helper.
+  // '' for a falsy severity so callers append unconditionally.
+  function sevBadge(sev) {
+    if (!sev) return '';
+    var s = String(sev).toLowerCase();
+    return '<span class="badge badge-sev sev-' + esc(s) + '" title="worst severity: ' + esc(s) + '">' + esc(s) + '</span>';
+  }
 
   // ── Toast ──────────────────────────────────────────────────────────────────
   var toastContainer;
@@ -221,6 +228,7 @@
         row.innerHTML =
           '<span class="ms" style="font-size:16px;color:var(--text-muted)">chevron_right</span>' +
           '<span class="content-pkg-name">' + esc(c.name) + '</span>' +
+          sevBadge(c.severity) +
           '<span class="content-pkg-meta">' + verCount + ' version' + (verCount !== 1 ? 's' : '') + '</span>';
 
         var verList = document.createElement('div');
@@ -270,8 +278,10 @@
       var copyURL = dl || (window.location.origin + '/repository/' + encodeURIComponent(REPO) + '/' + encodeURIComponent(pkg));
       var row = document.createElement('div');
       row.className = 'content-ver-row';
+      var vsev = (typeof v === 'object' && v.severity) ? v.severity : '';
       row.innerHTML =
         '<span class="content-ver-tag">' + esc(ver) + '</span>' +
+        sevBadge(vsev) +
         '<span class="content-ver-actions">' +
           '<button class="btn btn-sm" onclick="rcCopyURL(\'' + escAttr(copyURL) + '\')">Copy URL</button>' +
           (KIND === 'proxy'

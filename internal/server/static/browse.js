@@ -88,6 +88,7 @@ async function loadFlatPkgs(repo, container, kind) {
           '<div class="browse-pkg" data-name="' + esc(p.name) + '">' +
           '<span class="ms browse-pkg-icon">package_2</span>' +
           '<span class="browse-pkg-name">' + esc(p.name) + '</span>' +
+          sevBadge(p.severity) +
           '<span class="browse-pkg-ver">' + esc((p.versions && p.versions[0]) || '') + '</span>' +
           '</div>'
         ).join('')
@@ -147,6 +148,7 @@ function renderTreeNodes(repo, nodes, depth, container, replace) {
         : '<span class="browse-tree-toggle-spacer"></span>') +
       '<span class="ms browse-tree-icon">' + icon + '</span>' +
       '<span class="browse-tree-name">' + esc(n.name) + '</span>' +
+      (isComponent ? sevBadge(n.severity) : '') +
       '</div>' +
       (n.is_dir
         ? '<div class="browse-tree-children" data-for="' + esc(repo + ':' + n.path) + '" style="display:none"></div>'
@@ -251,7 +253,7 @@ function renderVersions(d) {
   for (const v of d.versions) {
     const pub = v.published_at && !v.published_at.startsWith('0001') ? v.published_at.substring(0, 10) : '—';
     h += '<tr class="browse-ver-row" data-pkg="' + esc(d.pkg) + '" data-ver="' + esc(v.version) + '">';
-    h += '<td class="col-mono">' + esc(v.version) + '</td>';
+    h += '<td class="col-mono">' + esc(v.version) + (v.severity ? ' ' + sevBadge(v.severity) : '') + '</td>';
     h += '<td class="col-mono">' + (v.size_bytes ? fmtBytes(v.size_bytes) : '—') + '</td>';
     h += '<td class="col-date">' + pub + '</td>';
     h += '</tr>';
@@ -438,6 +440,17 @@ if (autoNode) {
   const pkg = new URLSearchParams(window.location.search).get('pkg');
   toggleRepo(autoNode);
   if (pkg) selectPkg(autoNode.dataset.repo, pkg);
+}
+
+// sevBadge returns a compact severity pill for list/row surfaces (Browse list,
+// version list, search). Returns '' for a falsy severity so callers can append
+// it unconditionally and show nothing when there's no finding. Shares the
+// .sev-<level> colour tokens with the detail-pane badge, and mirrors the Go
+// sevBadge template helper so server- and client-rendered surfaces match.
+function sevBadge(sev) {
+  if (!sev) return '';
+  const s = String(sev).toLowerCase();
+  return '<span class="badge badge-sev sev-' + esc(s) + '" title="worst severity: ' + esc(s) + '">' + esc(s) + '</span>';
 }
 
 // ── Shared util ───────────────────────────────────────────────────────────────

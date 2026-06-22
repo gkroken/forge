@@ -9,6 +9,7 @@ import (
 
 	"forge/internal/format"
 	"forge/internal/repo"
+	"forge/internal/vuln"
 )
 
 // uiBrowseTree serves GET /ui/browse/{repo}/tree?prefix=
@@ -83,6 +84,13 @@ func (s *Server) uiBrowseTree(w http.ResponseWriter, r *http.Request, repoName s
 		}
 	}
 
+	// One rollup per source (covers groups, whose findings live under the member
+	// repos, not the group). Looked up once per tree level, not per node.
+	rollups := make([]vuln.Rollup, len(sources))
+	for i, src := range sources {
+		rollups[i] = s.vulnRollupFor(src)
+	}
+
 	nodes := make([]treeNode, 0, len(order))
 	for _, seg := range order {
 		ci := seen[seg]
@@ -94,6 +102,12 @@ func (s *Server) uiBrowseTree(w http.ResponseWriter, r *http.Request, repoName s
 		switch {
 		case ci.hasVersion:
 			n.Component = mavenComponent(prefix, seg)
+			for _, rr := range rollups {
+				if sev := rr.ComponentSeverity(n.Component); sev != "" {
+					n.Severity = sev
+					break
+				}
+			}
 		case ci.isDir:
 			n.IsDir = true
 		}
@@ -191,9 +205,15 @@ func (s *Server) handleComponents(w http.ResponseWriter, r *http.Request, name s
 		}
 	}
 
+	rollup := s.vulnRollupFor(name)
 	items := make([]componentItem, len(entries))
 	for i, e := range entries {
-		items[i] = componentItem{Name: e.Name, Versions: e.Versions, UpdatedAt: e.UpdatedAt}
+		items[i] = componentItem{
+			Name:      e.Name,
+			Versions:  e.Versions,
+			UpdatedAt: e.UpdatedAt,
+			Severity:  rollup.ComponentSeverity(e.Name),
+		}
 	}
 	writeJSON(w, componentsResponse{Components: items, Total: total, Page: page, Limit: limit})
 }
@@ -244,6 +264,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
+		rollup := s.vulnRollupFor(rp.Name) // one O(1) lookup per repo, not per hit
 		for _, e := range entries {
 			if strings.Contains(strings.ToLower(e.Name), ql) {
 				results = append(results, searchResult{
@@ -251,6 +272,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 					Format:   rp.Format,
 					Name:     e.Name,
 					Versions: e.Versions,
+					Severity: rollup.ComponentSeverity(e.Name),
 				})
 			}
 		}
@@ -286,6 +308,7 @@ func (s *Server) uiBrowseVersions(w http.ResponseWriter, r *http.Request, repoNa
 	}
 
 	c := s.browseCtx(rp)
+	rollup := s.vulnRollupFor(repoName)
 	resp := browseVersionsResponse{Name: pkg, Pkg: pkg}
 
 	if insp, ok := h.(format.Inspectable); ok {
@@ -300,6 +323,7 @@ func (s *Server) uiBrowseVersions(w http.ResponseWriter, r *http.Request, repoNa
 				PublishedAt: v.PublishedAt,
 				SizeBytes:   v.SizeBytes,
 				DownloadURL: v.DownloadURL,
+				Severity:    rollup.VersionSeverity(pkg, v.Version),
 			})
 		}
 	} else if b, ok := h.(format.Browsable); ok {
@@ -311,7 +335,10 @@ func (s *Server) uiBrowseVersions(w http.ResponseWriter, r *http.Request, repoNa
 		for _, e := range entries {
 			if e.Name == pkg {
 				for _, v := range e.Versions {
-					resp.Versions = append(resp.Versions, browseVersionRow{Version: v})
+					resp.Versions = append(resp.Versions, browseVersionRow{
+						Version:  v,
+						Severity: rollup.VersionSeverity(pkg, v),
+					})
 				}
 				break
 			}
@@ -390,6 +417,21 @@ func (s *Server) uiBrowseDetail(w http.ResponseWriter, r *http.Request, repoName
 	writeJSON(w, resp)
 }
 
+// vulnRollupFor returns the persisted rollup for repo, or a zero rollup when
+// scanning is unconfigured or the repo was never scanned. The zero value is
+// safe to query (ComponentSeverity/VersionSeverity return "" → no badge), so
+// list surfaces can read severity unconditionally with a single O(1) lookup.
+func (s *Server) vulnRollupFor(repo string) vuln.Rollup {
+	if s.Vuln == nil {
+		return vuln.Rollup{}
+	}
+	r, ok, err := s.Vuln.GetRollup(repo)
+	if err != nil || !ok {
+		return vuln.Rollup{}
+	}
+	return r
+}
+
 // vulnInfoFor builds the security panel data for one component@version. nil when
 // scanning isn't configured. Distinguishes four states the UI renders
 // differently: unsupported format, supported-but-unscanned, scanned-and-clean,
@@ -438,6 +480,7 @@ type browseVersionRow struct {
 	PublishedAt time.Time `json:"published_at,omitempty"`
 	SizeBytes   int64     `json:"size_bytes,omitempty"`
 	DownloadURL string    `json:"download_url,omitempty"`
+	Severity    string    `json:"severity,omitempty"` // worst severity for this version; "" = not vulnerable
 }
 
 type browseDetailResponse struct {
@@ -484,6 +527,9 @@ type treeNode struct {
 	// The client treats it as a leaf: clicking loads its versions in the center
 	// pane rather than expanding. Mutually exclusive with IsDir.
 	Component string `json:"component,omitempty"`
+	// Severity is the worst severity across the artifact's versions ("" = not
+	// vulnerable / not an artifact node). Only set on Component (leaf) nodes.
+	Severity string `json:"severity,omitempty"`
 }
 
 // mavenComponent builds the "groupId:artifactId" identifier for an artifact
@@ -501,6 +547,7 @@ type componentItem struct {
 	Name      string    `json:"name"`
 	Versions  []string  `json:"versions"`
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
+	Severity  string    `json:"severity,omitempty"` // worst severity across versions; "" = not vulnerable
 }
 
 type componentsResponse struct {
@@ -515,6 +562,7 @@ type searchResult struct {
 	Format   string   `json:"format"`
 	Name     string   `json:"name"`
 	Versions []string `json:"versions"`
+	Severity string   `json:"severity,omitempty"` // worst severity across versions; "" = not vulnerable
 }
 
 type searchResponse struct {

@@ -106,6 +106,29 @@ func (s *Store) ComputeAndPutRollup(repo string) (Rollup, error) {
 	return r, nil
 }
 
+// ComponentSeverity returns the worst-severity label for a component, or "" if
+// the component has no findings (not vulnerable → surfaces render no badge). A
+// present-but-unscored component returns "unknown" (a grey badge), distinct
+// from absent — that distinction is why the maps omit clean components rather
+// than relying on the zero value.
+func (r Rollup) ComponentSeverity(component string) string {
+	if s, ok := r.WorstByComponent[component]; ok {
+		return s.String()
+	}
+	return ""
+}
+
+// VersionSeverity returns the worst-severity label for one component@version, or
+// "" if that version has no findings.
+func (r Rollup) VersionSeverity(component, version string) string {
+	if vs, ok := r.WorstByVersion[component]; ok {
+		if s, ok := vs[version]; ok {
+			return s.String()
+		}
+	}
+	return ""
+}
+
 func rollupNS(repo string) string { return repo + ":vuln-rollup" }
 
 const rollupKey = "rollup"
