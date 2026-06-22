@@ -181,6 +181,15 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// /api/v1/repos/{name}/security-policy — get resolved / assign named policy (admin only).
+	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "security-policy" {
+		if !s.Enforcer.RequireAdmin(w, r) {
+			return
+		}
+		s.handleRepoSecurityPolicy(w, r, repoName)
+		return
+	}
+
 	// /api/v1/repos/{name}/cache-stats — hourly hit/miss ring buffer (admin only).
 	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "cache-stats" {
 		if !s.Enforcer.RequireAdmin(w, r) {

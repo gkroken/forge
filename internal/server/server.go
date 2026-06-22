@@ -305,6 +305,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/v1/roles/", s.handleRoles)
 	mux.HandleFunc("/api/v1/cleanup-policies", s.handleCleanupPolicies)
 	mux.HandleFunc("/api/v1/cleanup-policies/", s.handleCleanupPolicies)
+	mux.HandleFunc("/api/v1/security-policies", s.handleSecurityPolicies)
+	mux.HandleFunc("/api/v1/security-policies/", s.handleSecurityPolicies)
 	mux.HandleFunc("/api/v1/repos", s.handleAdminRepos)
 	mux.HandleFunc("/api/v1/repos/", s.handleAdminRepos)
 	mux.HandleFunc("/api/v1/search", s.handleSearch)
