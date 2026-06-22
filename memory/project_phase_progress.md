@@ -15,7 +15,7 @@ Progress as of 2026-06-05. All findings verified by direct codebase inspection.
 
 - **P0** ✅ CI, testcontainers harness, golden-file framework, coverage gate (75% overall + per-package ≥85% for auth/proxy/indexer/server)
 - **P1** ✅ Postgres meta.Store + S3/MinIO blob.Store; contract suites; up/down migration test
-- **P2** ✅ Token auth + per-repo RBAC + authz matrix test. OIDC/LDAP/SAML descoped to post-GA.
+- **P2** ✅ Token auth + per-repo RBAC + authz matrix test. **OIDC SSO shipped post-GA** (2026-06-22, live-validated vs Keycloak 26 — see project-next-steps); LDAP/SAML still descoped to post-GA.
 - **P3** ✅ All format deliverables: CRAN binary trees (Windows .zip + macOS .tgz), Helm OCI push/pull, scoped npm group conformance, full client matrix (Gradle, pnpm, yarn, pak, renv, crane)
 - **P4** ✅ Proxy/cache correctness — TTL, ETag revalidation, negative cache, stale-on-error, retries, upstream auth, circuit breaker
 - **P5** ✅ Job queue + idempotent indexer. `queue.NewPG` wired in `cmd/forge/main.go` when `POSTGRES_DSN` is set (fixed in `c374fb9`). Eval mode falls back to `queue.NewMem`.
@@ -61,7 +61,7 @@ All previously open gaps are resolved. Key ones worth remembering:
 
 ## Post-GA items (deliberately descoped)
 
-- OIDC/LDAP/SAML federation (Keycloak/AD SSO)
+- ~~OIDC federation~~ **DONE 2026-06-22** (Keycloak, live-validated); LDAP/SAML federation still pending
 - Terraform cloud modules (AWS/GCP/Azure)
 - Distributed tracing
 - Chaos suite
