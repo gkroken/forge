@@ -34,6 +34,7 @@ import (
 	"forge/internal/queue"
 	"forge/internal/repo"
 	"forge/internal/server"
+	"forge/internal/webhook"
 )
 
 func main() {
@@ -232,9 +233,15 @@ func main() {
 		slog.Info("audit log: in-memory (eval mode)")
 	}
 
+	// Webhooks: durable on-publish delivery via the shared queue. Construct
+	// before WithQueue so its delivery handler is registered before the worker
+	// starts, and before Routes() so the publish hook can emit events.
+	webhookEngine := webhook.New(metaStore, q, nil)
+
 	forgeSrv := server.New(mgr, reg, blobStore, metaStore, authStore).
 		WithMetrics(metrics, promReg).
 		WithGlobalStats(globalStats).
+		WithWebhooks(webhookEngine).
 		WithQueue(workerCtx, q).
 		WithCleanup(cleanupPolicies).
 		WithScheduler(cleanupScheduler).

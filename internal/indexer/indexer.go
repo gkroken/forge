@@ -7,7 +7,12 @@
 //
 // Current job types:
 //
-//	npm.regen   — rebuild npm packument from per-version records
+//	npm.regen        — rebuild npm packument from per-version records (built-in)
+//	<registered>     — other job families (e.g. webhook.deliver) attach via Register
+//
+// The worker is the single consumer of the shared queue, so non-index job
+// families register a handler here rather than running a second worker (a second
+// worker over one queue would race and discard jobs whose type it doesn't know).
 package indexer
 
 import (
@@ -33,10 +38,23 @@ type Worker struct {
 	meta     meta.Store
 	metrics  *obs.Metrics
 	taskRing *queue.TaskRing
+	handlers map[string]func(context.Context, queue.Job) error
 }
 
 // New returns a Worker backed by the given meta store.
 func New(m meta.Store) *Worker { return &Worker{meta: m} }
+
+// Register attaches a handler for jobs of the given type, drained by this one
+// worker alongside the built-in index-regen jobs. Registered handlers inherit
+// the worker's metrics + task-ring instrumentation. Call before Work; the
+// handler map is read without locking once the Work loop is running.
+func (w *Worker) Register(typ string, h func(context.Context, queue.Job) error) *Worker {
+	if w.handlers == nil {
+		w.handlers = map[string]func(context.Context, queue.Job) error{}
+	}
+	w.handlers[typ] = h
+	return w
+}
 
 // WithMetrics attaches Prometheus instruments to the Worker so job outcomes
 // are recorded against forge_queue_jobs_total{type, result}.
@@ -56,7 +74,7 @@ func (w *Worker) WithTaskRing(tr *queue.TaskRing) *Worker {
 // appropriate regeneration function.
 func (w *Worker) Work(ctx context.Context, q queue.Queue) error {
 	fn := func(ctx context.Context, j queue.Job) error {
-		err := w.dispatch(j)
+		err := w.dispatch(ctx, j)
 		if w.metrics != nil {
 			result := "success"
 			if err != nil {
@@ -72,7 +90,10 @@ func (w *Worker) Work(ctx context.Context, q queue.Queue) error {
 	return q.Work(ctx, fn)
 }
 
-func (w *Worker) dispatch(j queue.Job) error {
+func (w *Worker) dispatch(ctx context.Context, j queue.Job) error {
+	if h, ok := w.handlers[j.Type]; ok {
+		return h(ctx, j)
+	}
 	switch j.Type {
 	case "npm.regen":
 		return w.regenNPM(j)

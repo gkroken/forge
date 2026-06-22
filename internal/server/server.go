@@ -34,6 +34,7 @@ import (
 	"forge/internal/oidc"
 	"forge/internal/queue"
 	"forge/internal/repo"
+	"forge/internal/webhook"
 )
 
 // ociError writes an OCI Distribution Spec error response.
@@ -75,6 +76,7 @@ type Server struct {
 	AuditLog    obs.AuditSink          // nil = no audit log (eval: ring buffer; prod: Postgres)
 	Users       auth.UserStore         // nil = user management not configured
 	Roles       auth.RoleStore         // nil = custom roles not configured
+	Webhooks    *webhook.Engine        // nil = webhooks not configured (no event emission)
 	MaxUpload   int64                  // per-request body limit; 0 = use defaultMaxUpload
 	reg         prometheus.Gatherer
 	client      *http.Client
@@ -131,12 +133,27 @@ func (s *Server) WithGlobalStats(gs *obs.GlobalStats) *Server {
 	return s
 }
 
-// WithQueue attaches a queue to the server and starts the indexer worker in
-// a background goroutine that runs until ctx is cancelled.
+// WithQueue attaches a queue to the server and starts the single async worker in
+// a background goroutine that runs until ctx is cancelled. The worker drains the
+// shared queue, dispatching index-regen jobs built-in and any registered job
+// families (e.g. webhook delivery) via their handlers. Call WithWebhooks before
+// WithQueue so the webhook handler is registered before the Work loop starts.
 func (s *Server) WithQueue(ctx context.Context, q queue.Queue) *Server {
 	s.Queue = q
 	s.TaskRing = queue.NewTaskRing(10)
-	go indexer.New(s.Meta).WithMetrics(s.Metrics).WithTaskRing(s.TaskRing).Work(ctx, q) //nolint:errcheck
+	w := indexer.New(s.Meta).WithMetrics(s.Metrics).WithTaskRing(s.TaskRing)
+	if s.Webhooks != nil {
+		w.Register(webhook.JobType, s.Webhooks.Handle)
+	}
+	go w.Work(ctx, q) //nolint:errcheck
+	return s
+}
+
+// WithWebhooks attaches the webhook engine. Call before WithQueue (which
+// registers its delivery handler) and before Routes() (so the publish hook emits
+// events). nil leaves webhooks disabled.
+func (s *Server) WithWebhooks(e *webhook.Engine) *Server {
+	s.Webhooks = e
 	return s
 }
 
@@ -258,6 +275,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/v1/search", s.handleSearch)
 	mux.HandleFunc("/api/v1/audit", s.handleAuditAPI)
 	mux.HandleFunc("/api/v1/blob-stores", s.handleBlobStores)
+	mux.HandleFunc("/api/v1/webhooks", s.handleWebhooks)
+	mux.HandleFunc("/api/v1/webhooks/", s.handleWebhooks)
 	mux.HandleFunc("/api/v1/system/", s.handleSystemAPI)
 	if s.OIDC != nil && s.Auth != nil {
 		mux.HandleFunc("/auth/oidc/login", s.handleOIDCLogin)
@@ -582,11 +601,26 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 				default: // walk already queued; skip
 				}
 			}
-			if s.Scheduler != nil {
-				rest := strings.TrimPrefix(r.URL.Path, "/repository/")
-				if repoName, _, _ := strings.Cut(rest, "/"); repoName != "" {
-					s.Scheduler.Notify(repoName)
+			rest := strings.TrimPrefix(r.URL.Path, "/repository/")
+			repoName, subPath, _ := strings.Cut(rest, "/")
+			if s.Scheduler != nil && repoName != "" {
+				s.Scheduler.Notify(repoName)
+			}
+			// Emit an artifact.published webhook event. Off the request path: the
+			// engine only enqueues durable delivery jobs here. Background context
+			// so the enqueue outlives the request.
+			if s.Webhooks != nil && repoName != "" {
+				ev := webhook.Event{
+					Type:      webhook.EventArtifactPublished,
+					Repo:      repoName,
+					Path:      subPath,
+					Actor:     actorLabel(r, s.Auth),
+					Timestamp: start,
 				}
+				if rp, ok := s.Repos.Get(repoName); ok {
+					ev.Format = rp.Format
+				}
+				go s.Webhooks.Dispatch(context.Background(), ev)
 			}
 		}
 
