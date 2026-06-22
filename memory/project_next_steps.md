@@ -100,8 +100,11 @@ Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses du
   built-in; webhook jobs inherit the worker's metrics+task-ring for free. Payload carries
   subID not the secret (honours since-disabled/deleted subs; secret never in queue table).
   Bounded self-managed retry (cap 5, Handle always returns nil so the queue's generic
-  immediate-retry can't double-fire); DEFERRED = delayed/exponential backoff (needs a queue
-  `visible_after` column). `internal/webhook`: Subscription store (meta ns "webhooks"),
+  immediate-retry can't double-fire). DELAYED EXPONENTIAL BACKOFF DONE (commit e374993):
+  added `queue.EnqueueAfter(ctx,typ,payload,delay)` to the Queue iface + `jobs.visible_after`
+  (migration 005; PG dequeue filters `visible_after<=now()` under the existing SKIP LOCKED;
+  Mem schedules via time.AfterFunc); webhook retries use equal-jitter exp backoff (2s·2^(n-1),
+  cap 5m). `internal/webhook`: Subscription store (meta ns "webhooks"),
   Sign, Engine (Dispatch+Handle+Deliver). Admin API `GET/POST /api/v1/webhooks`,
   `DELETE /{id}`, `POST /{id}/test`; secret blanked in listings. W2 UI `/ui/admin/webhooks`
   (instrument-panel, Foundry, frontend-design skill) live-verified. On-publish `Notify`
@@ -109,7 +112,7 @@ Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses du
   artifact.published for now (extensible via Event.Type). Live-verified end-to-end.
 - **NEXT (unstarted):** candidates surveyed — PyPI format (the final extensibility test),
   vuln scanning (deferred, designed in WORKPLAN-VULN.md), artifact signing/SBOM, LDAP bind,
-  editable group-map UI, SAML, webhook delayed-backoff, more webhook event types.
+  editable group-map UI, SAML, more webhook event types (policy/audit/OCI-publish).
 - **Vuln scanning = DEFERRED, designed.** Full spike written: `WORKPLAN-VULN.md` — three
   separate phased plans: Plan A OSV (npm+Maven, V0 slice→V1 breadth+obs→V2 warn/block policy),
   Plan B OCI (Trivy/Grype sidecar, NOT in-process), Plan C Helm (config + referenced-image).
