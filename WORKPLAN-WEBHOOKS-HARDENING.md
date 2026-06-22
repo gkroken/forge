@@ -54,15 +54,17 @@ emits whether **manual or automated**.
 Acceptance: each delivery carries a stable unique id + signed timestamp; a receiver can
 dedup and reject replays; 429 `Retry-After` is respected.
 
-- [ ] **#9 Delivery ID.** Generate a delivery id at Dispatch (stable across retries; reuse
-      `newID()`), put it on the payload, send as `X-Forge-Delivery`. Document dedup for receivers.
-- [ ] **#12 Replay protection.** Sign `timestamp + "." + body` (Stripe-style); send
-      `X-Forge-Timestamp`. Update `Sign`/verification + README example; bump a payload
-      `schemaVersion`. (Pre-prod, so changing the signature contract is fine — note it.)
-- [ ] **#10 `Retry-After`.** Parse `Retry-After` (delta-seconds or HTTP-date) on 429/503;
-      `Deliver` surfaces it; `Handle` uses `max(expBackoff(n), retryAfter)` for the re-enqueue delay.
-- [ ] Tests: signature+timestamp vector, replay rejection (verifier helper), delivery-id
-      stable across retries, Retry-After honored. Commit.
+- [x] **#9 Delivery ID.** `NewID()` generated per subscription at Dispatch, stored on the
+      delivery job → stable across retries. Sent as `X-Forge-Delivery` and as `id` in the body
+      envelope. README documents dedup. Live-verified (id matches in header + body).
+- [x] **#12 Replay protection.** `Sign(secret, ts, body)` now HMACs `"{timestamp}.{body}"`;
+      `X-Forge-Timestamp` sent; `Verify(...)` helper rejects out-of-tolerance timestamps +
+      tampered bodies. Body envelope bumped to `schemaVersion: 2`. README has a Python verifier.
+      Live-verified (receiver recomputed signature → sigOK, schema=2).
+- [x] **#10 `Retry-After`.** `parseRetryAfter` handles delta-seconds + HTTP-date; `Deliver`
+      returns it on 429/503; `Handle` uses `max(expBackoff(n), retryAfter)` clamped to 1h.
+- [x] Tests: Sign timestamp vector, `Verify` replay+tamper rejection, delivery-id stable across
+      a 429 retry + Retry-After honoured (≥1s gap), `parseRetryAfter` table. Committed.
 
 ## Phase H3 — Operability & observability
 Acceptance: an operator can see per-endpoint recent deliveries (status, code, attempts,

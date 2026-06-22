@@ -153,6 +153,42 @@ copy its secret; create a group `forge-admins` and a user in it; add a
 
 ---
 
+## Webhooks
+
+Register HTTP endpoints (Admin → Webhooks, or `POST /api/v1/webhooks`) to receive
+events: `artifact.published`, `artifact.deleted`, `artifact.cached` (proxy cache
+fill), and `cleanup.completed`. Delivery is durable (Postgres queue in production,
+in-memory in eval) with bounded exponential-backoff retries that also honour a
+`Retry-After` header on `429`/`503`.
+
+Each delivery POSTs a JSON envelope and these headers:
+
+| Header | Meaning |
+|---|---|
+| `X-Forge-Event` | event type, for routing without parsing the body |
+| `X-Forge-Delivery` | stable delivery id — **identical across retries**; dedup on it |
+| `X-Forge-Timestamp` | Unix seconds, signed alongside the body |
+| `X-Forge-Signature` | `sha256=<hex>` HMAC-SHA256 over `"{timestamp}.{body}"` |
+
+Verify a delivery by recomputing the signature over the **raw** request body and
+rejecting timestamps outside a tolerance window (replay protection):
+
+```python
+import hmac, hashlib, time
+
+def verify(secret, headers, raw_body, tolerance=300):
+    ts = int(headers["X-Forge-Timestamp"])
+    if abs(time.time() - ts) > tolerance:           # replay window
+        return False
+    mac = hmac.new(secret.encode(), f"{ts}.".encode() + raw_body, hashlib.sha256)
+    return hmac.compare_digest("sha256=" + mac.hexdigest(), headers["X-Forge-Signature"])
+```
+
+The body is a flat envelope: `{"schemaVersion":2,"id":"<delivery-id>","type":...,
+"repo":...,"format":...,"path":...,"timestamp":...,"data":{...}}`.
+
+---
+
 ## Architecture
 
 One shared spine; formats are plugins.

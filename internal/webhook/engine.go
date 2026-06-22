@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"forge/internal/meta"
@@ -44,13 +46,29 @@ func expBackoff(attempt int) time.Duration {
 	return half + time.Duration(rand.Int64N(int64(half)+1))
 }
 
+// SchemaVersion is the delivered payload's envelope version. Bumped to 2 when
+// the signature contract changed to sign "{timestamp}.{body}" and the envelope
+// gained id + schemaVersion fields.
+const SchemaVersion = 2
+
 // delivery is the enqueued job payload. It carries the subscription ID (not the
 // secret) so the secret never lands in the queue table and a since-disabled or
-// deleted subscription is honoured at delivery time.
+// deleted subscription is honoured at delivery time. DeliveryID is generated
+// once at Dispatch and preserved across retries so a receiver can dedup.
 type delivery struct {
-	SubID   string `json:"subID"`
-	Event   Event  `json:"event"`
-	Attempt int    `json:"attempt"`
+	SubID      string `json:"subID"`
+	DeliveryID string `json:"deliveryID"`
+	Event      Event  `json:"event"`
+	Attempt    int    `json:"attempt"`
+}
+
+// deliveryPayload is the JSON body POSTed to a subscriber: the event fields
+// flattened under a delivery envelope (schemaVersion + stable id). The id also
+// travels in the X-Forge-Delivery header.
+type deliveryPayload struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	ID            string `json:"id"`
+	Event
 }
 
 // Engine matches events to subscriptions, enqueues durable delivery jobs, and
@@ -124,7 +142,8 @@ func (e *Engine) Dispatch(ctx context.Context, ev Event) {
 		if !s.Matches(ev) {
 			continue
 		}
-		if err := e.q.Enqueue(ctx, JobType, delivery{SubID: s.ID, Event: ev}); err != nil {
+		d := delivery{SubID: s.ID, DeliveryID: NewID(), Event: ev}
+		if err := e.q.Enqueue(ctx, JobType, d); err != nil {
 			slog.Warn("webhook: enqueue delivery failed", "sub", s.ID, "err", err)
 		}
 	}
@@ -147,10 +166,19 @@ func (e *Engine) Handle(ctx context.Context, j queue.Job) error {
 	if !ok || !sub.Enabled {
 		return nil // subscription deleted/disabled since enqueue; drop
 	}
-	if derr := e.Deliver(ctx, sub, d.Event); derr != nil {
+	retryAfter, derr := e.Deliver(ctx, sub, d.Event, d.DeliveryID)
+	if derr != nil {
 		if d.Attempt+1 < e.maxAttempts {
 			d.Attempt++
 			delay := e.backoff(d.Attempt)
+			// Honour a server-provided Retry-After (429/503): wait at least that
+			// long, clamped so a hostile/huge value can't pin a job for days.
+			if retryAfter > maxRetryAfter {
+				retryAfter = maxRetryAfter
+			}
+			if retryAfter > delay {
+				delay = retryAfter
+			}
 			if eqErr := e.q.EnqueueAfter(ctx, JobType, d, delay); eqErr != nil {
 				slog.Warn("webhook: re-enqueue failed", "sub", sub.ID, "err", eqErr)
 			}
@@ -162,29 +190,64 @@ func (e *Engine) Handle(ctx context.Context, j queue.Job) error {
 	return nil
 }
 
-// Deliver POSTs ev to sub.URL as signed JSON. Returns an error on transport
-// failure or a non-2xx response. Exported so an admin "test ping" can reuse it.
-func (e *Engine) Deliver(ctx context.Context, sub Subscription, ev Event) error {
-	body, err := json.Marshal(ev)
+// maxRetryAfter caps how long a Retry-After header can defer a redelivery.
+const maxRetryAfter = time.Hour
+
+// Deliver POSTs ev to sub.URL as a signed JSON envelope. deliveryID is the
+// stable id sent in X-Forge-Delivery (generate a fresh one for a one-off test
+// ping). It returns the delay requested via Retry-After on a 429/503 (0
+// otherwise) and an error on transport failure or a non-2xx response. Exported
+// so an admin "test ping" can reuse it.
+func (e *Engine) Deliver(ctx context.Context, sub Subscription, ev Event, deliveryID string) (time.Duration, error) {
+	body, err := json.Marshal(deliveryPayload{SchemaVersion: SchemaVersion, ID: deliveryID, Event: ev})
 	if err != nil {
-		return err
+		return 0, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, sub.URL, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return 0, err
 	}
+	ts := time.Now().UTC().Unix()
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(EventHeader, ev.Type)
-	req.Header.Set(SignatureHeader, Sign(sub.Secret, body))
+	req.Header.Set(DeliveryHeader, deliveryID)
+	req.Header.Set(TimestampHeader, strconv.FormatInt(ts, 10))
+	req.Header.Set(SignatureHeader, Sign(sub.Secret, ts, body))
 
 	resp, err := e.client.Do(req)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("webhook: non-2xx from %s: %d", sub.URL, resp.StatusCode)
+		var retryAfter time.Duration
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+			retryAfter = parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+		}
+		return retryAfter, fmt.Errorf("webhook: non-2xx from %s: %d", sub.URL, resp.StatusCode)
 	}
-	return nil
+	return 0, nil
+}
+
+// parseRetryAfter parses an HTTP Retry-After header value, which is either
+// delta-seconds or an HTTP-date. Returns 0 for an absent, malformed, or
+// past-dated value.
+func parseRetryAfter(v string, now time.Time) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(v); err == nil {
+		if secs <= 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := t.Sub(now); d > 0 {
+			return d
+		}
+	}
+	return 0
 }

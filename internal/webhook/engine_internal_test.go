@@ -1,9 +1,34 @@
 package webhook
 
 import (
+	"net/http"
 	"testing"
 	"time"
 )
+
+// TestParseRetryAfter covers both Retry-After forms (delta-seconds and
+// HTTP-date) plus the empty/malformed/past-dated cases that yield 0.
+func TestParseRetryAfter(t *testing.T) {
+	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		in   string
+		want time.Duration
+	}{
+		{"", 0},
+		{"0", 0},
+		{"-5", 0},
+		{"30", 30 * time.Second},
+		{"  12 ", 12 * time.Second},
+		{"garbage", 0},
+		{now.Add(45 * time.Second).UTC().Format(http.TimeFormat), 45 * time.Second},
+		{now.Add(-time.Minute).UTC().Format(http.TimeFormat), 0},
+	}
+	for _, c := range cases {
+		if got := parseRetryAfter(c.in, now); got != c.want {
+			t.Errorf("parseRetryAfter(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
 
 // TestExpBackoff_GrowsAndCaps checks the equal-jitter exponential schedule:
 // attempt n is in [d/2, d] where d = backoffBase·2^(n-1), capped at maxBackoff,

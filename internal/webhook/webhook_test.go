@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -29,17 +31,45 @@ func newStore(t *testing.T) meta.Store {
 
 func TestSign_VerifiesWithHMAC(t *testing.T) {
 	body := []byte(`{"hello":"world"}`)
-	got := webhook.Sign("s3cr3t", body)
+	var ts int64 = 1_700_000_000
+	got := webhook.Sign("s3cr3t", ts, body)
 
 	mac := hmac.New(sha256.New, []byte("s3cr3t"))
+	mac.Write([]byte("1700000000."))
 	mac.Write(body)
 	want := "sha256=" + hex.EncodeToString(mac.Sum(nil))
 	if got != want {
 		t.Fatalf("Sign = %q, want %q", got, want)
 	}
 	// Different secret → different signature.
-	if webhook.Sign("other", body) == got {
+	if webhook.Sign("other", ts, body) == got {
 		t.Fatal("signature must depend on the secret")
+	}
+	// Different timestamp → different signature (binds the timestamp).
+	if webhook.Sign("s3cr3t", ts+1, body) == got {
+		t.Fatal("signature must depend on the timestamp")
+	}
+}
+
+// TestVerify_RejectsReplayAndTamper exercises the receiver-side verifier:
+// a fresh, correctly-signed delivery passes; an out-of-tolerance timestamp
+// (replay) and a tampered body are both rejected.
+func TestVerify_RejectsReplayAndTamper(t *testing.T) {
+	secret := "k"
+	body := []byte(`{"type":"artifact.published"}`)
+	now := time.Unix(1_700_000_000, 0).UTC()
+	sig := webhook.Sign(secret, now.Unix(), body)
+
+	if !webhook.Verify(secret, sig, now.Unix(), body, time.Minute, now) {
+		t.Fatal("fresh delivery should verify")
+	}
+	// Replay: same signature, but received 10 minutes later → outside tolerance.
+	if webhook.Verify(secret, sig, now.Unix(), body, time.Minute, now.Add(10*time.Minute)) {
+		t.Fatal("stale timestamp must be rejected (replay protection)")
+	}
+	// Tamper: body changed under the same timestamp → signature mismatch.
+	if webhook.Verify(secret, sig, now.Unix(), []byte(`{"type":"evil"}`), time.Minute, now) {
+		t.Fatal("tampered body must be rejected")
 	}
 }
 
@@ -75,7 +105,12 @@ func TestDispatchAndHandle_DeliversSigned(t *testing.T) {
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		gotSig.Store(r.Header.Get(webhook.SignatureHeader) == webhook.Sign("topsecret", body))
+		ts, _ := strconv.ParseInt(r.Header.Get(webhook.TimestampHeader), 10, 64)
+		// Receiver-side verification: signature over "{timestamp}.{body}", and a
+		// non-empty delivery id for dedup.
+		ok := webhook.Verify("topsecret", r.Header.Get(webhook.SignatureHeader), ts, body, time.Minute, time.Now()) &&
+			r.Header.Get(webhook.DeliveryHeader) != ""
+		gotSig.Store(ok)
 		var ev webhook.Event
 		_ = json.Unmarshal(body, &ev)
 		gotEvent.Store(ev)
@@ -223,6 +258,57 @@ func TestEmitCleanupCompleted_DeliversSummary(t *testing.T) {
 	// JSON numbers decode to float64.
 	if d, _ := ev.Data["deleted"].(float64); d != 3 {
 		t.Fatalf("deleted = %v, want 3", ev.Data["deleted"])
+	}
+}
+
+// TestRetryAfter_HonouredAndDeliveryIDStable verifies a 429 with a Retry-After
+// defers the retry by at least that long, and that the X-Forge-Delivery id is
+// identical across the original attempt and the retry (so receivers can dedup).
+func TestRetryAfter_HonouredAndDeliveryIDStable(t *testing.T) {
+	var ids []string
+	var times []time.Time
+	var mu sync.Mutex
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		ids = append(ids, r.Header.Get(webhook.DeliveryHeader))
+		times = append(times, time.Now())
+		mu.Unlock()
+		if hits.Add(1) == 1 {
+			w.Header().Set("Retry-After", "1") // 1 second
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	m := newStore(t)
+	q := queue.NewMem(16)
+	// Tiny base backoff so, absent Retry-After, the retry would be near-instant;
+	// the observed >=1s gap therefore comes from Retry-After, not the schedule.
+	eng := webhook.New(m, q, srv.Client()).
+		WithBackoff(func(int) time.Duration { return time.Millisecond })
+	if _, err := eng.Store().Create(webhook.Subscription{
+		Name: "ci", URL: srv.URL, Secret: "k", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go q.Work(ctx, eng.Handle) //nolint:errcheck
+
+	eng.Dispatch(ctx, webhook.Event{Type: webhook.EventArtifactPublished, Repo: "maven-hosted"})
+
+	waitFor(t, func() bool { return hits.Load() == 2 }, "retry after 429")
+	mu.Lock()
+	defer mu.Unlock()
+	if ids[0] != ids[1] {
+		t.Fatalf("delivery id changed across retry: %q != %q", ids[0], ids[1])
+	}
+	if gap := times[1].Sub(times[0]); gap < time.Second {
+		t.Fatalf("retry honoured backoff (%v) instead of Retry-After (>=1s)", gap)
 	}
 }
 

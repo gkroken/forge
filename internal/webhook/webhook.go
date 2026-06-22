@@ -130,7 +130,7 @@ func (st *Store) Create(sub Subscription) (Subscription, error) {
 		return Subscription{}, fmt.Errorf("webhook: URL is required")
 	}
 	if sub.ID == "" {
-		sub.ID = newID()
+		sub.ID = NewID()
 	}
 	if sub.CreatedAt.IsZero() {
 		sub.CreatedAt = time.Now().UTC()
@@ -143,8 +143,9 @@ func (st *Store) Delete(id string) error {
 	return st.meta.Delete(subscriptionsNS, id)
 }
 
-// newID returns a random 16-hex-char identifier (stdlib only).
-func newID() string {
+// NewID returns a random 16-hex-char identifier (stdlib only). Used for
+// subscription IDs and per-delivery IDs.
+func NewID() string {
 	var b [8]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])

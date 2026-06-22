@@ -106,7 +106,7 @@ func (s *Server) testWebhook(w http.ResponseWriter, r *http.Request, id string) 
 		Actor:     actorLabel(r, s.Auth),
 		Timestamp: time.Now().UTC(),
 	}
-	if derr := s.Webhooks.Deliver(r.Context(), sub, ev); derr != nil {
+	if _, derr := s.Webhooks.Deliver(r.Context(), sub, ev, webhook.NewID()); derr != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": derr.Error()})
 		return
 	}
