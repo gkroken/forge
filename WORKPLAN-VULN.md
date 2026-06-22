@@ -1,7 +1,10 @@
 # WORKPLAN — Vulnerability Scanning & Supply-Chain Warnings
 
-**Status:** planning spike. No code. Deferred — picked up *after* scheduler-HA / webhooks
-(see "Dependencies"). PyPI format is tracked separately as the architecture-extensibility test.
+**Status:** **STARTED 2026-06-22 — Plan A, A-V0 in progress.** Scope locked to **npm + Maven**
+(both OSV-scannable, pure stdlib). Scheduler-HA and webhooks (the prereqs in "Dependencies")
+both shipped — the A-V1 daily-re-scan blocker is already cleared. PyPI format is tracked
+separately as the architecture-extensibility test (and will be covered for free once it
+implements the coordinate seam, since OSV supports the PyPI ecosystem).
 **Date:** 2026-06-22.
 
 Surface known-vulnerability advisories for stored/proxied artifacts and let operators
@@ -64,16 +67,50 @@ OSV.dev: `POST https://api.osv.dev/v1/querybatch` with `{package:{ecosystem,name
 tuples → advisories with severity (CVSS), affected ranges, aliases (CVE/GHSA), URLs.
 Free, no key, pure stdlib `net/http` + JSON (no new dependency).
 
-### A-V0 — Vertical slice (npm only)
-1. `internal/vuln`: source-agnostic model — `Severity`, `Advisory{ID, Aliases, Summary, Severity, CVSS, FixedIn, URL}`, `Finding{Component, Version, Source, Advisories, ScannedAt}`.
-2. OSV client: batch query, timeout, retry/back-off (mirror `internal/proxy` patterns), graceful degrade on egress failure.
-3. `vuln.Store` over `meta.Store` (`{repo}:vuln`).
-4. Optional Handler iface `OSVCoordinates(component, version) (eco, name string, ok bool)`; implement for npm (trivial).
-5. Scan triggers: **on-publish / on-cache** (enqueue a scan job) + **manual "Scan now"** (admin button/endpoint).
-6. Surface: severity badge in the browse **detail pane** for npm components.
-7. Tests: client (httptest OSV stub), store round-trip, npm mapping, on-publish enqueue.
+### A-V0 — Vertical slice (npm + Maven)
 
-*Exit:* publish a known-vulnerable npm package → badge shows the advisory.
+Scope locked to **npm + Maven** (Maven is the same OSV producer — only a second coordinate
+mapping). Structured as five self-contained commits.
+
+**OSV API best-practice (verified against docs 2026-06-22 — drives the client design):**
+`POST /v1/querybatch` returns **only `{id, modified}` per vuln, NOT full details.** Full
+advisory data (summary, severity/CVSS, references, fixed versions) requires hydrating each ID
+via `GET /v1/vulns/{id}`. The correct pattern (also what `osv-scanner` does):
+**batch-query all coordinates → union + dedup the returned IDs → hydrate each *unique* ID once
+→ cache hydrated advisories keyed by `id+modified`** (advisories are shared across packages and
+updated retroactively; `modified` is the cache-invalidation key). This avoids both the
+query-per-package anti-pattern (chatty) and re-hydrating the same CVE N times.
+Use the `name`+`ecosystem`+`version` request form (NOT a versioned PURL — sending both `version`
+and a versioned purl is a documented 400). HTTP/2 negotiated automatically over TLS by
+`net/http` (matters: OSV caps HTTP/1.1 responses at 32 MiB). No new dep.
+
+1. **Commit 1 — model + store (source-agnostic spine).** `internal/vuln`: `Severity` (ordered
+   enum), `Advisory{ID, Aliases, Summary, Severity, CVSS, FixedIn, URL}`,
+   `Finding{Component, Version, Source, Advisories, ScannedAt}`. Store CVSS vector raw **and** a
+   derived ordered severity bucket (so UI/policy compare without re-parsing). `vuln.Store` over
+   `meta.Store` ns `{repo}:vuln`, key `component@version`, idempotent re-scannable `Put`. Tests:
+   round-trip, severity ordering.
+2. **Commit 2 — OSV client (two-step + advisory cache).** querybatch → dedup IDs → hydrate
+   `/v1/vulns/{id}` with `id+modified` cache; bounded timeout, retry/back-off (mirror
+   `internal/proxy`); **graceful degrade** on egress failure (return cleanly, never panic/block).
+   Tests: httptest OSV stub — batch→hydrate, cache hit skips re-fetch, clean result, 5xx retry,
+   timeout/egress-fail returns cleanly.
+3. **Commit 3 — coordinate seam + npm & Maven mappings.** Optional Handler iface
+   `OSVCoordinates(component, version) (eco, name string, ok bool)` (same idiom as `Inspectable`).
+   npm → `("npm", component, true)`; Maven → `("Maven", "groupId:artifactId", true)`;
+   helm/oci/cran don't implement → skipped. Tests: both mappings.
+4. **Commit 4 — scan triggers (async only).** Scan job registered via existing
+   `indexer.Worker.Register(typ, handler)` (webhook precedent — NO second worker, which would
+   race+discard). Handler: coordinates → OSV → `vuln.Store.Put`. **On-publish enqueue** at the
+   same point webhooks emit (the four `/repository/` formats), **failure-isolated — a missing OSV
+   egress must never block or fail a publish.** Manual admin `POST /api/v1/repos/{repo}/scan`
+   ("Scan now"). Tests: on-publish enqueues, handler writes finding, unknown-coordinate skips.
+5. **Commit 5 — surface: severity badge in browse detail.** npm + Maven detail path carries the
+   worst-severity finding per version; render a badge in the right (detail) pane. Rebuild the
+   binary after JS/CSS. Live-verify: publish a known-vuln npm pkg (e.g. old `lodash`) and a
+   known-CVE Maven artifact → badge shows the advisory.
+
+*Exit:* publish a known-vulnerable npm or Maven artifact → badge shows the advisory.
 
 ### A-V1 — Breadth + observability
 1. Maven `OSVCoordinates` (`groupId:artifactId`).

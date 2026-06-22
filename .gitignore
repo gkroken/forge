@@ -3,3 +3,5 @@ data/
 *:Zone.Identifier
 /tmp/
 deploy/helm/forge-stack/charts/
+new_design_docs/
+*.out
