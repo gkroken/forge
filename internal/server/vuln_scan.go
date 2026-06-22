@@ -109,6 +109,7 @@ func (s *Server) scanRepo(ctx context.Context, repoName string) error {
 	}
 
 	now := time.Now().UTC()
+	findings := make([]vuln.Finding, 0, len(results))
 	for i, advs := range results {
 		f := vuln.Finding{
 			Component:  slots[i].component,
@@ -117,11 +118,20 @@ func (s *Server) scanRepo(ctx context.Context, repoName string) error {
 			Advisories: advs,
 			ScannedAt:  now,
 		}
+		findings = append(findings, f)
 		if err := s.Vuln.Put(repoName, f); err != nil {
 			slog.Warn("vuln: store finding failed",
 				"repo", repoName, "component", f.Component, "version", f.Version, "err", err)
 		}
 	}
+
+	// Persist the per-repo rollup from the findings we just wrote (no re-read),
+	// then refresh the gauge from it. List/aggregate surfaces read this O(1).
+	rollup := vuln.BuildRollup(repoName, findings)
+	if err := s.Vuln.PutRollup(repoName, rollup); err != nil {
+		slog.Warn("vuln: store rollup failed", "repo", repoName, "err", err)
+	}
+	s.Metrics.SetVulnerableComponents(repoName, rollup.BySeverity)
 	return nil
 }
 

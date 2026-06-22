@@ -161,6 +161,16 @@ func (s *Server) WithQueue(ctx context.Context, q queue.Queue) *Server {
 func (s *Server) WithVuln(store *vuln.Store, client *vuln.Client) *Server {
 	s.Vuln = store
 	s.OSV = client
+	// Repopulate the vulnerable-component gauge from persisted rollups so it
+	// reflects the last scan immediately after a restart, rather than staying
+	// empty until the next scan fires.
+	if store != nil && s.Repos != nil {
+		for _, rp := range s.Repos.All() {
+			if r, ok, err := store.GetRollup(rp.Name); err == nil && ok {
+				s.Metrics.SetVulnerableComponents(rp.Name, r.BySeverity)
+			}
+		}
+	}
 	return s
 }
 

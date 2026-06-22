@@ -131,6 +131,18 @@ func TestScanRepo_WritesFindings(t *testing.T) {
 	if f.ScannedAt.IsZero() {
 		t.Error("ScannedAt not stamped")
 	}
+
+	// The scan must also persist the per-repo rollup that list surfaces read.
+	r, ok, err := srv.Vuln.GetRollup("npm-hosted")
+	if err != nil || !ok {
+		t.Fatalf("GetRollup: ok=%v err=%v", ok, err)
+	}
+	if r.WorstByComponent["lodash"] != vuln.SeverityHigh {
+		t.Errorf("rollup worst for lodash = %v, want high", r.WorstByComponent["lodash"])
+	}
+	if r.VulnerableCount != 1 || r.BySeverity["high"] != 1 {
+		t.Errorf("rollup count=%d bySeverity=%v, want 1 / high:1", r.VulnerableCount, r.BySeverity)
+	}
 }
 
 func TestScanRepo_SkipsNonScannableFormat(t *testing.T) {

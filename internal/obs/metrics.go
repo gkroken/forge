@@ -28,6 +28,10 @@ type Metrics struct {
 	// Webhook deliveries by outcome (one per attempt): success | failed | dropped
 	WebhookDeliveries *prometheus.CounterVec // {result}
 
+	// Current count of vulnerable components by repo and worst-severity bucket.
+	// A gauge (not a counter): it reflects present state, re-set after each scan.
+	VulnerableComponents *prometheus.GaugeVec // {repo, severity}
+
 	// In-process latency + throughput (not Prometheus instruments)
 	Latency    *LatencyTracker
 	Throughput *ThroughputTracker
@@ -72,6 +76,11 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "forge_webhook_deliveries_total",
 			Help: "Webhook delivery attempts by outcome (success, failed, dropped).",
 		}, []string{"result"}),
+
+		VulnerableComponents: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "forge_vulnerable_components",
+			Help: "Vulnerable components by repository and worst-severity bucket (current state).",
+		}, []string{"repo", "severity"}),
 	}
 
 	m.Latency = NewLatencyTracker(1000)
@@ -89,8 +98,23 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.QueueJobsTotal,
 		m.Downloads,
 		m.WebhookDeliveries,
+		m.VulnerableComponents,
 	)
 	return m
+}
+
+// SetVulnerableComponents re-publishes the vulnerable-component gauge for repo
+// from a worst-severity histogram (severity label → count). It clears repo's
+// prior series first so a severity that dropped to zero stops being exported.
+// Takes a plain map so obs stays decoupled from the vuln package.
+func (m *Metrics) SetVulnerableComponents(repo string, bySeverity map[string]int) {
+	if m == nil || m.VulnerableComponents == nil {
+		return
+	}
+	m.VulnerableComponents.DeletePartialMatch(prometheus.Labels{"repo": repo})
+	for sev, n := range bySeverity {
+		m.VulnerableComponents.WithLabelValues(repo, sev).Set(float64(n))
+	}
 }
 
 // Handler returns an HTTP handler that exposes the registry in the Prometheus
