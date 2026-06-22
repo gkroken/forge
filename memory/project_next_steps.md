@@ -58,8 +58,9 @@ Three classes of per-pod control state → three homes:
 - **Audit** (`obs/audit.go` ring buffer) → **Postgres** (gated on `POSTGRES_DSN`, mirror
   `queue.NewPG`/`queue.NewMem`). The ONLY genuine net-new shared-storage work. Append at
   `server.go:529` (writes/auth-failures only, low volume); `.Recent(n)` read in 5 sites.
-  Plan: `obs.AuditSink` iface (S1, no behaviour change) → `PGAuditSink` (S2) → UI labels
-  (S3) → docs/IaC (S4).
+  Plan: `obs.AuditSink` iface (**S1 DONE**, commit 14578aa) → `PGAuditSink` (**S2 DONE**,
+  commit 3ee8ca1: migration 003 audit_log table, async non-blocking writer, auto-on when
+  POSTGRES_DSN set, testcontainers PG16 round-trip test) → UI labels (S3 NEXT) → docs/IaC (S4).
 - **Circuit breakers** (`proxy.go` + `globalHealth`) → **stay per-pod** (correct, no work).
 Data plane already replica-ready (meta→PG, blob→S3, queue→PG auto on POSTGRES_DSN).
 Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses durable audit).
