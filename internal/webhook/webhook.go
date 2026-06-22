@@ -35,6 +35,10 @@ const (
 	// (a cache miss that fetched and stored the artifact). Fires once per herd
 	// (the singleflight leader), not for fresh hits or revalidations.
 	EventArtifactCached = "artifact.cached"
+	// EventPolicyViolation — the vulnerability download gate warned on or blocked
+	// a download. Data carries action ("warn"|"block"), severity, component,
+	// version. Path is "{component}@{version}".
+	EventPolicyViolation = "policy.violation"
 )
 
 // AllEventTypes lists every emittable event type, for the admin UI.
@@ -43,6 +47,7 @@ var AllEventTypes = []string{
 	EventArtifactDeleted,
 	EventArtifactCached,
 	EventCleanupCompleted,
+	EventPolicyViolation,
 }
 
 // Subscription is one registered endpoint and its delivery filters.

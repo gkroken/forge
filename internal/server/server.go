@@ -80,6 +80,7 @@ type Server struct {
 	Webhooks    *webhook.Engine        // nil = webhooks not configured (no event emission)
 	Vuln        *vuln.Store            // nil = vulnerability scanning not configured
 	OSV         *vuln.Client           // nil = no OSV producer (scans disabled)
+	VulnPolicy  *vuln.PolicyManager    // nil = no download-policy gate
 	MaxUpload   int64                  // per-request body limit; 0 = use defaultMaxUpload
 	reg         prometheus.Gatherer
 	client      *http.Client
@@ -171,6 +172,15 @@ func (s *Server) WithVuln(store *vuln.Store, client *vuln.Client) *Server {
 			}
 		}
 	}
+	return s
+}
+
+// WithVulnPolicy attaches the security-policy manager that drives the download
+// gate. Independent of WithVuln's producer wiring: the gate only needs the
+// findings store (Vuln) plus the resolved policy, so a deployment can enforce
+// against previously-scanned findings even with the OSV client offline.
+func (s *Server) WithVulnPolicy(pm *vuln.PolicyManager) *Server {
+	s.VulnPolicy = pm
 	return s
 }
 
@@ -372,6 +382,13 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		http.Error(w, "no handler for format: "+rp.Format, http.StatusNotImplemented)
 		return
+	}
+	// Vulnerability download policy gate: only reads of primary artifacts. On a
+	// Block this writes a 403 and returns; on Warn it adds a header and proceeds.
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		if s.vulnGateBlocks(w, r, rp, h, sub) {
+			return
+		}
 	}
 	var repoStats *obs.RepoStats
 	if rp.Kind == repo.Proxy {

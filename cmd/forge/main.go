@@ -224,6 +224,7 @@ func main() {
 	// scans. Pure stdlib HTTP against OSV.dev (no key, no new dependency).
 	vulnStore := vuln.NewStore(metaStore)
 	osvClient := vuln.NewClient(&http.Client{Timeout: 20 * time.Second})
+	vulnPolicies := vuln.NewPolicyManager(metaStore)
 
 	cleanupPolicies := cleanup.NewPolicyManager(metaStore)
 	cleanupScheduler := cleanup.NewScheduler(mgr, cleanupPolicies, blobStore, metaStore).
@@ -266,6 +267,7 @@ func main() {
 		WithGlobalStats(globalStats).
 		WithWebhooks(webhookEngine).
 		WithVuln(vulnStore, osvClient).
+		WithVulnPolicy(vulnPolicies).
 		WithQueue(workerCtx, q).
 		WithCleanup(cleanupPolicies).
 		WithScheduler(cleanupScheduler).

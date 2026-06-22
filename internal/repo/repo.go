@@ -108,6 +108,9 @@ type Repository struct {
 	ProxyTTL          time.Duration `json:"-"` // legacy; populated from JSON; use ContentMaxAge for new code
 	ProxyAuth         string        `json:"proxyAuth,omitempty"`
 	CleanupPolicyName string        `json:"cleanupPolicyName,omitempty"`
+	// SecurityPolicyName references a named vuln.NamedPolicy. Empty = inherit the
+	// global default vulnerability policy. Admin-set only.
+	SecurityPolicyName string `json:"securityPolicyName,omitempty"`
 
 	// Enabled=false makes the server return 503 for all requests to this repo.
 	// Existing repos without this field serialised default to true (see UnmarshalJSON).
