@@ -79,4 +79,24 @@ Three classes of per-pod control state → three homes:
 Data plane already replica-ready (meta→PG, blob→S3, queue→PG auto on POSTGRES_DSN).
 Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses durable audit).
 
+**4. ROADMAP after scaling (decided 2026-06-22):**
+- **NEXT = scheduler-HA single-firing and/or webhooks.** CONFIRMED GAP: `cleanup.Scheduler`
+  (`internal/cleanup/scheduler.go:53`) ticks every minute per-pod with an in-memory `lastRun`
+  map, NO leader election/advisory lock → under N replicas every pod fires scheduled cleanup
+  (PG queue dedups index-regen jobs but NOT scheduled cleanup runs). Fix = PG advisory lock or
+  leader election. This is ALSO a prerequisite for vuln re-scan. Startup prompt drafted for this.
+- **Vuln scanning = DEFERRED, designed.** Full spike written: `WORKPLAN-VULN.md` — three
+  separate phased plans: Plan A OSV (npm+Maven, V0 slice→V1 breadth+obs→V2 warn/block policy),
+  Plan B OCI (Trivy/Grype sidecar, NOT in-process), Plan C Helm (config + referenced-image).
+  Key design: SOURCE-AGNOSTIC findings store + Security UI + policy engine are the durable
+  spine; scanners are pluggable producers. CRAN = unsupported (no credible R source). Policy:
+  Off/Warn/Block + threshold + suppressions, per-repo Security tab + global default + named
+  policy, ADMIN-set (enforcement is a security boundary; users get visibility + exception
+  request flow, never self-downgrade), dry-run preview, gate in handleRepo. Warn is invisible
+  to the CLI (forge-side signal only). User will circle back to this.
+- **PyPI format = the final architecture-extensibility TEST** — added last to prove a new
+  format slots in via the plugin path with no spine changes; bonus: OSV covers PyPI.
+- Other candidates surveyed: artifact signing/SBOM (supply-chain siblings), LDAP bind (seam
+  pre-built via establishSSOSession), editable group-map UI, OpenAPI spec.
+
 Tracks are independent — SSO doesn't block scaling or vice versa.
