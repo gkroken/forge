@@ -11,10 +11,11 @@
     el.style.display = msg ? 'block' : 'none';
   }
 
-  function addEndpoint(e) {
+  function saveEndpoint(e) {
     e.preventDefault();
     whError('');
     var f = e.target;
+    var editId = f.getAttribute('data-edit-id');
     var checked = Array.prototype.slice
       .call(f.querySelectorAll('input[name=event]:checked'))
       .map(function (c) { return c.value; });
@@ -22,25 +23,62 @@
     var body = {
       name: f.name.value.trim(),
       url: f.url.value.trim(),
-      secret: f.secret.value,
+      secret: f.secret.value, // blank on edit keeps the stored secret
       repo: f.repo.value,
       // All checked = subscribe to everything (empty filter); otherwise the subset.
       events: checked.length === all ? [] : checked,
       enabled: true
     };
-    var btn = f.querySelector('button[type=submit]');
-    btn.disabled = true; btn.textContent = 'Adding…';
-    fetch('/api/v1/webhooks', {
-      method: 'POST',
+    var btn = document.getElementById('wh-submit');
+    var orig = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Saving…';
+    fetch(editId ? '/api/v1/webhooks/' + encodeURIComponent(editId) : '/api/v1/webhooks', {
+      method: editId ? 'PUT' : 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     }).then(function (r) {
       if (!r.ok) return r.text().then(function (t) { throw new Error(t || ('HTTP ' + r.status)); });
       location.reload();
     }).catch(function (err) {
-      whError("Couldn't add endpoint: " + err.message);
-      btn.disabled = false; btn.textContent = 'Add endpoint';
+      whError((editId ? "Couldn't save changes: " : "Couldn't add endpoint: ") + err.message);
+      btn.disabled = false; btn.textContent = orig;
     });
+  }
+
+  function editEndpoint(id) {
+    var row = document.querySelector('tr[data-id="' + id + '"]');
+    if (!row) return;
+    var f = document.getElementById('wh-form');
+    f.setAttribute('data-edit-id', id);
+    f.name.value = row.getAttribute('data-name') || '';
+    f.url.value = row.getAttribute('data-url') || '';
+    f.secret.value = '';
+    var repo = row.getAttribute('data-repo') || '*';
+    f.repo.value = repo;
+    // Events: empty data-events = subscribed to all → check everything.
+    var evs = (row.getAttribute('data-events') || '').split(',').filter(Boolean);
+    Array.prototype.forEach.call(f.querySelectorAll('input[name=event]'), function (c) {
+      c.checked = evs.length === 0 || evs.indexOf(c.value) !== -1;
+    });
+    document.getElementById('wh-form-title').textContent = 'Edit endpoint · ' + (row.getAttribute('data-name') || '');
+    document.getElementById('wh-secret-hint').textContent = 'Leave blank to keep the current secret. Enter a new value to rotate it.';
+    document.getElementById('wh-submit').textContent = 'Save changes';
+    document.getElementById('wh-cancel').style.display = '';
+    whError('');
+    f.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    f.name.focus();
+  }
+
+  function cancelEdit() {
+    var f = document.getElementById('wh-form');
+    f.setAttribute('data-edit-id', '');
+    f.reset();
+    Array.prototype.forEach.call(f.querySelectorAll('input[name=event]'), function (c) { c.checked = true; });
+    document.getElementById('wh-form-title').textContent = 'Add an endpoint';
+    document.getElementById('wh-secret-hint').innerHTML = 'Signs each delivery as <code>X-Forge-Signature: sha256=…</code> over <code>{timestamp}.{body}</code>. Set the same value on your receiver to verify deliveries.';
+    document.getElementById('wh-submit').textContent = 'Add endpoint';
+    document.getElementById('wh-cancel').style.display = 'none';
+    whError('');
   }
 
   function testEndpoint(id, btn) {
@@ -140,7 +178,7 @@
   // --- wiring (event delegation; no inline handlers per CSP) ----------------
   document.addEventListener('DOMContentLoaded', function () {
     var form = document.getElementById('wh-form');
-    if (form) form.addEventListener('submit', addEndpoint);
+    if (form) form.addEventListener('submit', saveEndpoint);
 
     document.addEventListener('click', function (e) {
       var btn = e.target.closest('[data-action]');
@@ -148,6 +186,8 @@
       var action = btn.getAttribute('data-action');
       var id = btn.getAttribute('data-id');
       if (action === 'deliveries') showDeliveries(id, btn.getAttribute('data-name'));
+      else if (action === 'edit') editEndpoint(id);
+      else if (action === 'edit-cancel') cancelEdit();
       else if (action === 'test') testEndpoint(id, btn);
       else if (action === 'delete') deleteEndpoint(id, btn.getAttribute('data-name'), btn);
       else if (action === 'trace-refresh') refreshTrace();

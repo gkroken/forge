@@ -187,6 +187,14 @@ def verify(secret, headers, raw_body, tolerance=300):
 The body is a flat envelope: `{"schemaVersion":2,"id":"<delivery-id>","type":...,
 "repo":...,"format":...,"path":...,"timestamp":...,"data":{...}}`.
 
+Target URLs are checked against an SSRF policy at registration **and** at dial time
+(defeating DNS rebinding): loopback, link-local, private, and the
+`169.254.169.254` cloud-metadata endpoint are refused. Set
+`WEBHOOK_ALLOW_PRIVATE=1` for internal-only deployments where receivers live on a
+private network. Recent delivery attempts (including dropped/dead-letter) are
+visible per endpoint in the UI and at `GET /api/v1/webhooks/{id}/deliveries`;
+`forge_webhook_deliveries_total{result}` counts outcomes for alerting.
+
 ---
 
 ## Architecture

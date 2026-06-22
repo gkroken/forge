@@ -24,8 +24,10 @@ type webhookRow struct {
 	ID          string
 	Name        string
 	URL         string
-	Repo        string
-	Events      string // "All events" or a comma-joined subset
+	Repo        string // display label ("All repositories" or the name)
+	RepoValue   string // raw value for the edit form ("*" or the name)
+	Events      string // "All events" or a comma-joined subset (display)
+	EventCSV    string // raw subscribed types, comma-joined ("" = all) for the edit form
 	Status      string
 	StatusClass string
 }
@@ -60,8 +62,12 @@ func (s *Server) uiWebhooks(w http.ResponseWriter, r *http.Request) {
 					status, cls = "Active", "pill-ok"
 					page.ActiveCount++
 				}
-				repoLabel := sub.Repo
-				if repoLabel == "" || repoLabel == "*" {
+				repoValue := sub.Repo
+				if repoValue == "" {
+					repoValue = "*"
+				}
+				repoLabel := repoValue
+				if repoLabel == "*" {
 					repoLabel = "All repositories"
 				}
 				eventsLabel := "All events"
@@ -70,7 +76,9 @@ func (s *Server) uiWebhooks(w http.ResponseWriter, r *http.Request) {
 				}
 				page.Endpoints = append(page.Endpoints, webhookRow{
 					ID: sub.ID, Name: sub.Name, URL: sub.URL,
-					Repo: repoLabel, Events: eventsLabel, Status: status, StatusClass: cls,
+					Repo: repoLabel, RepoValue: repoValue,
+					Events: eventsLabel, EventCSV: strings.Join(sub.Events, ","),
+					Status: status, StatusClass: cls,
 				})
 			}
 			page.Count = len(subs)

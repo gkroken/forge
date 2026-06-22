@@ -81,6 +81,7 @@ type Engine struct {
 	maxAttempts int
 	backoff     func(attempt int) time.Duration
 	metricsFn   func(result string) // optional; records the delivery outcome
+	guard       *SSRFGuard          // optional; validates target URLs at create/update
 }
 
 // New returns an Engine persisting subscriptions in m and delivering via q.
@@ -109,6 +110,23 @@ func (e *Engine) WithBackoff(fn func(attempt int) time.Duration) *Engine {
 func (e *Engine) WithMetrics(fn func(result string)) *Engine {
 	e.metricsFn = fn
 	return e
+}
+
+// WithSSRFGuard attaches an SSRF policy used by ValidateTarget at create/update.
+// The dial-time half of the policy is enforced separately by the guard's Control
+// on the HTTP client's transport. Returns e for chaining.
+func (e *Engine) WithSSRFGuard(g *SSRFGuard) *Engine {
+	e.guard = g
+	return e
+}
+
+// ValidateTarget reports whether url is an acceptable webhook destination under
+// the SSRF policy. Nil guard = allow (eval/no-policy).
+func (e *Engine) ValidateTarget(url string) error {
+	if e.guard == nil {
+		return nil
+	}
+	return e.guard.ValidateURL(url)
 }
 
 // Store exposes the subscription store for the admin API/UI.

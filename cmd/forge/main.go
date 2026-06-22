@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -206,7 +207,12 @@ func main() {
 	// Webhooks: durable on-publish delivery via the shared queue. Construct
 	// before WithQueue so its delivery handler is registered before the worker
 	// starts, and before Routes() so the publish hook can emit events.
-	webhookEngine := webhook.New(metaStore, q, nil).
+	// SSRF guard: deny webhook targets on loopback/link-local/private/metadata
+	// ranges (validated at create/update AND at dial time to defeat rebinding),
+	// unless WEBHOOK_ALLOW_PRIVATE is set for internal-only deployments.
+	webhookGuard := webhook.NewSSRFGuard(envTrue("WEBHOOK_ALLOW_PRIVATE"))
+	webhookEngine := webhook.New(metaStore, q, webhookGuard.HTTPClient(10*time.Second)).
+		WithSSRFGuard(webhookGuard).
 		WithMetrics(func(result string) {
 			metrics.WebhookDeliveries.WithLabelValues(result).Inc()
 		})
@@ -334,6 +340,15 @@ func must(err error) {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
 	}
+}
+
+// envTrue reports whether an env var is set to a truthy value (1/true/yes/on).
+func envTrue(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // cranProxyUpstream returns the upstream URL for cran-proxy. CRAN_PROXY_UPSTREAM

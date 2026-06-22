@@ -61,7 +61,8 @@
         </thead>
         <tbody>
           {{range .Endpoints}}
-          <tr data-id="{{.ID}}">
+          <tr data-id="{{.ID}}"
+              data-name="{{.Name}}" data-url="{{.URL}}" data-repo="{{.RepoValue}}" data-events="{{.EventCSV}}">
             <td><div class="fw-600">{{.Name}}</div></td>
             <td class="col-mono" style="color:var(--text-muted);">{{.URL}}</td>
             <td style="font-size:12.5px;color:var(--text-muted);">{{.Repo}}</td>
@@ -69,6 +70,7 @@
             <td><span class="status-pill {{.StatusClass}}">{{.Status}}</span></td>
             <td class="col-actions">
               <button class="btn btn-sm" data-action="deliveries" data-id="{{.ID}}" data-name="{{.Name}}">Deliveries</button>
+              <button class="btn btn-sm" data-action="edit" data-id="{{.ID}}">Edit</button>
               <button class="btn btn-sm" data-action="test" data-id="{{.ID}}">Send test</button>
               <button class="btn btn-sm btn-danger" data-action="delete" data-id="{{.ID}}" data-name="{{.Name}}">Delete</button>
             </td>
@@ -112,11 +114,11 @@
     {{end}}
   </div>
 
-  <!-- register -->
+  <!-- register / edit -->
   <div>
-    <div class="section-title">Add an endpoint</div>
+    <div class="section-title" id="wh-form-title">Add an endpoint</div>
     <div id="wh-error" class="alert alert-error" style="display:none;max-width:560px;"></div>
-    <form id="wh-form" class="repo-form" style="max-width:560px">
+    <form id="wh-form" class="repo-form" style="max-width:560px" data-edit-id="">
       <div class="form-group">
         <label for="wh-name">Name</label>
         <input id="wh-name" type="text" name="name" required placeholder="e.g. ci-pipeline">
@@ -132,7 +134,7 @@
       <div class="form-group">
         <label for="wh-secret">Signing secret</label>
         <input id="wh-secret" type="text" name="secret" placeholder="Shared HMAC key">
-        <span class="form-hint">Signs each delivery as <code>X-Forge-Signature: sha256=…</code> over <code>{timestamp}.{body}</code>. Set the same value on your receiver to verify deliveries.</span>
+        <span class="form-hint" id="wh-secret-hint">Signs each delivery as <code>X-Forge-Signature: sha256=…</code> over <code>{timestamp}.{body}</code>. Set the same value on your receiver to verify deliveries.</span>
       </div>
 
       <div class="form-group">
@@ -155,7 +157,8 @@
       </div>
 
       <div class="form-actions" style="display:flex;gap:10px;align-items:center;">
-        <button type="submit" class="btn btn-primary">Add endpoint</button>
+        <button type="submit" class="btn btn-primary" id="wh-submit">Add endpoint</button>
+        <button type="button" class="btn" id="wh-cancel" data-action="edit-cancel" style="display:none;">Cancel</button>
       </div>
     </form>
   </div>

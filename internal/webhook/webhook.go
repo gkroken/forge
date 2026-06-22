@@ -138,6 +138,28 @@ func (st *Store) Create(sub Subscription) (Subscription, error) {
 	return sub, st.meta.PutJSON(subscriptionsNS, sub.ID, sub)
 }
 
+// Update persists changes to an existing subscription. It preserves server-owned
+// fields (CreatedAt) and, when Secret is blank, keeps the stored secret — so the
+// edit UI can treat the secret as write-only (blank = unchanged). Errors if the
+// subscription doesn't exist.
+func (st *Store) Update(sub Subscription) (Subscription, error) {
+	existing, ok, err := st.Get(sub.ID)
+	if err != nil {
+		return Subscription{}, err
+	}
+	if !ok {
+		return Subscription{}, fmt.Errorf("webhook: subscription %s not found", sub.ID)
+	}
+	if sub.URL == "" {
+		return Subscription{}, fmt.Errorf("webhook: URL is required")
+	}
+	sub.CreatedAt = existing.CreatedAt
+	if sub.Secret == "" {
+		sub.Secret = existing.Secret
+	}
+	return sub, st.meta.PutJSON(subscriptionsNS, sub.ID, sub)
+}
+
 // Delete removes the subscription with id (no error if absent).
 func (st *Store) Delete(id string) error {
 	return st.meta.Delete(subscriptionsNS, id)

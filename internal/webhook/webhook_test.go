@@ -413,6 +413,48 @@ func TestHistory_DeadLetterOnExhaustion(t *testing.T) {
 	}
 }
 
+// TestStore_UpdatePreservesSecretAndCreatedAt verifies an edit with a blank
+// secret keeps the stored secret + CreatedAt, while a non-blank secret rotates it.
+func TestStore_UpdatePreservesSecretAndCreatedAt(t *testing.T) {
+	st := webhook.NewStore(newStore(t))
+	orig, err := st.Create(webhook.Subscription{Name: "ci", URL: "https://a.example/h", Secret: "s1", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Edit URL + events, leave secret blank → secret + CreatedAt unchanged.
+	updated, err := st.Update(webhook.Subscription{
+		ID: orig.ID, Name: "ci", URL: "https://b.example/h", Secret: "",
+		Events: []string{webhook.EventArtifactPublished}, Enabled: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Secret != "s1" {
+		t.Fatalf("blank secret should be preserved, got %q", updated.Secret)
+	}
+	if !updated.CreatedAt.Equal(orig.CreatedAt) {
+		t.Fatalf("CreatedAt should be preserved: %v != %v", updated.CreatedAt, orig.CreatedAt)
+	}
+	if updated.URL != "https://b.example/h" || updated.Enabled {
+		t.Fatalf("edit not applied: %+v", updated)
+	}
+
+	// Non-blank secret rotates it.
+	rotated, err := st.Update(webhook.Subscription{ID: orig.ID, Name: "ci", URL: "https://b.example/h", Secret: "s2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rotated.Secret != "s2" {
+		t.Fatalf("secret should rotate to s2, got %q", rotated.Secret)
+	}
+
+	// Updating a missing subscription errors.
+	if _, err := st.Update(webhook.Subscription{ID: "nope", URL: "https://x.example/h"}); err == nil {
+		t.Fatal("update of a missing subscription should error")
+	}
+}
+
 func waitFor(t *testing.T, cond func() bool, what string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)

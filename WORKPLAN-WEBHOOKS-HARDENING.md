@@ -89,15 +89,17 @@ time), failed + dropped deliveries are visible (dead-letter), and metrics reflec
 Acceptance: subscriptions are full CRUD (edit URL/secret/events/filter/enabled); webhook
 targets are validated against an SSRF policy at create AND delivery time.
 
-- [ ] **#8 Edit.** `PUT /api/v1/webhooks/{id}` + `Store.Update` (preserve secret if blank on
-      edit) + an edit form/route in the UI (prefilled; secret write-only).
-- [ ] **#11 SSRF guard.** Reject targets resolving to loopback / link-local / private /
-      unspecified / multicast / cloud-metadata (169.254.169.254) unless an explicit allowlist
-      env permits. Guard at create/update AND at dial time (custom `http.Transport.DialContext`
-      `Control` to defeat DNS rebinding). Default-deny private ranges; `WEBHOOK_ALLOW_PRIVATE`
-      escape hatch for internal-only deployments.
-- [ ] Tests: update round-trip (secret-preserve), SSRF block table (loopback/metadata/private
-      blocked, public allowed, allowlist override), dial-time rebinding block. Live-verify. Commit.
+- [x] **#8 Edit.** `PUT /api/v1/webhooks/{id}` + `Store.Update` (blank secret preserves the
+      stored one; CreatedAt preserved). UI edit mode: per-row "Edit" prefills the form (name/
+      URL/repo/events from row data-attrs), secret write-only ("leave blank to keep"), Save
+      changes / Cancel. Live-verified (rename + secret-preserve 200; UI screenshot).
+- [x] **#11 SSRF guard.** `webhook.SSRFGuard` blocks loopback / link-local / private / ULA /
+      unspecified / multicast / `169.254.169.254`. `ValidateURL` at create/update; `Control`
+      (a `net.Dialer.Control` hook on the engine's HTTP transport) re-checks the concrete dialed
+      IP, defeating DNS rebinding. Default-deny; `WEBHOOK_ALLOW_PRIVATE` escape hatch (main.go).
+- [x] Tests: update round-trip (secret-preserve + missing-id error), SSRF block table
+      (loopback/metadata/private blocked, public allowed, allow-private override, bad scheme),
+      dial-time Control rebinding block, API create/edit rejection. Live-verified. Committed.
 
 ## Constraints
 Go stdlib only (flag any new dep). Keep `go test ./...` + `test.sh` green. Commit per

@@ -197,3 +197,60 @@ func (stubDeletable) Format() string { return "maven" }
 func (stubDeletable) Serve(w http.ResponseWriter, r *http.Request, c *format.Context) {
 	w.WriteHeader(http.StatusOK)
 }
+
+// newWebhookAPIServer builds an eval-mode server with a webhook engine guarded
+// by the SSRF policy (no allow-private), for the management/security API tests.
+func newWebhookAPIServer(t *testing.T) *Server {
+	t.Helper()
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	eng := webhook.New(m, queue.NewMem(8), nil).WithSSRFGuard(webhook.NewSSRFGuard(false))
+	return New(repo.NewManager(), format.NewRegistry(), b, m, nil).WithWebhooks(eng)
+}
+
+func TestWebhookAPI_SSRFRejectsPrivateTargetOnCreate(t *testing.T) {
+	srv := newWebhookAPIServer(t)
+	rw := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw, adminReq(t, http.MethodPost, "/api/v1/webhooks",
+		map[string]any{"name": "evil", "url": "http://169.254.169.254/latest", "enabled": true}))
+	if rw.Code != http.StatusBadRequest {
+		t.Fatalf("create with metadata URL: status = %d, want 400 (body=%s)", rw.Code, rw.Body.String())
+	}
+}
+
+func TestWebhookAPI_EditRoundTripPreservesSecret(t *testing.T) {
+	srv := newWebhookAPIServer(t)
+
+	// Create with a public URL + secret.
+	rw := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw, adminReq(t, http.MethodPost, "/api/v1/webhooks",
+		map[string]any{"name": "ci", "url": "http://8.8.8.8/h", "secret": "s1", "enabled": true}))
+	if rw.Code != http.StatusCreated {
+		t.Fatalf("create: status = %d, want 201", rw.Code)
+	}
+	var created webhook.Subscription
+	if err := json.Unmarshal(rw.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	// Edit name, blank secret → secret preserved in the store.
+	rw = httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw, adminReq(t, http.MethodPut, "/api/v1/webhooks/"+created.ID,
+		map[string]any{"name": "ci-renamed", "url": "http://8.8.8.8/h2", "secret": "", "enabled": true}))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("edit: status = %d, want 200 (body=%s)", rw.Code, rw.Body.String())
+	}
+	stored, _, _ := srv.Webhooks.Store().Get(created.ID)
+	if stored.Secret != "s1" || stored.Name != "ci-renamed" || stored.URL != "http://8.8.8.8/h2" {
+		t.Fatalf("edit not applied as expected: %+v", stored)
+	}
+
+	// Editing to a private URL is rejected.
+	rw = httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw, adminReq(t, http.MethodPut, "/api/v1/webhooks/"+created.ID,
+		map[string]any{"name": "ci", "url": "http://10.0.0.1/h", "enabled": true}))
+	if rw.Code != http.StatusBadRequest {
+		t.Fatalf("edit to private URL: status = %d, want 400", rw.Code)
+	}
+}

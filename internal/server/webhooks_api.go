@@ -13,6 +13,7 @@ import (
 //
 //	GET    /api/v1/webhooks                  — list subscriptions
 //	POST   /api/v1/webhooks                  — create a subscription
+//	PUT    /api/v1/webhooks/{id}             — update a subscription
 //	DELETE /api/v1/webhooks/{id}             — delete a subscription
 //	POST   /api/v1/webhooks/{id}/test        — send a test ping to the subscription
 //	GET    /api/v1/webhooks/{id}/deliveries  — recent delivery history (dead-letter)
@@ -53,16 +54,42 @@ func (s *Server) handleWebhooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// /{id}
-	if r.Method != http.MethodDelete {
+	switch r.Method {
+	case http.MethodPut:
+		s.updateWebhook(w, r, id)
+	case http.MethodDelete:
+		if err := s.Webhooks.Store().Delete(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = s.Webhooks.History().Delete(id) // best-effort: drop its delivery log too
+		w.WriteHeader(http.StatusNoContent)
+	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// updateWebhook edits an existing subscription. A blank secret keeps the stored
+// one (the edit UI treats the secret as write-only).
+func (s *Server) updateWebhook(w http.ResponseWriter, r *http.Request, id string) {
+	var in webhook.Subscription
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&in); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := s.Webhooks.Store().Delete(id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	in.ID = id
+	in.CreatedAt = time.Time{} // server-owned; Update preserves the stored value
+	if err := s.Webhooks.ValidateTarget(in.URL); err != nil {
+		http.Error(w, "invalid webhook URL: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = s.Webhooks.History().Delete(id) // best-effort: drop its delivery log too
-	w.WriteHeader(http.StatusNoContent)
+	sub, err := s.Webhooks.Store().Update(in)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	sub.Secret = "" // never echo the secret back
+	writeJSON(w, sub)
 }
 
 // listWebhookDeliveries returns the recent delivery records for a subscription,
@@ -109,6 +136,10 @@ func (s *Server) createWebhook(w http.ResponseWriter, r *http.Request) {
 	// Clients don't set server-managed fields.
 	in.ID = ""
 	in.CreatedAt = time.Time{}
+	if err := s.Webhooks.ValidateTarget(in.URL); err != nil {
+		http.Error(w, "invalid webhook URL: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	sub, err := s.Webhooks.Store().Create(in)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
