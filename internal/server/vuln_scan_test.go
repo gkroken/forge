@@ -201,6 +201,62 @@ func TestBrowseSurfaces_NoBadgeWhenUnconfigured(t *testing.T) {
 	}
 }
 
+func TestUISecurity_ListsVulnerableAndFilters(t *testing.T) {
+	srv := newVulnServer(t, "http://unused.example")
+	putFinding := func(repo, comp, ver string, sev vuln.Severity) {
+		t.Helper()
+		f := vuln.Finding{Component: comp, Version: ver, Source: vuln.SourceOSV}
+		if sev != vuln.SeverityUnknown {
+			f.Advisories = []vuln.Advisory{{ID: "GHSA-x", Severity: sev}}
+		}
+		if err := srv.Vuln.Put(repo, f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	putFinding("npm-hosted", "lodash", "4.17.20", vuln.SeverityHigh)
+	putFinding("npm-hosted", "minimist", "1.2.0", vuln.SeverityCritical)
+	putFinding("npm-hosted", "left-pad", "1.0.0", vuln.SeverityUnknown) // clean → must not list
+
+	body := func(query string) string {
+		rec := httptest.NewRecorder()
+		srv.uiSecurity(rec, httptest.NewRequest(http.MethodGet, "/ui/admin/security"+query, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d for %q", rec.Code, query)
+		}
+		return rec.Body.String()
+	}
+
+	all := body("")
+	if !strings.Contains(all, "lodash") || !strings.Contains(all, "minimist") {
+		t.Error("unfiltered page should list both vulnerable components")
+	}
+	if strings.Contains(all, "left-pad") {
+		t.Error("clean component must not appear on the Security page")
+	}
+
+	// Min-severity filter: critical-and-up excludes the high finding.
+	crit := body("?severity=critical")
+	if strings.Contains(crit, "lodash") || !strings.Contains(crit, "minimist") {
+		t.Error("severity=critical should show only minimist")
+	}
+
+	// Repo filter to a repo with no findings → empty.
+	none := body("?repo=helm-hosted")
+	if strings.Contains(none, "lodash") || strings.Contains(none, "minimist") {
+		t.Error("repo filter should scope out npm findings")
+	}
+}
+
+func TestUISecurity_UnconfiguredShowsEmptyState(t *testing.T) {
+	srv := newVulnServer(t, "http://unused.example")
+	srv.Vuln = nil
+	rec := httptest.NewRecorder()
+	srv.uiSecurity(rec, httptest.NewRequest(http.MethodGet, "/ui/admin/security", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "not configured") {
+		t.Errorf("expected empty-state page, got status %d", rec.Code)
+	}
+}
+
 func TestScanRepo_SkipsNonScannableFormat(t *testing.T) {
 	osv := osvTestServer(t, "GHSA-should-not-appear")
 	srv := newVulnServer(t, osv.URL)

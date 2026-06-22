@@ -1,0 +1,69 @@
+{{define "content"}}
+<div class="admin-content">
+
+  <div style="display:flex;align-items:center;margin-bottom:14px;">
+    <span class="section-title" style="margin-bottom:0;">Security</span>
+    <span style="margin-left:auto;font-size:12px;color:var(--text-muted);">
+      Known vulnerabilities across stored &amp; cached artifacts (OSV)
+    </span>
+  </div>
+
+  {{if not .Enabled}}
+  <div class="empty" style="padding:2rem;text-align:center;color:var(--text-muted);">
+    Vulnerability scanning is not configured.
+  </div>
+  {{else}}
+
+  <form method="get" action="/ui/admin/security" class="audit-filter">
+    <select name="repo" class="audit-filter-input">
+      <option value="">all repositories</option>
+      {{$r := .Repo}}
+      {{range .AllRepos}}<option value="{{.}}"{{if eq . $r}} selected{{end}}>{{.}}</option>{{end}}
+    </select>
+    <select name="severity" class="audit-filter-input">
+      <option value="">any severity</option>
+      {{$s := .Severity}}
+      {{range .Severities}}<option value="{{.}}"{{if eq . $s}} selected{{end}}>{{.}} &amp; up</option>{{end}}
+    </select>
+    <button type="submit" class="btn btn-sm">Filter</button>
+    {{if or .Repo .Severity}}<a href="/ui/admin/security" class="btn btn-sm btn-ghost">Clear</a>{{end}}
+  </form>
+
+  <div class="admin-table-wrap" style="margin-top:14px;">
+    <table class="admin-table">
+      <thead>
+        <tr>
+          <th style="width:90px;">Severity</th>
+          <th>Component</th>
+          <th style="width:140px;">Version</th>
+          <th style="width:130px;">Repository</th>
+          <th style="width:80px;">Advisories</th>
+          <th style="width:150px;">Scanned (UTC)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Rows}}
+        <tr>
+          <td>{{sevBadge .Severity}}</td>
+          <td><a href="/ui/browse/{{.Repo}}?pkg={{.Component}}">{{.Component}}</a></td>
+          <td class="col-mono">{{.Version}}</td>
+          <td class="col-mono"><a href="/ui/browse/{{.Repo}}">{{.Repo}}</a></td>
+          <td class="col-num">{{.Count}}</td>
+          <td class="col-mono" style="color:var(--text-muted);">{{if .ScannedAt}}{{.ScannedAt}}{{else}}—{{end}}</td>
+        </tr>
+        {{end}}
+        {{if eq (len .Rows) 0}}
+        <tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:2rem;">No vulnerable components{{if or .Repo .Severity}} match the filter{{end}}.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="audit-pager">
+    <a href="{{.ResetURL}}" class="btn btn-sm btn-ghost">⟲ First</a>
+    {{if .OlderURL}}<a href="{{.OlderURL}}" class="btn btn-sm">More →</a>{{else}}<span class="audit-pager-end">end of list</span>{{end}}
+  </div>
+
+  {{end}}
+</div>
+{{end}}

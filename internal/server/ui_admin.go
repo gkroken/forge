@@ -238,6 +238,8 @@ func (s *Server) handleUIAdmin(w http.ResponseWriter, r *http.Request, sub strin
 		s.uiObservability(w, r)
 	case sub == "/audit":
 		s.uiAuditHistory(w, r)
+	case sub == "/security":
+		s.uiSecurity(w, r)
 	default:
 		http.NotFound(w, r)
 	}

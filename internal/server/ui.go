@@ -180,6 +180,7 @@ var (
 	tmplWebhooks          = parseUITmpl("templates/admin_shell.html", "templates/webhooks.html")
 	tmplAuditHistory      = parseUITmpl("templates/admin_shell.html", "templates/audit_history.html")
 	tmplRepoConfig        = parseUITmpl("templates/admin_shell.html", "templates/repo_config.html")
+	tmplSecurity          = parseUITmpl("templates/admin_shell.html", "templates/security.html")
 )
 
 // ── page data types ───────────────────────────────────────────────────────────
