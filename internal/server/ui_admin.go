@@ -229,6 +229,8 @@ func (s *Server) handleUIAdmin(w http.ResponseWriter, r *http.Request, sub strin
 	case strings.HasPrefix(sub, "/repos/") && strings.HasSuffix(sub, "/cleanup"):
 		name := strings.TrimSuffix(strings.TrimPrefix(sub, "/repos/"), "/cleanup")
 		s.uiRepoCleanupPanel(w, r, name)
+	case sub == "/webhooks":
+		s.uiWebhooks(w, r)
 	case sub == "/observability":
 		s.uiObservability(w, r)
 	case sub == "/audit":

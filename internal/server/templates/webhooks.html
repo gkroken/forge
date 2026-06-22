@@ -1,0 +1,170 @@
+{{define "content"}}
+<div class="admin-content">
+
+  <!-- outbound-signal readout -->
+  <section class="instrument-panel">
+    <div class="inst-readouts">
+      <div class="inst-readout">
+        <div class="inst-label">Endpoints</div>
+        <div class="inst-value">{{.Count}}</div>
+        <div class="inst-unit">registered</div>
+      </div>
+      <div class="inst-readout">
+        <div class="inst-label">Active</div>
+        <div class="inst-value">{{.ActiveCount}}</div>
+        <div class="inst-unit">receiving events</div>
+      </div>
+      <div class="inst-readout">
+        <div class="inst-label">Event</div>
+        <div class="inst-value inst-value-text">{{.EventType}}</div>
+        <div class="inst-unit">emitted on every publish</div>
+      </div>
+      <div class="inst-readout">
+        <div class="inst-label">Delivery</div>
+        <div class="inst-value inst-value-text">{{.Delivery}}</div>
+        <div class="inst-unit">signed · at-least-once</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- endpoints -->
+  <div>
+    <div class="section-title">Endpoints</div>
+    {{if .Endpoints}}
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Payload URL</th>
+            <th>Repository</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Endpoints}}
+          <tr data-id="{{.ID}}">
+            <td><div class="fw-600">{{.Name}}</div></td>
+            <td class="col-mono" style="color:var(--text-muted);">{{.URL}}</td>
+            <td style="font-size:12.5px;color:var(--text-muted);">{{.Repo}}</td>
+            <td><span class="status-pill {{.StatusClass}}">{{.Status}}</span></td>
+            <td class="col-actions">
+              <button class="btn btn-sm" onclick="testEndpoint('{{.ID}}', this)">Send test</button>
+              <button class="btn btn-sm btn-danger" onclick="deleteEndpoint('{{.ID}}', '{{.Name}}', this)">Delete</button>
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    <div class="admin-table-wrap">
+      <div class="empty" style="padding:3rem 1rem;">
+        No endpoints yet. Add one below to get a signed POST on every publish.
+      </div>
+    </div>
+    {{end}}
+  </div>
+
+  <!-- register -->
+  <div>
+    <div class="section-title">Add an endpoint</div>
+    <div id="wh-error" class="alert alert-error" style="display:none;max-width:560px;"></div>
+    <form id="wh-form" class="repo-form" style="max-width:560px" onsubmit="addEndpoint(event)">
+      <div class="form-group">
+        <label for="wh-name">Name</label>
+        <input id="wh-name" type="text" name="name" required placeholder="e.g. ci-pipeline">
+        <span class="form-hint">How you'll recognize this endpoint in the list.</span>
+      </div>
+
+      <div class="form-group">
+        <label for="wh-url">Payload URL</label>
+        <input id="wh-url" type="url" name="url" required placeholder="https://ci.example.com/hooks/forge">
+        <span class="form-hint">forge POSTs the event here as JSON.</span>
+      </div>
+
+      <div class="form-group">
+        <label for="wh-secret">Signing secret</label>
+        <input id="wh-secret" type="text" name="secret" placeholder="Shared HMAC key">
+        <span class="form-hint">Sent as an <code>X-Forge-Signature: sha256=…</code> HMAC of the body. Set the same value on your receiver to verify deliveries.</span>
+      </div>
+
+      <div class="form-group">
+        <label for="wh-repo">Repository</label>
+        <select id="wh-repo" name="repo">
+          <option value="*">All repositories</option>
+          {{range .Repos}}<option value="{{.}}">{{.}}</option>{{end}}
+        </select>
+        <span class="form-hint">Limit deliveries to one repository, or send for all. Triggers on <code>{{.EventType}}</code>.</span>
+      </div>
+
+      <div class="form-actions" style="display:flex;gap:10px;align-items:center;">
+        <button type="submit" class="btn btn-primary">Add endpoint</button>
+      </div>
+    </form>
+  </div>
+
+</div>
+
+<script>
+function whError(msg) {
+  var el = document.getElementById('wh-error');
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
+}
+
+function addEndpoint(e) {
+  e.preventDefault();
+  whError('');
+  var f = e.target;
+  var body = {
+    name:    f.name.value.trim(),
+    url:     f.url.value.trim(),
+    secret:  f.secret.value,
+    repo:    f.repo.value,
+    enabled: true
+  };
+  var btn = f.querySelector('button[type=submit]');
+  btn.disabled = true; btn.textContent = 'Adding…';
+  fetch('/api/v1/webhooks', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  }).then(function(r) {
+    if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+    location.reload();
+  }).catch(function(err) {
+    whError("Couldn't add endpoint: " + err.message);
+    btn.disabled = false; btn.textContent = 'Add endpoint';
+  });
+}
+
+function testEndpoint(id, btn) {
+  var orig = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Sending…';
+  fetch('/api/v1/webhooks/' + encodeURIComponent(id) + '/test', {method: 'POST'})
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      btn.textContent = d.ok ? 'Delivered ✓' : 'Failed';
+      if (!d.ok) alert('Test delivery failed: ' + (d.error || 'unknown error'));
+      setTimeout(function() { btn.disabled = false; btn.textContent = orig; }, 2000);
+    })
+    .catch(function(err) {
+      alert('Test failed: ' + err);
+      btn.disabled = false; btn.textContent = orig;
+    });
+}
+
+function deleteEndpoint(id, name, btn) {
+  if (!confirm("Delete endpoint '" + name + "'? It will stop receiving events.")) return;
+  btn.disabled = true; btn.textContent = 'Deleting…';
+  fetch('/api/v1/webhooks/' + encodeURIComponent(id), {method: 'DELETE'})
+    .then(function(r) {
+      if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status);
+      location.reload();
+    })
+    .catch(function(err) { alert('Delete failed: ' + err); btn.disabled = false; btn.textContent = 'Delete'; });
+}
+</script>
+{{end}}

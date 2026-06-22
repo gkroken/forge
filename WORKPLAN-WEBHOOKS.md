@@ -65,11 +65,20 @@ secret out of the queue table.
       (register → PUT artifact → receiver got signed `artifact.published`, HMAC MATCH; test-ping
       `{"ok":true}`; delete 204).
 
-### Phase W2 — admin HTML UI (if time)
-- [ ] Subscriptions page (list + register form + delete + test-ping), Foundry shell,
-      instrument-panel voice; linked in sidebar/admin nav.
-      **Use the `frontend-design:frontend-design` skill when designing this UI** (user ask).
-- [ ] Live-verify; commit.
+### Phase W2 — admin HTML UI — DONE
+- [x] `/ui/admin/webhooks` page (`templates/webhooks.html` + `ui_webhooks.go` +
+      `tmplWebhooks`): instrument-panel readouts (Endpoints/Active/Event/Delivery —
+      Delivery mirrors queue backend: "durable (Postgres)" vs "in-memory (eval)"),
+      endpoints table (Active/Paused pills, Send test + Delete), and an "Add an endpoint"
+      form. Inline JS drives the W1 JSON API (fetch). Sidebar nav item ("webhook" icon,
+      ActiveNav "webhooks") + route in ui_admin.go. Admin-gated via RequireAdminUI.
+- [x] Used `frontend-design:frontend-design` skill — confirmed Foundry is the pinned brief
+      (extend, don't replace); applied its copy guidance (operator-side, action-first labels,
+      empty state as invitation, errors with direction).
+- [x] Live-verified 2× (Playwright screenshot): on-brand, sidebar active, live readouts,
+      table populates, form labelled. Full `go test ./...` + `test.sh` 20/20 green; binary rebuilt.
+
+## STATUS: W1 + W2 COMPLETE. Webhooks feature shipped.
 
 ## Out of scope (deliberate)
 - Policy/audit events — V1 is artifact.published only (extensible via Event.Type).
