@@ -502,12 +502,16 @@ func buildAuditRow(e obs.AuditEntry, timeLayout string) auditRow {
 	if e.Status >= 400 {
 		action = "Denied"
 	}
+	target := auditTarget(e.Path)
+	if e.Detail != "" {
+		target += " · " + e.Detail
+	}
 	return auditRow{
 		Time:        e.Timestamp.UTC().Format(timeLayout),
 		Actor:       e.Actor,
 		Initials:    actorInitials(e.Actor),
 		Action:      action,
-		Target:      auditTarget(e.Path),
+		Target:      target,
 		Method:      e.Method,
 		MethodColor: color,
 		Path:        e.Path,

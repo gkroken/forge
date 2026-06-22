@@ -127,8 +127,8 @@ func (s *PGAuditSink) run(ctx context.Context) {
 			return
 		case e := <-s.ch:
 			if _, err := s.db.ExecContext(ctx,
-				`INSERT INTO audit_log (ts, actor, method, path, status) VALUES ($1, $2, $3, $4, $5)`,
-				e.Timestamp, e.Actor, e.Method, e.Path, e.Status,
+				`INSERT INTO audit_log (ts, actor, method, path, status, detail) VALUES ($1, $2, $3, $4, $5, $6)`,
+				e.Timestamp, e.Actor, e.Method, e.Path, e.Status, e.Detail,
 			); err != nil {
 				slog.Warn("audit: insert failed", "err", err, "method", e.Method, "path", e.Path)
 			}
@@ -172,7 +172,7 @@ func (s *PGAuditSink) Query(ctx context.Context, f AuditFilter) ([]AuditRecord, 
 	}
 	args = append(args, limit)
 	q := fmt.Sprintf(
-		`SELECT ts, actor, method, path, status, id FROM audit_log %s ORDER BY ts DESC, id DESC LIMIT $%d`,
+		`SELECT ts, actor, method, path, status, detail, id FROM audit_log %s ORDER BY ts DESC, id DESC LIMIT $%d`,
 		where, len(args))
 
 	rows, err := s.db.QueryContext(ctx, q, args...)
@@ -184,7 +184,7 @@ func (s *PGAuditSink) Query(ctx context.Context, f AuditFilter) ([]AuditRecord, 
 	var out []AuditRecord
 	for rows.Next() {
 		var r AuditRecord
-		if err := rows.Scan(&r.Timestamp, &r.Actor, &r.Method, &r.Path, &r.Status, &r.ID); err != nil {
+		if err := rows.Scan(&r.Timestamp, &r.Actor, &r.Method, &r.Path, &r.Status, &r.Detail, &r.ID); err != nil {
 			return out, err
 		}
 		out = append(out, r)
@@ -198,7 +198,7 @@ func (s *PGAuditSink) Recent(n int) []AuditEntry {
 		return nil
 	}
 	rows, err := s.db.Query(
-		`SELECT ts, actor, method, path, status FROM audit_log ORDER BY ts DESC, id DESC LIMIT $1`, n)
+		`SELECT ts, actor, method, path, status, detail FROM audit_log ORDER BY ts DESC, id DESC LIMIT $1`, n)
 	if err != nil {
 		slog.Warn("audit: recent query failed", "err", err)
 		return nil
@@ -208,7 +208,7 @@ func (s *PGAuditSink) Recent(n int) []AuditEntry {
 	var out []AuditEntry
 	for rows.Next() {
 		var e AuditEntry
-		if err := rows.Scan(&e.Timestamp, &e.Actor, &e.Method, &e.Path, &e.Status); err != nil {
+		if err := rows.Scan(&e.Timestamp, &e.Actor, &e.Method, &e.Path, &e.Status, &e.Detail); err != nil {
 			slog.Warn("audit: recent scan failed", "err", err)
 			return out
 		}

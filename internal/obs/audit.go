@@ -13,6 +13,11 @@ type AuditEntry struct {
 	Method    string
 	Path      string
 	Status    int
+	// Detail is an optional human-readable note explaining the event beyond its
+	// method/path/status (e.g. a vulnerability-policy decision). Empty for the
+	// generic write/auth-failure events. Stored durably so the Activity view can
+	// distinguish, say, a warned download from an ordinary one.
+	Detail string
 }
 
 // AuditRecord is an AuditEntry plus its durable row ID, used as the tiebreaker

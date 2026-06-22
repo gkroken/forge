@@ -48,6 +48,7 @@ func TestPGAuditSink_RoundTrip(t *testing.T) {
 			Method:    "PUT",
 			Path:      fmt.Sprintf("/r/%d", i),
 			Status:    201,
+			Detail:    fmt.Sprintf("note-%d", i),
 		})
 	}
 
@@ -70,7 +71,7 @@ func TestPGAuditSink_RoundTrip(t *testing.T) {
 		t.Errorf("expected newest-first /r/2, got %q", got[0].Path)
 	}
 	// Field round-trip.
-	if got[0].Actor != "alice" || got[0].Method != "PUT" || got[0].Status != 201 {
+	if got[0].Actor != "alice" || got[0].Method != "PUT" || got[0].Status != 201 || got[0].Detail != "note-2" {
 		t.Errorf("field round-trip mismatch: %+v", got[0])
 	}
 
