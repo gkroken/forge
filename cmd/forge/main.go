@@ -240,9 +240,13 @@ func main() {
 			slog.Error("oidc: invalid -oidc-group-mappings", "err", err)
 			os.Exit(1)
 		}
+		groupsClaim := *oidcGroupsClaim
+		if groupsClaim == "" {
+			groupsClaim = "groups" // default; keeps the startup log and Access panel accurate
+		}
 		cfg := oidc.Config{
 			Issuer: *oidcIssuer, ClientID: *oidcClientID, ClientSecret: *oidcClientSecret,
-			RedirectURL: *oidcRedirectURL, GroupsClaim: *oidcGroupsClaim,
+			RedirectURL: *oidcRedirectURL, GroupsClaim: groupsClaim,
 			GroupMappings: mappings, DefaultGrants: grants, TokenTTL: ttl,
 		}
 		if err := cfg.Validate(); err != nil {
