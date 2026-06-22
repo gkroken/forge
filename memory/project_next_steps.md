@@ -91,9 +91,25 @@ Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses du
   unchanged. On-publish `Notify` left per-pod ON PURPOSE (publish hits one pod = already
   single-fire; ticker was the only fan-out gap). Integration test: 2 PGCoordinators race Tick
   on one PG → exactly 1 run. This was ALSO the prereq for the future vuln re-scan scheduler.
-- **NEXT = webhooks** (on-publish events to HTTP endpoints for CI/Slack). Delivery-model
-  decision pending: synchronous best-effort vs durable via the PG queue (lean = reuse
-  `queue.Queue` for replica-safe at-least-once + HMAC-signed payloads). Not yet started.
+- **Webhooks — DONE 2026-06-22 (commits d07e02f W1, 87a8216 W2, WORKPLAN-WEBHOOKS.md).**
+  On-publish `artifact.published` events to admin-registered HTTP endpoints, HMAC-SHA256
+  signed (`X-Forge-Signature`), **durable via the PG queue** (user-chosen delivery model;
+  in-memory in eval). KEY DESIGN: one shared `jobs` table is drained by ONE worker whose
+  `dispatch` switch discards unknown types → added `indexer.Worker.Register(typ, handler)`
+  seam (a 2nd worker would race+discard); `webhook.deliver` registers, `npm.regen` stays
+  built-in; webhook jobs inherit the worker's metrics+task-ring for free. Payload carries
+  subID not the secret (honours since-disabled/deleted subs; secret never in queue table).
+  Bounded self-managed retry (cap 5, Handle always returns nil so the queue's generic
+  immediate-retry can't double-fire); DEFERRED = delayed/exponential backoff (needs a queue
+  `visible_after` column). `internal/webhook`: Subscription store (meta ns "webhooks"),
+  Sign, Engine (Dispatch+Handle+Deliver). Admin API `GET/POST /api/v1/webhooks`,
+  `DELETE /{id}`, `POST /{id}/test`; secret blanked in listings. W2 UI `/ui/admin/webhooks`
+  (instrument-panel, Foundry, frontend-design skill) live-verified. On-publish `Notify`
+  scoped same as cleanup (the four `/repository/` formats; OCI `/v2/` out). Events: only
+  artifact.published for now (extensible via Event.Type). Live-verified end-to-end.
+- **NEXT (unstarted):** candidates surveyed — PyPI format (the final extensibility test),
+  vuln scanning (deferred, designed in WORKPLAN-VULN.md), artifact signing/SBOM, LDAP bind,
+  editable group-map UI, SAML, webhook delayed-backoff, more webhook event types.
 - **Vuln scanning = DEFERRED, designed.** Full spike written: `WORKPLAN-VULN.md` — three
   separate phased plans: Plan A OSV (npm+Maven, V0 slice→V1 breadth+obs→V2 warn/block policy),
   Plan B OCI (Trivy/Grype sidecar, NOT in-process), Plan C Helm (config + referenced-image).
