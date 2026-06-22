@@ -41,7 +41,7 @@ func TestFromEnv_RequiredFields(t *testing.T) {
 		{
 			"missing CLIENT_ID",
 			map[string]string{"OIDC_ISSUER": "https://idp.example.com"},
-			"OIDC_CLIENT_ID",
+			"client ID",
 		},
 		{
 			"missing CLIENT_SECRET",
@@ -49,16 +49,16 @@ func TestFromEnv_RequiredFields(t *testing.T) {
 				"OIDC_ISSUER":    "https://idp.example.com",
 				"OIDC_CLIENT_ID": "cid",
 			},
-			"OIDC_CLIENT_SECRET",
+			"client secret",
 		},
 		{
 			"missing REDIRECT_URL",
 			map[string]string{
-				"OIDC_ISSUER":         "https://idp.example.com",
-				"OIDC_CLIENT_ID":      "cid",
-				"OIDC_CLIENT_SECRET":  "sec",
+				"OIDC_ISSUER":        "https://idp.example.com",
+				"OIDC_CLIENT_ID":     "cid",
+				"OIDC_CLIENT_SECRET": "sec",
 			},
-			"OIDC_REDIRECT_URL",
+			"redirect URL",
 		},
 	}
 	for _, tc := range cases {
@@ -177,6 +177,7 @@ func TestExchange_HappyPath(t *testing.T) {
 	fake := newFakeOIDC(t)
 	fake.subject = "user-123"
 	fake.email = "user@example.com"
+	fake.groups = []string{"developers", "forge-admins"}
 	fake.nonce = "abc-nonce"
 
 	p, err := oidc.New(context.Background(), fake.config("test-client"))
@@ -193,6 +194,100 @@ func TestExchange_HappyPath(t *testing.T) {
 	}
 	if info.Email != "user@example.com" {
 		t.Errorf("email: got %q, want %q", info.Email, "user@example.com")
+	}
+	if len(info.Groups) != 2 || info.Groups[0] != "developers" || info.Groups[1] != "forge-admins" {
+		t.Errorf("groups: got %v, want [developers forge-admins]", info.Groups)
+	}
+}
+
+func TestExchange_GroupsClaimAbsent(t *testing.T) {
+	fake := newFakeOIDC(t)
+	fake.nonce = "n1"
+	// groups left nil → claim omitted from the token
+
+	p, _ := oidc.New(context.Background(), fake.config("test-client"))
+	info, err := p.Exchange(context.Background(), "code", "n1")
+	if err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	if len(info.Groups) != 0 {
+		t.Errorf("groups should be empty, got %v", info.Groups)
+	}
+}
+
+func TestParseGroupMappings(t *testing.T) {
+	t.Run("valid", func(t *testing.T) {
+		rules, err := oidc.ParseGroupMappings("forge-admins:admin, devs:write ,staff:read")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []auth.GroupRule{
+			{Group: "forge-admins", Role: auth.RoleAdmin},
+			{Group: "devs", Role: auth.RoleWrite},
+			{Group: "staff", Role: auth.RoleRead},
+		}
+		if len(rules) != len(want) {
+			t.Fatalf("got %d rules, want %d: %+v", len(rules), len(want), rules)
+		}
+		for i := range want {
+			if rules[i] != want[i] {
+				t.Errorf("rule %d: got %+v, want %+v", i, rules[i], want[i])
+			}
+		}
+	})
+	t.Run("empty", func(t *testing.T) {
+		rules, err := oidc.ParseGroupMappings("   ")
+		if err != nil || rules != nil {
+			t.Fatalf("empty: got (%v, %v)", rules, err)
+		}
+	})
+	t.Run("missing colon", func(t *testing.T) {
+		if _, err := oidc.ParseGroupMappings("justagroup"); err == nil {
+			t.Fatal("expected error for missing colon")
+		}
+	})
+	t.Run("unknown role", func(t *testing.T) {
+		if _, err := oidc.ParseGroupMappings("grp:superuser"); err == nil {
+			t.Fatal("expected error for unknown role")
+		}
+	})
+}
+
+func TestFromEnv_GroupMappingsAndClaim(t *testing.T) {
+	resetOIDCEnv(t)
+	setRequiredOIDCEnv(t)
+	os.Setenv("OIDC_GROUPS_CLAIM", "roles")
+	os.Setenv("OIDC_GROUP_MAPPINGS", "forge-admins:admin")
+	cfg, err := oidc.FromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GroupsClaim != "roles" {
+		t.Errorf("groups claim: got %q", cfg.GroupsClaim)
+	}
+	if len(cfg.GroupMappings) != 1 || cfg.GroupMappings[0].Role != auth.RoleAdmin {
+		t.Errorf("group mappings: got %+v", cfg.GroupMappings)
+	}
+}
+
+func TestFromEnv_DefaultGroupsClaim(t *testing.T) {
+	resetOIDCEnv(t)
+	setRequiredOIDCEnv(t)
+	cfg, err := oidc.FromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GroupsClaim != "groups" {
+		t.Errorf("default groups claim: got %q, want \"groups\"", cfg.GroupsClaim)
+	}
+}
+
+func TestFromEnv_BadGroupMappings(t *testing.T) {
+	resetOIDCEnv(t)
+	setRequiredOIDCEnv(t)
+	os.Setenv("OIDC_GROUP_MAPPINGS", "broken")
+	if _, err := oidc.FromEnv(); err == nil || !containsStr(err.Error(), "OIDC_GROUP_MAPPINGS") {
+		t.Fatalf("expected OIDC_GROUP_MAPPINGS error, got: %v", err)
 	}
 }
 
@@ -255,7 +350,8 @@ type fakeOIDC struct {
 	key         *rsa.PrivateKey
 	subject     string
 	email       string
-	nonce       string // embedded in every id_token
+	groups      []string // emitted under the "groups" claim when non-nil
+	nonce       string   // embedded in every id_token
 	omitIDToken bool
 	badToken    bool
 }
@@ -323,7 +419,7 @@ func (f *fakeOIDC) serveToken(w http.ResponseWriter, r *http.Request) {
 			r.ParseForm()
 			clientID = r.FormValue("client_id")
 		}
-		idToken = makeIDToken(f.key, f.srv.URL, clientID, f.subject, f.email, f.nonce)
+		idToken = makeIDToken(f.key, f.srv.URL, clientID, f.subject, f.email, f.nonce, f.groups)
 	}
 	json.NewEncoder(w).Encode(map[string]string{
 		"access_token": "fake-at",
@@ -333,7 +429,7 @@ func (f *fakeOIDC) serveToken(w http.ResponseWriter, r *http.Request) {
 }
 
 // makeIDToken creates a signed RS256 ID token using only stdlib.
-func makeIDToken(key *rsa.PrivateKey, issuer, audience, subject, email, nonce string) string {
+func makeIDToken(key *rsa.PrivateKey, issuer, audience, subject, email, nonce string, groups []string) string {
 	header := b64url(mustMarshal(map[string]string{"alg": "RS256", "kid": "k1"}))
 	claims := map[string]any{
 		"iss":   issuer,
@@ -345,6 +441,9 @@ func makeIDToken(key *rsa.PrivateKey, issuer, audience, subject, email, nonce st
 	}
 	if email != "" {
 		claims["email"] = email
+	}
+	if groups != nil {
+		claims["groups"] = groups
 	}
 	payload := b64url(mustMarshal(claims))
 	msg := header + "." + payload
@@ -387,6 +486,7 @@ func containsRune(s, sub string) bool {
 var oidcEnvKeys = []string{
 	"OIDC_ISSUER", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET",
 	"OIDC_REDIRECT_URL", "OIDC_DEFAULT_GRANTS", "OIDC_TOKEN_TTL",
+	"OIDC_GROUPS_CLAIM", "OIDC_GROUP_MAPPINGS",
 }
 
 // resetOIDCEnv saves all OIDC env vars, clears them, and restores on cleanup.
