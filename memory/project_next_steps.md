@@ -7,8 +7,9 @@ metadata:
 
 Backlog discussed 2026-06-22 after completing the Foundry design sweep
 ([[project-design-sweep]]) and the admin-auth cookie fix ([[project-admin-auth-gotcha]]).
-**Status 2026-06-22:** #1 OIDC SSO DONE & live-validated (branch pushed). **NEXT = #2
-proxy singleflight**, then #3 scaling spike. Sequencing rationale and grounded findings:
+**Status 2026-06-22:** #1 OIDC SSO DONE & live-validated. #2 proxy singleflight DONE
+(commit b624600). #3 scaling spike: **decision LOCKED = hybrid** (see WORKPLAN-SCALING.md,
+commit 84d6b80); implementation NOT started. Sequencing rationale and grounded findings:
 
 **Recommended order:**
 
@@ -37,22 +38,30 @@ scripted login.
 **Still deferred:** direct LDAP/AD bind (needs a login form + bind frontend; no broker),
 SAML, and an editable group-map in the UI (current panel is read-only).
 
-**2. Proxy singleflight (quick adjacent win).**
-Confirmed **no request coalescing** in `internal/proxy/proxy.go` — N concurrent cache
-misses for the same artifact = N upstream fetches (thundering herd). Bites even single-
-node. Small, self-contained correctness/efficiency fix.
+**2. Proxy singleflight — DONE 2026-06-22 (commit b624600).**
+Hand-rolled stdlib single-flight (`flightGroup`: map+Mutex+WaitGroup) in
+`internal/proxy/proxy.go` — chose stdlib over x/sync/singleflight to honour the
+stdlib-only rule (needs narrow: no DoChan/Forget; followers re-read the blob store
+rather than sharing the leader's reader). Coalesces concurrent cache misses per blobKey:
+leader fetches+stores, followers block then Get the fresh blob. Fast paths (negative
+cache, fresh TTL hit) stay OUTSIDE the flight so hits remain fully parallel.
+RecordMiss/RecordRevalidation now fire once per herd (leader only). Test
+`TestSingleFlight_CoalescesConcurrentMisses` (20 goroutines → 1 upstream call), -race clean.
 
-**3. Scaling — design spike BEFORE code.**
-Data plane already scales/replica-ready: `meta.Store`→Postgres, `blob.Store`→S3,
-queue→Postgres (auto when `POSTGRES_DSN` set, `cmd/forge/main.go`). The blocker for N
-replicas behind an LB is **per-process in-memory control state**:
-- `obs/globalstats.go` — request metrics ring buffers (per-pod)
-- `obs/cachestats.go` — per-repo cache hit/miss (resets on restart)
-- `obs/audit.go` — audit log is an in-memory ring buffer → Activity tab sees only one pod
-- `proxy.go` — circuit breakers + `AllHealth()` map keyed by host (per-pod)
-
-**The gating decision:** coherent single-pane view across replicas vs per-pod +
-Prometheus aggregation. Single-pane ⇒ move audit + cache-stats to Postgres and share the
-circuit breaker (Redis/PG). Per-pod+Prometheus ⇒ much smaller scope. Decide this first.
+**3. Scaling — DECISION LOCKED 2026-06-22 = HYBRID (commit 84d6b80, WORKPLAN-SCALING.md).**
+Three classes of per-pod control state → three homes:
+- **Metrics** (`obs/globalstats.go`, `obs/cachestats.go`) → **Prometheus**. KEY FINDING:
+  this is ~90% already built — `metrics.go` exposes cache hits/misses/http/downloads at
+  `/metrics`; GlobalStats/RepoStats are just a parallel in-memory copy feeding the
+  built-in UI. So little net-new work; built-in charts become "this replica" + Grafana
+  for fleet.
+- **Audit** (`obs/audit.go` ring buffer) → **Postgres** (gated on `POSTGRES_DSN`, mirror
+  `queue.NewPG`/`queue.NewMem`). The ONLY genuine net-new shared-storage work. Append at
+  `server.go:529` (writes/auth-failures only, low volume); `.Recent(n)` read in 5 sites.
+  Plan: `obs.AuditSink` iface (S1, no behaviour change) → `PGAuditSink` (S2) → UI labels
+  (S3) → docs/IaC (S4).
+- **Circuit breakers** (`proxy.go` + `globalHealth`) → **stay per-pod** (correct, no work).
+Data plane already replica-ready (meta→PG, blob→S3, queue→PG auto on POSTGRES_DSN).
+Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses durable audit).
 
 Tracks are independent — SSO doesn't block scaling or vice versa.
