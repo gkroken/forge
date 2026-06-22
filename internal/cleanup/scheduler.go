@@ -33,11 +33,20 @@ type Scheduler struct {
 	pubMu       sync.Mutex
 	lastPublish map[string]time.Time // last on-publish run time per repo name
 	now         func() time.Time     // injectable clock for tests
+	runWG       sync.WaitGroup       // tracks in-flight on-publish run goroutines
 
 	// runHook, if set, is called after an automated run that deleted something.
 	// Plain-typed so the cleanup package stays decoupled from webhooks; main.go
 	// wires it to emit a cleanup.completed event.
 	runHook func(RunEvent)
+
+	// tickHook, if set, runs on every scheduled tick inside the leader lock,
+	// after cleanup, sharing the same persisted lastRun map. Plain-typed so the
+	// cleanup package stays decoupled from vuln/queue; the server wires it to
+	// enqueue daily vuln re-scans, keying lastRun in its own namespace so it
+	// never collides with cleanup's per-repo entries. It gets exactly-once
+	// firing across replicas for free from the coordinator.
+	tickHook func(now time.Time, lastRun map[string]time.Time)
 }
 
 // RunEvent describes a completed automated cleanup run that removed artifacts.
@@ -73,6 +82,14 @@ func (s *Scheduler) WithRunHook(fn func(RunEvent)) *Scheduler {
 	return s
 }
 
+// WithTickHook registers a callback run on every scheduled tick inside the
+// leader lock, after cleanup, with the shared lastRun map. Used for other
+// periodic leader-gated work (vuln daily re-scan). Returns s for chaining.
+func (s *Scheduler) WithTickHook(fn func(now time.Time, lastRun map[string]time.Time)) *Scheduler {
+	s.tickHook = fn
+	return s
+}
+
 // Start runs the scheduler in a background goroutine. It checks every minute
 // whether any repo's cleanup interval has elapsed and fires Run if so.
 func (s *Scheduler) Start(ctx context.Context) {
@@ -99,6 +116,9 @@ func (s *Scheduler) loop(ctx context.Context) {
 func (s *Scheduler) Tick(ctx context.Context, now time.Time) {
 	if err := s.coord.RunExclusive(ctx, func(lastRun map[string]time.Time) {
 		s.RunDue(now, lastRun)
+		if s.tickHook != nil {
+			s.tickHook(now, lastRun)
+		}
 	}); err != nil {
 		slog.Warn("cleanup: scheduler tick failed", "err", err)
 	}
@@ -159,9 +179,16 @@ func (s *Scheduler) Notify(repoName string) bool {
 	s.lastPublish[repoName] = now
 	s.pubMu.Unlock()
 
-	go s.runOne(r, np, now, "on-publish")
+	s.runWG.Go(func() {
+		s.runOne(r, np, now, "on-publish")
+	})
 	return true
 }
+
+// Wait blocks until all in-flight on-publish runs have finished. Useful for
+// graceful shutdown and for deterministic tests (so a background run can't
+// outlive the test and race its TempDir cleanup).
+func (s *Scheduler) Wait() { s.runWG.Wait() }
 
 // runOne applies np to repo r, records the run in history, and logs the outcome.
 // trigger labels the log line ("scheduled" / "on-publish").

@@ -241,7 +241,8 @@ func main() {
 	} else {
 		slog.Info("cleanup scheduler: in-memory (eval mode)")
 	}
-	cleanupScheduler.Start(workerCtx)
+	// Started below, after the server is built, so the vuln daily re-scan tick
+	// hook can be registered (it needs the server's handlers + queue).
 
 	// Audit log: Postgres-backed when PG is active (durable + coherent across
 	// replicas), else the in-memory ring buffer for eval / single-node mode.
@@ -272,6 +273,11 @@ func main() {
 		WithUsers(userStore).
 		WithRoles(roleStore).
 		WithBlobWalker(workerCtx)
+
+	// Register the daily vuln re-scan as a scheduler tick hook (leader-gated,
+	// shared lastRun) and start the scheduler now that the server exists.
+	cleanupScheduler.WithTickHook(forgeSrv.VulnRescanTick)
+	cleanupScheduler.Start(workerCtx)
 
 	if *oidcIssuer != "" {
 		grants := []auth.Grant{{Repo: "*", Role: auth.RoleRead}}

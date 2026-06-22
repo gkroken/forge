@@ -35,6 +35,44 @@ func (s *Server) enqueueVulnScan(repoName string) {
 	}()
 }
 
+// vulnRescanInterval is how often a scannable repo is automatically re-scanned.
+// Advisories are published retroactively, so a clean scan today can surface a
+// finding tomorrow without any publish — periodic re-scan is the safety net.
+const vulnRescanInterval = 24 * time.Hour
+
+// vulnRescanKey namespaces a repo's re-scan timestamp in the scheduler's shared
+// lastRun map so it never collides with cleanup's plain per-repo entries.
+func vulnRescanKey(repo string) string { return "__vuln__:" + repo }
+
+// VulnRescanTick is the scheduler tick hook (registered via WithTickHook). It
+// runs inside the cleanup leader lock with the shared, persisted lastRun map, so
+// it fires exactly once across replicas and remembers the last re-scan across
+// leadership changes. For every scannable repo whose interval has elapsed it
+// enqueues a vuln.scan job (the same async path as on-publish / manual).
+func (s *Server) VulnRescanTick(now time.Time, lastRun map[string]time.Time) {
+	if s.Vuln == nil || s.OSV == nil || s.Queue == nil {
+		return
+	}
+	for _, rp := range s.Repos.All() {
+		h, ok := s.Handlers.For(rp.Format)
+		if !ok {
+			continue
+		}
+		if _, scannable := h.(format.VulnCoordinates); !scannable {
+			continue // helm/oci/cran: no OSV source
+		}
+		key := vulnRescanKey(rp.Name)
+		if now.Sub(lastRun[key]) < vulnRescanInterval {
+			continue
+		}
+		if err := s.Queue.Enqueue(context.Background(), vulnScanJobType, vulnScanPayload{Repo: rp.Name}); err != nil {
+			slog.Warn("vuln: enqueue daily re-scan failed", "repo", rp.Name, "err", err)
+			continue // leave lastRun unset so the next tick retries
+		}
+		lastRun[key] = now
+	}
+}
+
 // handleVulnScanJob is the worker handler for vuln.scan jobs. On a hard egress
 // failure it logs and returns nil rather than erroring: a returned error would
 // make the PG queue retry immediately and hammer OSV, and the scheduled re-scan

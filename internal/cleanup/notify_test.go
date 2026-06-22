@@ -95,6 +95,10 @@ func TestNotify_Gating(t *testing.T) {
 	if !s.Notify("hosted-pub") {
 		t.Error("publish after cooldown should schedule a run")
 	}
+
+	// Let the background on-publish runs finish before the TempDir is removed,
+	// otherwise their meta writes race t.TempDir's cleanup.
+	s.Wait()
 }
 
 // TestNotify_RunsDeletion verifies the end-to-end path: an opted-in publish
@@ -137,4 +141,5 @@ func TestNotify_RunsDeletion(t *testing.T) {
 			t.Fatalf("expected myapp-%s to be kept", v)
 		}
 	}
+	s.Wait() // ensure the run's meta write completes before TempDir cleanup
 }

@@ -218,6 +218,52 @@ func TestScanRepo_SkipsNonScannableFormat(t *testing.T) {
 	}
 }
 
+func TestVulnRescanTick_EnqueuesPerScannableRepoAndRespectsInterval(t *testing.T) {
+	srv := newVulnServer(t, "http://unused.example")
+	fq := &fakeQueue{}
+	srv.Queue = fq
+
+	now := time.Now()
+	lastRun := map[string]time.Time{}
+
+	// First tick: npm is scannable → one enqueue; helm is not → skipped.
+	srv.VulnRescanTick(now, lastRun)
+	jobs := fq.snapshot()
+	if len(jobs) != 1 || jobs[0].typ != vulnScanJobType || !strings.Contains(jobs[0].payload, "npm-hosted") {
+		t.Fatalf("first tick jobs = %+v, want one npm-hosted vuln.scan", jobs)
+	}
+	if lastRun[vulnRescanKey("npm-hosted")].IsZero() {
+		t.Error("npm-hosted lastRun not stamped")
+	}
+	if _, ok := lastRun[vulnRescanKey("helm-hosted")]; ok {
+		t.Error("non-scannable helm-hosted should not be tracked")
+	}
+
+	// Second tick within the interval: no new enqueue.
+	srv.VulnRescanTick(now.Add(time.Hour), lastRun)
+	if got := len(fq.snapshot()); got != 1 {
+		t.Errorf("within-interval tick enqueued more jobs: total %d, want 1", got)
+	}
+
+	// A tick past the interval re-enqueues.
+	srv.VulnRescanTick(now.Add(vulnRescanInterval+time.Minute), lastRun)
+	if got := len(fq.snapshot()); got != 2 {
+		t.Errorf("post-interval tick should re-enqueue: total %d, want 2", got)
+	}
+}
+
+func TestVulnRescanTick_NoopWhenUnconfigured(t *testing.T) {
+	srv := newVulnServer(t, "http://unused.example")
+	fq := &fakeQueue{}
+	srv.Queue = fq
+	srv.Vuln = nil // scanning off
+
+	srv.VulnRescanTick(time.Now(), map[string]time.Time{})
+	if got := len(fq.snapshot()); got != 0 {
+		t.Errorf("enqueued %d jobs when scanning unconfigured, want 0", got)
+	}
+}
+
 func TestHandleVulnScan_Enqueues(t *testing.T) {
 	srv := newVulnServer(t, "http://unused.example")
 	q := &fakeQueue{}
