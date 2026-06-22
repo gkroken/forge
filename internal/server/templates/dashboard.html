@@ -9,6 +9,8 @@
       <span>{{.Mode}}</span>
       <span class="inst-sep">·</span>
       <span>UP {{.Uptime}}</span>
+      {{if .Replica}}<span class="inst-sep">·</span>
+      <span title="Serving replica — metrics below are per-pod">REPLICA {{.Replica}}</span>{{end}}
       <span class="inst-status {{if .StatusOK}}is-ok{{else}}is-warn{{end}}">
         <span class="status-dot {{.StatusDot}}"></span>{{.StatusLabel}}
       </span>
@@ -78,6 +80,7 @@
         <span class="chart-legend-item"><span class="chart-swatch" style="background:var(--accent);"></span>Cache hit</span>
         <span class="chart-legend-item"><span class="chart-swatch" style="background:var(--accent-subtle);"></span>Upstream / miss</span>
       </div>
+      <div class="replica-note">Per-replica · scrape <code>/metrics</code> into Prometheus/Grafana for fleet totals</div>
     </div>
 
     <!-- storage by format -->

@@ -1029,6 +1029,9 @@ thead th { font-size: var(--fs-eyebrow); letter-spacing: .1em; }
 .chart-legend-item { display: flex; align-items: center; gap: 5px; }
 .chart-swatch { width: 9px; height: 9px; border-radius: 2px; }
 .chart-time-labels { display: flex; justify-content: space-between; margin-top: 8px; font-size: 10.5px; color: var(--text-light); font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+.replica-note { margin-top: 8px; font-size: 10.5px; color: var(--text-light); }
+.replica-note code { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 10px; }
+.replica-note a { color: var(--accent); text-decoration: none; }
 
 /* ── storage bars ────────────────────────────────────────────────────────── */
 .store-rows      { display: flex; flex-direction: column; gap: 13px; }

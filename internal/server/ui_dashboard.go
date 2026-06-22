@@ -3,8 +3,10 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"forge/internal/blob"
@@ -13,12 +15,34 @@ import (
 	"forge/internal/queue"
 )
 
+var (
+	replicaOnce sync.Once
+	replicaName string
+)
+
+// replicaID returns this process's identity for per-replica UI labels. In
+// Kubernetes the hostname is the pod name; falls back to "local" when unknown.
+// The dashboard/observability metrics panels are pod-local (GlobalStats etc.),
+// so showing which replica served the page keeps numbers from being mistaken
+// for fleet totals — Prometheus/Grafana is the cross-replica source of truth.
+func replicaID() string {
+	replicaOnce.Do(func() {
+		if h, err := os.Hostname(); err == nil && h != "" {
+			replicaName = h
+		} else {
+			replicaName = "local"
+		}
+	})
+	return replicaName
+}
+
 // ── page types ────────────────────────────────────────────────────────────────
 
 type dashboardPage struct {
 	Title           string
 	ActiveNav       string
 	Mode            string // EVAL MODE / AUTH ENABLED — instrument-panel header
+	Replica         string // serving pod/host id; metrics panels are per-replica
 	Uptime          string // HH:MM:SS since process start
 	StatusLabel     string // OPERATIONAL / DEGRADED
 	StatusDot       string // dot-ok / dot-warn
@@ -76,6 +100,7 @@ type healthRow struct {
 type observabilityPage struct {
 	Title           string
 	ActiveNav       string
+	Replica         string // serving pod/host id; metrics panels are per-replica
 	TotalRequests   int64
 	CacheHits       int64
 	CacheMisses     int64
@@ -270,6 +295,7 @@ func (s *Server) uiDashboard(w http.ResponseWriter, r *http.Request) {
 		Title:           "Dashboard",
 		ActiveNav:       "dashboard",
 		Mode:            mode,
+		Replica:         replicaID(),
 		Uptime:          uptime,
 		StatusLabel:     statusLabel,
 		StatusDot:       statusDot,
@@ -401,6 +427,7 @@ func (s *Server) uiObservability(w http.ResponseWriter, r *http.Request) {
 	render(w, tmplObservability, "admin_shell.html", observabilityPage{
 		Title:           "Observability",
 		ActiveNav:       "observability",
+		Replica:         replicaID(),
 		TotalRequests:   totalReqs,
 		ErrorPct:        errPct,
 		LatencyP50Ms:    latP50,
