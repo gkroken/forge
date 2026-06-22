@@ -113,7 +113,14 @@ Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses du
   (instrument-panel, Foundry, frontend-design skill) live-verified. On-publish `Notify`
   scoped same as cleanup (the four `/repository/` formats; OCI `/v2/` out). Events: only
   artifact.published for now (extensible via Event.Type). Live-verified end-to-end.
-- **NEXT (unstarted):** candidates surveyed — PyPI format (the final extensibility test),
+- **WEBHOOKS HARDENING = NEXT TRACK (planned, not started, WORKPLAN-WEBHOOKS-HARDENING.md).**
+  Honest audit found 12 deferrals in the shipped webhooks; user wants EVERYTHING covered.
+  4 phases, acceptance = every gap closed w/ tests+live-verify: H1 event coverage (OCI/`/v2/`
+  publish #1, format-native deletes #2, manual cleanup.completed #3, artifact.cached #4); H2
+  delivery semantics (delivery-id #9, replay/timestamp-sig #12, Retry-After #10); H3 operability
+  (honest metrics #5, delivery history UI #6, dead-letter #7); H4 mgmt/security (edit/PUT #8,
+  SSRF guard #11). See workplan for grounded approaches.
+- **NEXT after hardening:** candidates surveyed — PyPI format (the final extensibility test),
   vuln scanning (deferred, designed in WORKPLAN-VULN.md), artifact signing/SBOM, LDAP bind,
   editable group-map UI, SAML, more webhook event types (OCI-publish, policy-violation
   once vuln scanning lands).
