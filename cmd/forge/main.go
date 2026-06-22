@@ -205,7 +205,16 @@ func main() {
 	cleanupScheduler := cleanup.NewScheduler(mgr, cleanupPolicies, blobStore, metaStore)
 	cleanupScheduler.Start(workerCtx)
 
-	auditLog := obs.NewAuditLog(500)
+	// Audit log: Postgres-backed when PG is active (durable + coherent across
+	// replicas), else the in-memory ring buffer for eval / single-node mode.
+	var auditSink obs.AuditSink
+	if pgMeta != nil {
+		auditSink = obs.NewPGAuditSink(workerCtx, pgMeta.DB())
+		slog.Info("audit log: postgres")
+	} else {
+		auditSink = obs.NewAuditLog(500)
+		slog.Info("audit log: in-memory (eval mode)")
+	}
 
 	forgeSrv := server.New(mgr, reg, blobStore, metaStore, authStore).
 		WithMetrics(metrics, promReg).
@@ -213,7 +222,7 @@ func main() {
 		WithQueue(workerCtx, q).
 		WithCleanup(cleanupPolicies).
 		WithScheduler(cleanupScheduler).
-		WithAuditLog(auditLog).
+		WithAuditLog(auditSink).
 		WithUsers(userStore).
 		WithRoles(roleStore).
 		WithBlobWalker(workerCtx)
