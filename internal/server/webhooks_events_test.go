@@ -79,10 +79,20 @@ func newEventServer(t *testing.T) (*Server, <-chan webhook.Event, func()) {
 	srv := New(mgr, reg, b, m, nil).WithWebhooks(eng)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go q.Work(ctx, eng.Handle) //nolint:errcheck
+	workerDone := make(chan struct{})
+	go func() {
+		q.Work(ctx, eng.Handle) //nolint:errcheck
+		close(workerDone)
+	}()
 
 	return srv, events, func() {
+		// Cancel, then wait for the worker to drain its in-flight job. The Mem
+		// queue runs the current handler to completion before Work returns on
+		// cancel, so this guarantees no webhook Handle is still writing delivery
+		// history into the temp meta dir when t.TempDir cleanup runs (a race that
+		// otherwise intermittently fails cleanup with "directory not empty").
 		cancel()
+		<-workerDone
 		recv.Close()
 	}
 }
