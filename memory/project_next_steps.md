@@ -66,6 +66,10 @@ Three classes of per-pod control state → three homes:
   (scaling runbook, confirm K8s manifests set replicas & don't rely on pod-local audit).
   DEFERRED follow-up: audit_log retention (table grows unbounded — scheduled DELETE or
   monthly partitions; noted in WORKPLAN-SCALING.md S2).
+  **S4 DONE** (commit 4cc623f): docs/runbooks/scaling.md (external-storage prereq, per-pod
+  vs fleet-wide state table, Prometheus/Grafana wiring) + Helm guard that fails render on
+  storage.type=fs with replicaCount>1 or autoscaling. **WHOLE SCALING TRACK S1–S4 COMPLETE.**
+  Multi-replica ready with external storage (S3+PG). Only deferred item = audit_log retention.
 - **Circuit breakers** (`proxy.go` + `globalHealth`) → **stay per-pod** (correct, no work).
 Data plane already replica-ready (meta→PG, blob→S3, queue→PG auto on POSTGRES_DSN).
 Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses durable audit).
