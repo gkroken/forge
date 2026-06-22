@@ -976,6 +976,31 @@ thead th { font-size: var(--fs-eyebrow); letter-spacing: .1em; }
   .inst-readout:nth-child(n+3)  { border-top: 1px solid var(--border); }
 }
 
+/* ── single sign-on panel (Access page) — read-only OIDC config ───────────────
+   Reuses the instrument-panel shell; the body is a definition grid of config
+   values over the group→role mapping table. */
+.sso-panel { margin-bottom: 1.5rem; }
+.sso-defs {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 24px; padding: 16px 18px; margin: 0;
+}
+.sso-defs dt {
+  font-family: var(--font-mono); font-size: var(--fs-eyebrow);
+  letter-spacing: var(--track-eyebrow); text-transform: uppercase;
+  color: var(--text-muted); margin-bottom: 5px;
+}
+.sso-defs dd { margin: 0; font-size: 13px; color: var(--text); word-break: break-all; }
+.sso-map { padding: 0 18px 16px; border-top: 1px solid var(--border); padding-top: 14px; }
+.sso-map .panel-title { margin-bottom: 10px; }
+.sso-map-table { width: 100%; border-collapse: collapse; }
+.sso-map-table th, .sso-map-table td {
+  text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 13px;
+}
+.sso-map-table th:last-child, .sso-map-table td:last-child { width: 90px; }
+.sso-empty, .sso-off { padding: 0 18px 16px; font-size: 13px; color: var(--text-muted); line-height: 1.6; }
+.sso-off { padding-top: 16px; }
+@media (max-width: 760px) { .sso-defs { grid-template-columns: 1fr; } }
+
 /* ── dashboard mid/bottom grids ─────────────────────────────────────────── */
 .mid-grid-3    { display: grid; grid-template-columns: 1.1fr 1.5fr 1fr; gap: 14px; min-height: 200px; }
 .mid-grid-2    { display: grid; grid-template-columns: 1.7fr 1fr;       gap: 14px; min-height: 200px; }

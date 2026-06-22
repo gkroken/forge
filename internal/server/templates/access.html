@@ -6,6 +6,51 @@
 {{if not .AuthEnabled}}
 <div class="alert alert-error">Authentication is not enabled. Start forge with <code>-auth</code> to manage access.</div>
 {{else}}
+
+<!-- single sign-on: identity federation config, read-only -->
+<section class="instrument-panel sso-panel">
+  <div class="inst-header">
+    <span class="inst-name">IDENTITY</span>
+    <span class="inst-sep">·</span>
+    <span>SINGLE SIGN-ON</span>
+    <span class="inst-sep">·</span>
+    <span>OIDC</span>
+    <span class="inst-status {{if .SSO.Enabled}}is-ok{{else}}is-warn{{end}}">
+      <span class="status-dot {{if .SSO.Enabled}}dot-ok{{else}}dot-warn{{end}}"></span>{{if .SSO.Enabled}}enabled{{else}}not configured{{end}}
+    </span>
+  </div>
+  {{if .SSO.Enabled}}
+  <dl class="sso-defs">
+    <div><dt>Issuer</dt><dd class="mono">{{.SSO.Issuer}}</dd></div>
+    <div><dt>Client ID</dt><dd class="mono">{{.SSO.ClientID}}</dd></div>
+    <div><dt>Redirect URL</dt><dd class="mono">{{.SSO.RedirectURL}}</dd></div>
+    <div><dt>Groups claim</dt><dd class="mono">{{.SSO.GroupsClaim}}</dd></div>
+  </dl>
+  <div class="sso-map">
+    <div class="panel-title">Group → role mapping</div>
+    {{if .SSO.Mappings}}
+    <table class="sso-map-table">
+      <thead><tr><th>IdP group</th><th>Role</th></tr></thead>
+      <tbody>
+        {{range .SSO.Mappings}}
+        <tr><td class="mono">{{.Group}}</td><td><code class="col-latest">{{.Role}}</code></td></tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <p class="sso-empty">No group rules configured — every SSO login receives the default grant.
+      Set <code>-oidc-group-mappings</code> (e.g. <code>forge-admins:admin,devs:write</code>) to map IdP groups onto roles.</p>
+    {{end}}
+  </div>
+  {{else}}
+  <div class="sso-off">
+    <p>SSO is not configured. Start forge with <code>-oidc-issuer</code> (plus client ID, secret, and redirect URL)
+      to enable login via Keycloak, Entra / Azure AD, Okta, or any OIDC provider. Active Directory integrates
+      through the IdP — Keycloak federates on-prem AD over LDAP; Entra ID fronts Azure AD directly.</p>
+  </div>
+  {{end}}
+</section>
+
 <p style="font-size:13px;color:var(--text-muted);margin-bottom:1.5rem">
   Per-repository access granted by active API tokens.
   Manage tokens on the <a href="/ui/admin/tokens">API Tokens</a> page.

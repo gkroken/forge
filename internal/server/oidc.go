@@ -24,6 +24,12 @@ type oidcProvider interface {
 	Exchange(ctx context.Context, code, nonce string) (forgeoidc.UserInfo, error)
 	DefaultGrants() []auth.Grant
 	TokenTTL() time.Duration
+	// Read-only config accessors, for the admin Access page. The client secret
+	// is deliberately not exposed.
+	Issuer() string
+	ClientID() string
+	RedirectURL() string
+	GroupsClaim() string
 }
 
 const (

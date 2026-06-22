@@ -398,6 +398,11 @@ func (f *fakeOIDCProvider) TokenTTL() time.Duration {
 	return 8 * time.Hour
 }
 
+func (f *fakeOIDCProvider) Issuer() string      { return "https://idp.example.com" }
+func (f *fakeOIDCProvider) ClientID() string    { return "forge" }
+func (f *fakeOIDCProvider) RedirectURL() string { return "https://forge.example.com/auth/oidc/callback" }
+func (f *fakeOIDCProvider) GroupsClaim() string { return "groups" }
+
 // newOIDCServer returns an auth-enabled server wired with a fakeOIDCProvider.
 func newOIDCServer(t *testing.T) (*Server, auth.Store, *fakeOIDCProvider) {
 	t.Helper()

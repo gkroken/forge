@@ -620,6 +620,34 @@ func TestUIAccess_AuthEnabled_ShowsRepos(t *testing.T) {
 	assertContains(t, body, "test-admin") // token description appears as a grant
 }
 
+func TestUIAccess_ShowsSSOPanel(t *testing.T) {
+	srv, secret := newUIServerWithAuth(t)
+	srv.OIDC = &fakeOIDCProvider{}
+	srv.GroupMapper = auth.NewGroupRoleMapper([]auth.GroupRule{{Group: "forge-admins", Role: auth.RoleAdmin}})
+	h := srv.Routes()
+	r := httptest.NewRequest(http.MethodGet, "/ui/admin/access", nil)
+	r.AddCookie(&http.Cookie{Name: auth.UISessionCookie, Value: secret})
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, r)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status %d", rw.Code)
+	}
+	body := rw.Body.String()
+	assertContains(t, body, "SINGLE SIGN-ON")
+	assertContains(t, body, "https://idp.example.com") // issuer from fake
+	assertContains(t, body, "forge-admins")            // group mapping row
+}
+
+func TestUIAccess_SSONotConfigured(t *testing.T) {
+	srv, secret := newUIServerWithAuth(t) // no OIDC
+	h := srv.Routes()
+	r := httptest.NewRequest(http.MethodGet, "/ui/admin/access", nil)
+	r.AddCookie(&http.Cookie{Name: auth.UISessionCookie, Value: secret})
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, r)
+	assertContains(t, rw.Body.String(), "not configured")
+}
+
 func TestUIAccess_UnauthenticatedRedirects(t *testing.T) {
 	srv, _ := newUIServerWithAuth(t)
 	h := srv.Routes()

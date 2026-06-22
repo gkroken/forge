@@ -95,11 +95,26 @@ type accessRow struct {
 	Grants        []repoGrant
 }
 
+type ssoMapping struct {
+	Group string
+	Role  string
+}
+
+type ssoInfo struct {
+	Enabled     bool
+	Issuer      string
+	ClientID    string
+	RedirectURL string
+	GroupsClaim string
+	Mappings    []ssoMapping // empty = all SSO logins get the default grant
+}
+
 type adminAccessPage struct {
 	Title       string
 	ActiveNav   string
 	AuthEnabled bool
 	Rows        []accessRow
+	SSO         ssoInfo
 }
 
 // ── token types ───────────────────────────────────────────────────────────────
@@ -949,6 +964,22 @@ func (s *Server) uiAdminAccess(w http.ResponseWriter, r *http.Request) {
 		Title:       "Admin — Access",
 		ActiveNav:   "tokens",
 		AuthEnabled: s.Auth != nil,
+	}
+
+	if s.OIDC != nil {
+		page.SSO = ssoInfo{
+			Enabled:     true,
+			Issuer:      s.OIDC.Issuer(),
+			ClientID:    s.OIDC.ClientID(),
+			RedirectURL: s.OIDC.RedirectURL(),
+			GroupsClaim: s.OIDC.GroupsClaim(),
+		}
+		for _, rule := range s.GroupMapper.Rules() {
+			page.SSO.Mappings = append(page.SSO.Mappings, ssoMapping{
+				Group: rule.Group,
+				Role:  rule.Role.String(),
+			})
+		}
 	}
 
 	if s.Auth != nil {
