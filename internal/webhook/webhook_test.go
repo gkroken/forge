@@ -312,6 +312,107 @@ func TestRetryAfter_HonouredAndDeliveryIDStable(t *testing.T) {
 	}
 }
 
+// TestHistory_RecordsSuccess verifies a delivered event lands one success record
+// in history and increments the success metric.
+func TestHistory_RecordsSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	var mu sync.Mutex
+	counts := map[string]int{}
+	m := newStore(t)
+	q := queue.NewMem(16)
+	eng := webhook.New(m, q, srv.Client()).WithMetrics(func(r string) {
+		mu.Lock()
+		counts[r]++
+		mu.Unlock()
+	})
+	sub, err := eng.Store().Create(webhook.Subscription{Name: "ci", URL: srv.URL, Secret: "k", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go q.Work(ctx, eng.Handle) //nolint:errcheck
+
+	eng.Dispatch(ctx, webhook.Event{Type: webhook.EventArtifactPublished, Repo: "maven-hosted"})
+
+	waitFor(t, func() bool {
+		recs, _ := eng.History().List(sub.ID)
+		return len(recs) == 1
+	}, "one history record")
+
+	recs, _ := eng.History().List(sub.ID)
+	if recs[0].Status != webhook.StatusSuccess || recs[0].HTTPCode != 200 || recs[0].Attempt != 1 {
+		t.Fatalf("unexpected record: %+v", recs[0])
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if counts[webhook.StatusSuccess] != 1 {
+		t.Fatalf("success metric = %d, want 1", counts[webhook.StatusSuccess])
+	}
+}
+
+// TestHistory_DeadLetterOnExhaustion verifies a persistently-failing endpoint
+// records each failed attempt and a terminal "dropped" record (the dead-letter),
+// and that the metric counts match.
+func TestHistory_DeadLetterOnExhaustion(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	var mu sync.Mutex
+	counts := map[string]int{}
+	m := newStore(t)
+	q := queue.NewMem(64)
+	eng := webhook.New(m, q, srv.Client()).
+		WithBackoff(func(int) time.Duration { return time.Millisecond }).
+		WithMetrics(func(r string) { mu.Lock(); counts[r]++; mu.Unlock() })
+	sub, err := eng.Store().Create(webhook.Subscription{Name: "ci", URL: srv.URL, Secret: "k", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go q.Work(ctx, eng.Handle) //nolint:errcheck
+
+	eng.Dispatch(ctx, webhook.Event{Type: webhook.EventArtifactPublished, Repo: "maven-hosted"})
+
+	// 5 attempts: 4 failed + 1 dropped.
+	waitFor(t, func() bool {
+		recs, _ := eng.History().List(sub.ID)
+		return len(recs) == 5
+	}, "5 history records")
+
+	recs, _ := eng.History().List(sub.ID)
+	// Newest-first: the terminal record is the dead-letter.
+	if recs[0].Status != webhook.StatusDropped {
+		t.Fatalf("newest record = %q, want dropped", recs[0].Status)
+	}
+	dropped, failed := 0, 0
+	for _, r := range recs {
+		switch r.Status {
+		case webhook.StatusDropped:
+			dropped++
+		case webhook.StatusFailed:
+			failed++
+		}
+	}
+	if dropped != 1 || failed != 4 {
+		t.Fatalf("history outcomes: dropped=%d failed=%d, want 1/4", dropped, failed)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if counts[webhook.StatusDropped] != 1 || counts[webhook.StatusFailed] != 4 {
+		t.Fatalf("metrics: dropped=%d failed=%d, want 1/4", counts[webhook.StatusDropped], counts[webhook.StatusFailed])
+	}
+}
+
 func waitFor(t *testing.T, cond func() bool, what string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)

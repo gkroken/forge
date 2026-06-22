@@ -25,6 +25,9 @@ type Metrics struct {
 	// Artifact downloads per repo
 	Downloads *prometheus.CounterVec // {repo}
 
+	// Webhook deliveries by outcome (one per attempt): success | failed | dropped
+	WebhookDeliveries *prometheus.CounterVec // {result}
+
 	// In-process latency + throughput (not Prometheus instruments)
 	Latency    *LatencyTracker
 	Throughput *ThroughputTracker
@@ -64,6 +67,11 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "forge_artifact_downloads_total",
 			Help: "Successful artifact GET responses (HTTP 200) per repository.",
 		}, []string{"repo"}),
+
+		WebhookDeliveries: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "forge_webhook_deliveries_total",
+			Help: "Webhook delivery attempts by outcome (success, failed, dropped).",
+		}, []string{"result"}),
 	}
 
 	m.Latency = NewLatencyTracker(1000)
@@ -80,6 +88,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.CacheMisses,
 		m.QueueJobsTotal,
 		m.Downloads,
+		m.WebhookDeliveries,
 	)
 	return m
 }

@@ -70,16 +70,20 @@ dedup and reject replays; 429 `Retry-After` is respected.
 Acceptance: an operator can see per-endpoint recent deliveries (status, code, attempts,
 time), failed + dropped deliveries are visible (dead-letter), and metrics reflect real outcomes.
 
-- [ ] **#5 Honest metrics.** Add `forge_webhook_deliveries_total{result=success|failed|dropped}`
-      (+ maybe latency); increment in Deliver/Handle. Stop relying on the always-nil queue result.
-- [ ] **#6/#7 Delivery history + dead-letter.** Persist recent deliveries per subscription
-      (meta.Store ns, capped ring per sub: id, event type, status, http code, attempt, ts,
-      error). Dropped-after-max records flagged `dropped` (the dead-letter). Read API
-      `GET /api/v1/webhooks/{id}/deliveries`.
-- [ ] **UI.** Per-endpoint deliveries panel/drawer (recent attempts + status pills + a
-      "dropped" filter). Use the `frontend-design:frontend-design` skill; Foundry instrument voice.
-- [ ] Tests: metrics increment by outcome; history records success/failure/dropped; API +
-      UI render. Live-verify. Commit.
+- [x] **#5 Honest metrics.** `forge_webhook_deliveries_total{result=success|failed|dropped}`
+      added to obs.Metrics; the engine increments it per attempt via `WithMetrics` callback
+      (keeps webhook pkg free of an obs dependency). No longer relies on the always-nil queue
+      result. Live-verified at `/metrics` (1 success / 4 failed / 1 dropped).
+- [x] **#6/#7 Delivery history + dead-letter.** `webhook.History` (meta ns "webhook-deliveries",
+      capped 50/sub, mutex-guarded, newest-first): id, event, repo, status, httpCode, attempt,
+      error, ts. Terminal failure flagged `dropped` (the dead-letter). Read API
+      `GET /api/v1/webhooks/{id}/deliveries`; history dropped when the sub is deleted.
+- [x] **UI.** Per-endpoint "Delivery trace" drawer (frontend-design skill, Foundry instrument
+      voice): a mini readout (delivered/failed/dropped), status pills, code/attempt/event/when/
+      detail columns, and a "Dead-letter only" filter. Moved all page JS to `/ui/static/
+      webhooks.js` (the old inline JS violated the page CSP) with data-attr event delegation.
+- [x] Tests: success record + metric; dead-letter on exhaustion (4 failed + 1 dropped, metrics
+      match). API + UI live-verified (screenshot of the trace panel). Committed.
 
 ## Phase H4 — Management & security
 Acceptance: subscriptions are full CRUD (edit URL/secret/events/filter/enabled); webhook

@@ -75,10 +75,12 @@ type deliveryPayload struct {
 // delivers them (as the worker handler). One per server.
 type Engine struct {
 	store       *Store
+	history     *History
 	q           queue.Queue
 	client      *http.Client
 	maxAttempts int
 	backoff     func(attempt int) time.Duration
+	metricsFn   func(result string) // optional; records the delivery outcome
 }
 
 // New returns an Engine persisting subscriptions in m and delivering via q.
@@ -88,7 +90,7 @@ func New(m meta.Store, q queue.Queue, client *http.Client) *Engine {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
 	return &Engine{
-		store: NewStore(m), q: q, client: client,
+		store: NewStore(m), history: NewHistory(m), q: q, client: client,
 		maxAttempts: defaultMaxAttempts,
 		backoff:     expBackoff,
 	}
@@ -101,8 +103,27 @@ func (e *Engine) WithBackoff(fn func(attempt int) time.Duration) *Engine {
 	return e
 }
 
+// WithMetrics registers a callback invoked with each delivery outcome
+// ("success"/"failed"/"dropped") so the server can increment a Prometheus
+// counter without the webhook package depending on obs. Returns e for chaining.
+func (e *Engine) WithMetrics(fn func(result string)) *Engine {
+	e.metricsFn = fn
+	return e
+}
+
 // Store exposes the subscription store for the admin API/UI.
 func (e *Engine) Store() *Store { return e.store }
+
+// History exposes the delivery-history store for the admin API/UI.
+func (e *Engine) History() *History { return e.history }
+
+// record persists a delivery outcome to history and increments the metric.
+func (e *Engine) record(rec DeliveryRecord) {
+	e.history.Append(rec)
+	if e.metricsFn != nil {
+		e.metricsFn(rec.Status)
+	}
+}
 
 // EmitCleanupCompleted dispatches a cleanup.completed event for a run that
 // removed at least one artifact. It unifies payload construction across the
@@ -166,46 +187,66 @@ func (e *Engine) Handle(ctx context.Context, j queue.Job) error {
 	if !ok || !sub.Enabled {
 		return nil // subscription deleted/disabled since enqueue; drop
 	}
-	retryAfter, derr := e.Deliver(ctx, sub, d.Event, d.DeliveryID)
-	if derr != nil {
-		if d.Attempt+1 < e.maxAttempts {
-			d.Attempt++
-			delay := e.backoff(d.Attempt)
-			// Honour a server-provided Retry-After (429/503): wait at least that
-			// long, clamped so a hostile/huge value can't pin a job for days.
-			if retryAfter > maxRetryAfter {
-				retryAfter = maxRetryAfter
-			}
-			if retryAfter > delay {
-				delay = retryAfter
-			}
-			if eqErr := e.q.EnqueueAfter(ctx, JobType, d, delay); eqErr != nil {
-				slog.Warn("webhook: re-enqueue failed", "sub", sub.ID, "err", eqErr)
-			}
-		} else {
-			slog.Warn("webhook: delivery dropped after max attempts",
-				"sub", sub.ID, "url", sub.URL, "attempts", e.maxAttempts, "err", derr)
-		}
+	res, derr := e.Deliver(ctx, sub, d.Event, d.DeliveryID)
+	attempt := d.Attempt + 1 // 1-based for the record
+	rec := DeliveryRecord{
+		ID: d.DeliveryID, SubID: sub.ID, Event: d.Event.Type, Repo: d.Event.Repo,
+		HTTPCode: res.StatusCode, Attempt: attempt, Timestamp: time.Now().UTC(),
 	}
+	if derr == nil {
+		rec.Status = StatusSuccess
+		e.record(rec)
+		return nil
+	}
+	rec.Error = derr.Error()
+	if d.Attempt+1 < e.maxAttempts {
+		rec.Status = StatusFailed
+		d.Attempt++
+		delay := e.backoff(d.Attempt)
+		// Honour a server-provided Retry-After (429/503): wait at least that
+		// long, clamped so a hostile/huge value can't pin a job for days.
+		retryAfter := res.RetryAfter
+		if retryAfter > maxRetryAfter {
+			retryAfter = maxRetryAfter
+		}
+		if retryAfter > delay {
+			delay = retryAfter
+		}
+		if eqErr := e.q.EnqueueAfter(ctx, JobType, d, delay); eqErr != nil {
+			slog.Warn("webhook: re-enqueue failed", "sub", sub.ID, "err", eqErr)
+		}
+	} else {
+		rec.Status = StatusDropped
+		slog.Warn("webhook: delivery dropped after max attempts",
+			"sub", sub.ID, "url", sub.URL, "attempts", e.maxAttempts, "err", derr)
+	}
+	e.record(rec)
 	return nil
 }
 
 // maxRetryAfter caps how long a Retry-After header can defer a redelivery.
 const maxRetryAfter = time.Hour
 
+// DeliverResult carries the observable outcome of a delivery attempt: the HTTP
+// status code (0 on transport error) and any Retry-After delay requested on a
+// 429/503.
+type DeliverResult struct {
+	StatusCode int
+	RetryAfter time.Duration
+}
+
 // Deliver POSTs ev to sub.URL as a signed JSON envelope. deliveryID is the
 // stable id sent in X-Forge-Delivery (generate a fresh one for a one-off test
-// ping). It returns the delay requested via Retry-After on a 429/503 (0
-// otherwise) and an error on transport failure or a non-2xx response. Exported
-// so an admin "test ping" can reuse it.
-func (e *Engine) Deliver(ctx context.Context, sub Subscription, ev Event, deliveryID string) (time.Duration, error) {
+// ping). It returns the attempt result and an error on transport failure or a
+// non-2xx response. Exported so an admin "test ping" can reuse it.
+func (e *Engine) Deliver(ctx context.Context, sub Subscription, ev Event, deliveryID string) (DeliverResult, error) {
 	body, err := json.Marshal(deliveryPayload{SchemaVersion: SchemaVersion, ID: deliveryID, Event: ev})
 	if err != nil {
-		return 0, err
+		return DeliverResult{}, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, sub.URL, bytes.NewReader(body))
 	if err != nil {
-		return 0, err
+		return DeliverResult{}, err
 	}
 	ts := time.Now().UTC().Unix()
 	req.Header.Set("Content-Type", "application/json")
@@ -216,18 +257,18 @@ func (e *Engine) Deliver(ctx context.Context, sub Subscription, ev Event, delive
 
 	resp, err := e.client.Do(req)
 	if err != nil {
-		return 0, err
+		return DeliverResult{}, err
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	_, _ = io.Copy(io.Discard, resp.Body)
+	res := DeliverResult{StatusCode: resp.StatusCode}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var retryAfter time.Duration
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
-			retryAfter = parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+			res.RetryAfter = parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
 		}
-		return retryAfter, fmt.Errorf("webhook: non-2xx from %s: %d", sub.URL, resp.StatusCode)
+		return res, fmt.Errorf("webhook: non-2xx from %s: %d", sub.URL, resp.StatusCode)
 	}
-	return 0, nil
+	return res, nil
 }
 
 // parseRetryAfter parses an HTTP Retry-After header value, which is either

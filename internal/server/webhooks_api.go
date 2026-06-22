@@ -11,10 +11,11 @@ import (
 
 // handleWebhooks is the admin JSON API for webhook subscriptions.
 //
-//	GET    /api/v1/webhooks            — list subscriptions
-//	POST   /api/v1/webhooks            — create a subscription
-//	DELETE /api/v1/webhooks/{id}       — delete a subscription
-//	POST   /api/v1/webhooks/{id}/test  — send a test ping to the subscription
+//	GET    /api/v1/webhooks                  — list subscriptions
+//	POST   /api/v1/webhooks                  — create a subscription
+//	DELETE /api/v1/webhooks/{id}             — delete a subscription
+//	POST   /api/v1/webhooks/{id}/test        — send a test ping to the subscription
+//	GET    /api/v1/webhooks/{id}/deliveries  — recent delivery history (dead-letter)
 //
 // Admin-only: subscription URLs are fetched server-side, so registration is a
 // trusted operation.
@@ -39,11 +40,19 @@ func (s *Server) handleWebhooks(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	// /{id} and /{id}/test
-	if sub, rest, found := strings.Cut(id, "/"); found && rest == "test" {
-		s.testWebhook(w, r, sub)
+	// /{id}/test and /{id}/deliveries
+	if sub, rest, found := strings.Cut(id, "/"); found {
+		switch rest {
+		case "test":
+			s.testWebhook(w, r, sub)
+		case "deliveries":
+			s.listWebhookDeliveries(w, r, sub)
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
 		return
 	}
+	// /{id}
 	if r.Method != http.MethodDelete {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -52,7 +61,30 @@ func (s *Server) handleWebhooks(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	_ = s.Webhooks.History().Delete(id) // best-effort: drop its delivery log too
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// listWebhookDeliveries returns the recent delivery records for a subscription,
+// newest first — the operator's deliveries panel + dead-letter view.
+func (s *Server) listWebhookDeliveries(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if _, ok, _ := s.Webhooks.Store().Get(id); !ok {
+		http.Error(w, "subscription not found", http.StatusNotFound)
+		return
+	}
+	recs, err := s.Webhooks.History().List(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if recs == nil {
+		recs = []webhook.DeliveryRecord{}
+	}
+	writeJSON(w, recs)
 }
 
 func (s *Server) listWebhooks(w http.ResponseWriter, _ *http.Request) {

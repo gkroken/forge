@@ -3,6 +3,17 @@
 .wh-events{display:flex;flex-wrap:wrap;gap:14px;margin-top:2px;}
 .wh-check{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer;}
 .wh-check input{margin:0;}
+/* delivery trace: the per-endpoint attempt log, styled as an instrument readout */
+#wh-trace{display:none;margin-top:6px;}
+.trace-head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:10px;}
+.trace-title{font-size:13px;font-weight:600;}
+.trace-title .trace-ep{color:var(--text-muted);font-weight:500;}
+.trace-counts{display:flex;gap:18px;}
+.trace-count{display:flex;align-items:baseline;gap:6px;font-size:12px;color:var(--text-muted);}
+.trace-count b{font-size:14px;font-variant-numeric:tabular-nums;color:var(--text);}
+.trace-tools{display:flex;align-items:center;gap:10px;}
+.trace-filter{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);cursor:pointer;}
+.trace-err{color:var(--danger);font-size:11.5px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 </style>
 <div class="admin-content">
 
@@ -57,14 +68,41 @@
             <td class="col-mono" style="font-size:11.5px;color:var(--text-muted);">{{.Events}}</td>
             <td><span class="status-pill {{.StatusClass}}">{{.Status}}</span></td>
             <td class="col-actions">
-              <button class="btn btn-sm" onclick="testEndpoint('{{.ID}}', this)">Send test</button>
-              <button class="btn btn-sm btn-danger" onclick="deleteEndpoint('{{.ID}}', '{{.Name}}', this)">Delete</button>
+              <button class="btn btn-sm" data-action="deliveries" data-id="{{.ID}}" data-name="{{.Name}}">Deliveries</button>
+              <button class="btn btn-sm" data-action="test" data-id="{{.ID}}">Send test</button>
+              <button class="btn btn-sm btn-danger" data-action="delete" data-id="{{.ID}}" data-name="{{.Name}}">Delete</button>
             </td>
           </tr>
           {{end}}
         </tbody>
       </table>
     </div>
+
+    <!-- delivery trace: recent attempts for the selected endpoint (incl. dead-letter) -->
+    <section id="wh-trace" class="instrument-panel">
+      <div class="trace-head">
+        <div class="trace-title">Delivery trace <span class="trace-ep" id="trace-ep"></span></div>
+        <div class="trace-counts">
+          <div class="trace-count"><b id="tc-success">0</b> delivered</div>
+          <div class="trace-count"><b id="tc-failed">0</b> failed</div>
+          <div class="trace-count"><b id="tc-dropped">0</b> dropped</div>
+        </div>
+        <div class="trace-tools">
+          <label class="trace-filter"><input type="checkbox" id="trace-deadletter"> Dead-letter only</label>
+          <button class="btn btn-sm" data-action="trace-refresh">Refresh</button>
+          <button class="btn btn-sm" data-action="trace-close">Close</button>
+        </div>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr><th>Status</th><th>Code</th><th>Attempt</th><th>Event</th><th>When</th><th>Detail</th></tr>
+          </thead>
+          <tbody id="trace-rows"></tbody>
+        </table>
+      </div>
+    </section>
+
     {{else}}
     <div class="admin-table-wrap">
       <div class="empty" style="padding:3rem 1rem;">
@@ -78,7 +116,7 @@
   <div>
     <div class="section-title">Add an endpoint</div>
     <div id="wh-error" class="alert alert-error" style="display:none;max-width:560px;"></div>
-    <form id="wh-form" class="repo-form" style="max-width:560px" onsubmit="addEndpoint(event)">
+    <form id="wh-form" class="repo-form" style="max-width:560px">
       <div class="form-group">
         <label for="wh-name">Name</label>
         <input id="wh-name" type="text" name="name" required placeholder="e.g. ci-pipeline">
@@ -94,7 +132,7 @@
       <div class="form-group">
         <label for="wh-secret">Signing secret</label>
         <input id="wh-secret" type="text" name="secret" placeholder="Shared HMAC key">
-        <span class="form-hint">Sent as an <code>X-Forge-Signature: sha256=…</code> HMAC of the body. Set the same value on your receiver to verify deliveries.</span>
+        <span class="form-hint">Signs each delivery as <code>X-Forge-Signature: sha256=…</code> over <code>{timestamp}.{body}</code>. Set the same value on your receiver to verify deliveries.</span>
       </div>
 
       <div class="form-group">
@@ -124,70 +162,5 @@
 
 </div>
 
-<script>
-function whError(msg) {
-  var el = document.getElementById('wh-error');
-  el.textContent = msg;
-  el.style.display = msg ? 'block' : 'none';
-}
-
-function addEndpoint(e) {
-  e.preventDefault();
-  whError('');
-  var f = e.target;
-  var checked = Array.prototype.slice
-    .call(f.querySelectorAll('input[name=event]:checked'))
-    .map(function(c) { return c.value; });
-  var all = f.querySelectorAll('input[name=event]').length;
-  var body = {
-    name:    f.name.value.trim(),
-    url:     f.url.value.trim(),
-    secret:  f.secret.value,
-    repo:    f.repo.value,
-    // All checked = subscribe to everything (empty filter); otherwise the subset.
-    events:  checked.length === all ? [] : checked,
-    enabled: true
-  };
-  var btn = f.querySelector('button[type=submit]');
-  btn.disabled = true; btn.textContent = 'Adding…';
-  fetch('/api/v1/webhooks', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(body)
-  }).then(function(r) {
-    if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
-    location.reload();
-  }).catch(function(err) {
-    whError("Couldn't add endpoint: " + err.message);
-    btn.disabled = false; btn.textContent = 'Add endpoint';
-  });
-}
-
-function testEndpoint(id, btn) {
-  var orig = btn.textContent;
-  btn.disabled = true; btn.textContent = 'Sending…';
-  fetch('/api/v1/webhooks/' + encodeURIComponent(id) + '/test', {method: 'POST'})
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-      btn.textContent = d.ok ? 'Delivered ✓' : 'Failed';
-      if (!d.ok) alert('Test delivery failed: ' + (d.error || 'unknown error'));
-      setTimeout(function() { btn.disabled = false; btn.textContent = orig; }, 2000);
-    })
-    .catch(function(err) {
-      alert('Test failed: ' + err);
-      btn.disabled = false; btn.textContent = orig;
-    });
-}
-
-function deleteEndpoint(id, name, btn) {
-  if (!confirm("Delete endpoint '" + name + "'? It will stop receiving events.")) return;
-  btn.disabled = true; btn.textContent = 'Deleting…';
-  fetch('/api/v1/webhooks/' + encodeURIComponent(id), {method: 'DELETE'})
-    .then(function(r) {
-      if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status);
-      location.reload();
-    })
-    .catch(function(err) { alert('Delete failed: ' + err); btn.disabled = false; btn.textContent = 'Delete'; });
-}
-</script>
+<script src="/ui/static/webhooks.js" defer></script>
 {{end}}

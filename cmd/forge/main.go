@@ -206,7 +206,10 @@ func main() {
 	// Webhooks: durable on-publish delivery via the shared queue. Construct
 	// before WithQueue so its delivery handler is registered before the worker
 	// starts, and before Routes() so the publish hook can emit events.
-	webhookEngine := webhook.New(metaStore, q, nil)
+	webhookEngine := webhook.New(metaStore, q, nil).
+		WithMetrics(func(result string) {
+			metrics.WebhookDeliveries.WithLabelValues(result).Inc()
+		})
 
 	cleanupPolicies := cleanup.NewPolicyManager(metaStore)
 	cleanupScheduler := cleanup.NewScheduler(mgr, cleanupPolicies, blobStore, metaStore).
