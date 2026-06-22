@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strings"
 
 	"forge/internal/queue"
 	"forge/internal/repo"
@@ -13,7 +14,7 @@ type webhooksPage struct {
 	ActiveNav   string
 	Count       int
 	ActiveCount int
-	EventType   string
+	EventTypes  []string // every emittable type, for the form checkboxes
 	Delivery    string
 	Endpoints   []webhookRow
 	Repos       []string
@@ -24,6 +25,7 @@ type webhookRow struct {
 	Name        string
 	URL         string
 	Repo        string
+	Events      string // "All events" or a comma-joined subset
 	Status      string
 	StatusClass string
 }
@@ -35,10 +37,10 @@ func (s *Server) uiWebhooks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	page := webhooksPage{
-		Title:     "Webhooks",
-		ActiveNav: "webhooks",
-		EventType: webhook.EventArtifactPublished,
-		Delivery:  s.deliveryMode(),
+		Title:      "Webhooks",
+		ActiveNav:  "webhooks",
+		EventTypes: webhook.AllEventTypes,
+		Delivery:   s.deliveryMode(),
 	}
 
 	// Repository options for the filter (everything but groups, which own no
@@ -62,9 +64,13 @@ func (s *Server) uiWebhooks(w http.ResponseWriter, r *http.Request) {
 				if repoLabel == "" || repoLabel == "*" {
 					repoLabel = "All repositories"
 				}
+				eventsLabel := "All events"
+				if len(sub.Events) > 0 {
+					eventsLabel = strings.Join(sub.Events, ", ")
+				}
 				page.Endpoints = append(page.Endpoints, webhookRow{
 					ID: sub.ID, Name: sub.Name, URL: sub.URL,
-					Repo: repoLabel, Status: status, StatusClass: cls,
+					Repo: repoLabel, Events: eventsLabel, Status: status, StatusClass: cls,
 				})
 			}
 			page.Count = len(subs)

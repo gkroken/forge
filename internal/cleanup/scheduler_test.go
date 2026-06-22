@@ -173,3 +173,38 @@ func TestScheduler_RunDue_SkipsGroupRepo(t *testing.T) {
 		t.Fatal("lastRun was updated for a group repo — should have been skipped")
 	}
 }
+
+// TestScheduler_RunHook_FiresOnDeletion verifies the run hook is invoked with
+// the deletion summary after an automated run removes artifacts.
+func TestScheduler_RunHook_FiresOnDeletion(t *testing.T) {
+	b, m := stores(t)
+	mgr := repo.NewManager()
+	pm := cleanup.NewPolicyManager(m)
+	if err := pm.Put(cleanup.NamedPolicy{Name: "keep-1", KeepVersions: 1, Interval: time.Hour}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Add(repo.Repository{
+		Name: "r", Format: "helm", Kind: repo.Hosted, CleanupPolicyName: "keep-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seedHelm(t, b, m, "r", []helmRec{ // keep-1 deletes the 2 lowest
+		{Name: "app", Version: "1.0.0"},
+		{Name: "app", Version: "1.1.0"},
+		{Name: "app", Version: "1.2.0"},
+	})
+
+	var got []cleanup.RunEvent
+	sched := cleanup.NewScheduler(mgr, pm, b, m).
+		WithRunHook(func(ev cleanup.RunEvent) { got = append(got, ev) })
+
+	now := time.Now()
+	sched.RunDue(now, map[string]time.Time{"r": now.Add(-2 * time.Hour)})
+
+	if len(got) != 1 {
+		t.Fatalf("want 1 run-hook event, got %d", len(got))
+	}
+	if got[0].Repo != "r" || got[0].Policy != "keep-1" || got[0].Trigger != "scheduled" || got[0].Deleted < 1 {
+		t.Fatalf("unexpected run event: %+v", got[0])
+	}
+}

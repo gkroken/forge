@@ -203,8 +203,24 @@ func main() {
 		slog.Info("queue: in-memory (eval mode)")
 	}
 
+	// Webhooks: durable on-publish delivery via the shared queue. Construct
+	// before WithQueue so its delivery handler is registered before the worker
+	// starts, and before Routes() so the publish hook can emit events.
+	webhookEngine := webhook.New(metaStore, q, nil)
+
 	cleanupPolicies := cleanup.NewPolicyManager(metaStore)
-	cleanupScheduler := cleanup.NewScheduler(mgr, cleanupPolicies, blobStore, metaStore)
+	cleanupScheduler := cleanup.NewScheduler(mgr, cleanupPolicies, blobStore, metaStore).
+		// Emit a cleanup.completed webhook after an automated run removes artifacts.
+		WithRunHook(func(ev cleanup.RunEvent) {
+			webhookEngine.Dispatch(context.Background(), webhook.Event{
+				Type: webhook.EventCleanupCompleted, Repo: ev.Repo,
+				Actor: "scheduler", Timestamp: time.Now().UTC(),
+				Data: map[string]any{
+					"policy": ev.Policy, "deleted": ev.Deleted,
+					"freedBytes": ev.FreedBytes, "trigger": ev.Trigger,
+				},
+			})
+		})
 	// In multi-replica (Postgres) mode, gate scheduled cleanup behind a Postgres
 	// advisory lock with shared lastRun so a due job fires exactly once across
 	// pods. Eval / single-node (FS) mode keeps the in-memory single-node behavior.
@@ -232,11 +248,6 @@ func main() {
 		auditSink = obs.NewAuditLog(500)
 		slog.Info("audit log: in-memory (eval mode)")
 	}
-
-	// Webhooks: durable on-publish delivery via the shared queue. Construct
-	// before WithQueue so its delivery handler is registered before the worker
-	// starts, and before Routes() so the publish hook can emit events.
-	webhookEngine := webhook.New(metaStore, q, nil)
 
 	forgeSrv := server.New(mgr, reg, blobStore, metaStore, authStore).
 		WithMetrics(metrics, promReg).

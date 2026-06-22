@@ -1,4 +1,9 @@
 {{define "content"}}
+<style>
+.wh-events{display:flex;flex-wrap:wrap;gap:14px;margin-top:2px;}
+.wh-check{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer;}
+.wh-check input{margin:0;}
+</style>
 <div class="admin-content">
 
   <!-- outbound-signal readout -->
@@ -15,9 +20,9 @@
         <div class="inst-unit">receiving events</div>
       </div>
       <div class="inst-readout">
-        <div class="inst-label">Event</div>
-        <div class="inst-value inst-value-text">{{.EventType}}</div>
-        <div class="inst-unit">emitted on every publish</div>
+        <div class="inst-label">Event types</div>
+        <div class="inst-value">{{len .EventTypes}}</div>
+        <div class="inst-unit">forge emits</div>
       </div>
       <div class="inst-readout">
         <div class="inst-label">Delivery</div>
@@ -38,6 +43,7 @@
             <th>Name</th>
             <th>Payload URL</th>
             <th>Repository</th>
+            <th>Events</th>
             <th>Status</th>
             <th></th>
           </tr>
@@ -48,6 +54,7 @@
             <td><div class="fw-600">{{.Name}}</div></td>
             <td class="col-mono" style="color:var(--text-muted);">{{.URL}}</td>
             <td style="font-size:12.5px;color:var(--text-muted);">{{.Repo}}</td>
+            <td class="col-mono" style="font-size:11.5px;color:var(--text-muted);">{{.Events}}</td>
             <td><span class="status-pill {{.StatusClass}}">{{.Status}}</span></td>
             <td class="col-actions">
               <button class="btn btn-sm" onclick="testEndpoint('{{.ID}}', this)">Send test</button>
@@ -96,7 +103,17 @@
           <option value="*">All repositories</option>
           {{range .Repos}}<option value="{{.}}">{{.}}</option>{{end}}
         </select>
-        <span class="form-hint">Limit deliveries to one repository, or send for all. Triggers on <code>{{.EventType}}</code>.</span>
+        <span class="form-hint">Limit deliveries to one repository, or send for all.</span>
+      </div>
+
+      <div class="form-group">
+        <label>Events</label>
+        <div class="wh-events">
+          {{range .EventTypes}}
+          <label class="wh-check"><input type="checkbox" name="event" value="{{.}}" checked><code>{{.}}</code></label>
+          {{end}}
+        </div>
+        <span class="form-hint">Which events this endpoint receives. Leave all checked to get everything.</span>
       </div>
 
       <div class="form-actions" style="display:flex;gap:10px;align-items:center;">
@@ -118,11 +135,17 @@ function addEndpoint(e) {
   e.preventDefault();
   whError('');
   var f = e.target;
+  var checked = Array.prototype.slice
+    .call(f.querySelectorAll('input[name=event]:checked'))
+    .map(function(c) { return c.value; });
+  var all = f.querySelectorAll('input[name=event]').length;
   var body = {
     name:    f.name.value.trim(),
     url:     f.url.value.trim(),
     secret:  f.secret.value,
     repo:    f.repo.value,
+    // All checked = subscribe to everything (empty filter); otherwise the subset.
+    events:  checked.length === all ? [] : checked,
     enabled: true
   };
   var btn = f.querySelector('button[type=submit]');

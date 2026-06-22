@@ -19,8 +19,25 @@ import (
 // subscriptionsNS is the meta.Store namespace holding subscriptions (key=ID).
 const subscriptionsNS = "webhooks"
 
-// EventArtifactPublished is emitted after a successful write to a repository.
-const EventArtifactPublished = "artifact.published"
+// Event types forge emits. Subscriptions filter on these (empty filter = all).
+const (
+	// EventArtifactPublished — a successful write (publish) to a repository.
+	EventArtifactPublished = "artifact.published"
+	// EventArtifactDeleted — an explicit component+version deletion (admin/API).
+	// Deletions made by automated cleanup are summarised by EventCleanupCompleted
+	// instead, so a retention run doesn't emit one event per removed version.
+	EventArtifactDeleted = "artifact.deleted"
+	// EventCleanupCompleted — an automated cleanup run finished having removed at
+	// least one artifact. Data carries policy, deleted, freedBytes, trigger.
+	EventCleanupCompleted = "cleanup.completed"
+)
+
+// AllEventTypes lists every emittable event type, for the admin UI.
+var AllEventTypes = []string{
+	EventArtifactPublished,
+	EventArtifactDeleted,
+	EventCleanupCompleted,
+}
 
 // Subscription is one registered endpoint and its delivery filters.
 type Subscription struct {
@@ -56,12 +73,13 @@ func (s Subscription) Matches(ev Event) bool {
 
 // Event is the payload delivered to subscribers.
 type Event struct {
-	Type      string    `json:"type"`
-	Repo      string    `json:"repo"`
-	Format    string    `json:"format,omitempty"`
-	Path      string    `json:"path,omitempty"` // sub-path within the repo
-	Actor     string    `json:"actor,omitempty"`
-	Timestamp time.Time `json:"timestamp"`
+	Type      string         `json:"type"`
+	Repo      string         `json:"repo"`
+	Format    string         `json:"format,omitempty"`
+	Path      string         `json:"path,omitempty"` // sub-path / component within the repo
+	Actor     string         `json:"actor,omitempty"`
+	Timestamp time.Time      `json:"timestamp"`
+	Data      map[string]any `json:"data,omitempty"` // event-specific extras (e.g. cleanup counts)
 }
 
 // Store is the subscription CRUD layer over meta.Store. It mirrors

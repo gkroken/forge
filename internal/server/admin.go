@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"forge/internal/obs"
 	"forge/internal/proxy"
 	"forge/internal/repo"
+	"forge/internal/webhook"
 )
 
 // repoRequest is the JSON body for create/update repo endpoints.
@@ -435,6 +437,14 @@ func (s *Server) handleDeleteComponent(w http.ResponseWriter, r *http.Request, n
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
+	}
+	if s.Webhooks != nil {
+		ev := webhook.Event{
+			Type: webhook.EventArtifactDeleted, Repo: rp.Name, Format: rp.Format,
+			Path: component, Actor: actorLabel(r, s.Auth), Timestamp: time.Now().UTC(),
+			Data: map[string]any{"version": version},
+		}
+		go s.Webhooks.Dispatch(context.Background(), ev)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(res)

@@ -33,6 +33,20 @@ type Scheduler struct {
 	pubMu       sync.Mutex
 	lastPublish map[string]time.Time // last on-publish run time per repo name
 	now         func() time.Time     // injectable clock for tests
+
+	// runHook, if set, is called after an automated run that deleted something.
+	// Plain-typed so the cleanup package stays decoupled from webhooks; main.go
+	// wires it to emit a cleanup.completed event.
+	runHook func(RunEvent)
+}
+
+// RunEvent describes a completed automated cleanup run that removed artifacts.
+type RunEvent struct {
+	Repo       string
+	Policy     string
+	Deleted    int
+	FreedBytes int64
+	Trigger    string // "scheduled" | "on-publish"
 }
 
 func NewScheduler(repos *repo.Manager, policies *PolicyManager, b blob.Store, m meta.Store) *Scheduler {
@@ -49,6 +63,13 @@ func NewScheduler(repos *repo.Manager, policies *PolicyManager, b blob.Store, m 
 // leader-gated and shares lastRun across pods. Returns s for chaining.
 func (s *Scheduler) WithCoordinator(c Coordinator) *Scheduler {
 	s.coord = c
+	return s
+}
+
+// WithRunHook registers a callback invoked after an automated run (scheduled or
+// on-publish) that deleted at least one artifact. Returns s for chaining.
+func (s *Scheduler) WithRunHook(fn func(RunEvent)) *Scheduler {
+	s.runHook = fn
 	return s
 }
 
@@ -164,5 +185,11 @@ func (s *Scheduler) runOne(r repo.Repository, np NamedPolicy, ts time.Time, trig
 			"deleted", result.Deleted,
 			"freed_bytes", result.FreedBytes,
 		)
+		if s.runHook != nil {
+			s.runHook(RunEvent{
+				Repo: r.Name, Policy: r.CleanupPolicyName,
+				Deleted: result.Deleted, FreedBytes: result.FreedBytes, Trigger: trigger,
+			})
+		}
 	}
 }
