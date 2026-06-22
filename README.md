@@ -96,6 +96,61 @@ Roles: `read`, `write`, `admin`. Repos support `anonymousRead: true` for open
 access (typical for install/resolve paths). Token auth is enforced as middleware
 before every handler.
 
+### Single sign-on (OIDC)
+
+Forge authenticates operators against any OIDC identity provider — **Keycloak,
+Entra / Azure AD, Okta, ADFS**. Active Directory integrates through the IdP:
+Keycloak federates on-prem AD over LDAP; Entra ID fronts Azure AD directly. (A
+direct LDAP bind is not built yet; the role-mapping layer is factored so it can be
+added without rework.)
+
+Setting the issuer enables SSO. Every flag has a matching `OIDC_*` env var (the
+flag overrides the env); prefer the env var for the client secret, since flags are
+visible in `ps`:
+
+```bash
+./forge -addr :8080 -data ./data -auth \
+  -oidc-issuer        https://keycloak.example.com/realms/forge \
+  -oidc-client-id     forge \
+  -oidc-client-secret "$OIDC_CLIENT_SECRET" \
+  -oidc-redirect-url  https://forge.example.com/auth/oidc/callback \
+  -oidc-group-mappings 'forge-admins:admin,developers:write,staff:read'
+```
+
+| Flag / env | Purpose |
+|--|--|
+| `-oidc-issuer` / `OIDC_ISSUER` | IdP issuer URL; **set this to enable SSO** |
+| `-oidc-client-id` / `OIDC_CLIENT_ID` | OAuth client ID |
+| `-oidc-client-secret` / `OIDC_CLIENT_SECRET` | OAuth client secret (prefer the env var) |
+| `-oidc-redirect-url` / `OIDC_REDIRECT_URL` | `https://<host>/auth/oidc/callback` |
+| `-oidc-groups-claim` / `OIDC_GROUPS_CLAIM` | ID-token claim with group membership (default `groups`) |
+| `-oidc-group-mappings` / `OIDC_GROUP_MAPPINGS` | `group:role,…` mapping IdP groups onto roles |
+| `OIDC_DEFAULT_GRANTS` | JSON grants applied when no group matches (default: `read` on `*`) |
+| `-oidc-token-ttl` / `OIDC_TOKEN_TTL` | SSO session lifetime (default `8h`) |
+
+**Group → role mapping** is the centerpiece: each IdP group maps to a base role
+(`admin`/`write`/`read`); the highest matching role wins, and a login with no
+matching group falls back to `OIDC_DEFAULT_GRANTS`. On first login an SSO user is
+provisioned into the Users tab (no local password); disabling that user there
+blocks future SSO logins. The live config and mapping table are shown read-only on
+the **Access** admin page.
+
+#### Keycloak quick-start (local)
+
+```bash
+docker run -p 8081:8080 \
+  -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin \
+  quay.io/keycloak/keycloak:latest start-dev
+```
+
+In the Keycloak admin console: create a realm (`forge`); create a confidential
+client (`forge`) with redirect URI `http://localhost:8080/auth/oidc/callback` and
+copy its secret; create a group `forge-admins` and a user in it; add a
+**Group Membership** client mapper named `groups` (token claim name `groups`,
+"Full group path" off) so the ID token carries the group. Then start forge with
+`-oidc-issuer http://localhost:8081/realms/forge` and
+`-oidc-group-mappings forge-admins:admin`, and sign in via "Sign in with SSO".
+
 ---
 
 ## Architecture
@@ -212,8 +267,10 @@ kind cluster install + conformance smoke, timed quickstart gate (< 10 min).
 
 ## Post-GA roadmap
 
-- **OIDC / LDAP federation** — self-service token issuance via Keycloak/AD; token
-  model covers current production workflows (anonymous install, CI service tokens).
+- **OIDC SSO** — shipped: login against Keycloak/Entra/Okta/ADFS with group→role
+  mapping (see [Single sign-on](#single-sign-on-oidc)). **Direct LDAP/AD bind** (no
+  IdP broker) and **SAML** remain post-GA; the role-mapping layer is factored so an
+  LDAP frontend slots in without rework.
 - **CRAN binary trees** (`/bin/`) — per-OS pre-compiled packages; source packages
   work for current use cases.
 - **Distributed tracing** — OpenTelemetry integration; Prometheus metrics +
