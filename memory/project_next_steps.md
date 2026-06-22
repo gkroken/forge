@@ -153,9 +153,18 @@ Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses du
   unsupported/unscanned/clean/vulnerable). Handler returns nil on OSV egress fail (no PG retry-spin;
   re-scan is the safety net). Live-verified end-to-end (lodash@4.17.20→high, log4j-core@2.14.1→
   critical Log4Shell). Also fixed a pre-existing webhook test-harness cleanup race surfaced en route.
-  **NEXT = A-V1**: daily re-scan via the now-HA scheduler, `/ui/admin/security` keyset page,
-  dashboard tile, `forge_vulnerable_components` gauge. Then A-V2 policy (Off/Warn/Block + the
-  easy policy-violation webhook event), then Plan B (OCI/Trivy sidecar), Plan C (Helm).
+  **A-V1 = DONE 2026-06-23** (7 commits on `feature/foundry-remaining-tabs`): persisted per-repo
+  `vuln.Rollup` (worst-severity per component/version + histogram, own meta ns `{repo}:vuln-rollup`,
+  computed at scan-end → O(1) reads) feeding a shared severity-pill (`.badge-sev` + Go `sevBadge`
+  helper + JS `sevBadge()`) across Browse list/maven-tree leaves, version list, search, Content tab,
+  repos-table Security column, dashboard tile; `forge_vulnerable_components{repo,severity}` gauge
+  (set from rollup at scan-end + startup sweep); daily re-scan via `cleanup.Scheduler.WithTickHook`
+  (leader-gated, shared lastRun, `"__vuln__:"` namespace — reuses scheduler-HA, no new lock/table);
+  `/ui/admin/security` keyset page (repo+min-severity filter, in-memory over sorted List). Also fixed
+  a pre-existing cleanup on-publish goroutine/TempDir flake (Scheduler WaitGroup + Wait()).
+  **NEXT = A-V2 policy** (Off/Warn/Block + threshold + suppressions, per-repo Security tab + global
+  default, admin-set, dry-run, gate in handleRepo + the now-easy policy.violation webhook event), then
+  Plan B (OCI/Trivy sidecar), Plan C (Helm).
 - **Vuln scanning design (for reference)** — `WORKPLAN-VULN.md` — three
   separate phased plans: Plan A OSV (npm+Maven, V0 slice→V1 breadth+obs→V2 warn/block policy),
   Plan B OCI (Trivy/Grype sidecar, NOT in-process), Plan C Helm (config + referenced-image).

@@ -144,7 +144,17 @@ Maven on-publish coverage is already live (the mapping shipped in V0); A-V1 adds
 via the now-HA scheduler, the `/ui/admin/security` keyset page, the dashboard tile, and the
 `forge_vulnerable_components` gauge.
 
-### DESIGN — TO DISCUSS: surface vuln data on more than the version-detail page
+### DESIGN — RESOLVED 2026-06-23 (shipped in A-V1): surface vuln data on more than the version-detail page
+**Decision (built):** a persisted per-repo `vuln.Rollup` (worst-severity per component, per version,
+histogram + count) is computed once at scan time and stored in its own meta ns (`{repo}:vuln-rollup`),
+so every surface reads it O(1) via `GetRollup` instead of re-scanning findings per render. Chosen over
+recompute-per-render (too costly on large proxy repos) and over a dedicated querier table (premature).
+One shared severity-pill component: `.badge-sev` CSS reusing the existing `.sev-*` tokens, a Go `sevBadge`
+template helper, and matching JS `sevBadge()`. Surfaces shipped: Browse flat list + maven tree leaves,
+version list (+ Content tab), search results, repos-table Security column, dashboard tile. Lookup helpers
+return "" for non-vulnerable (no badge) and "unknown" (grey) for present-but-unscored, never a badge when
+scanning is off. Original discussion retained below for context.
+
 **Open design question raised 2026-06-22 (decide before/within A-V1).** Today the only surface for
 findings is the *version-specific* browse **detail pane** (`renderSecurity` in the right panel) —
 i.e. a user only sees a vulnerability after drilling into one exact `component@version`. That's too
@@ -169,12 +179,22 @@ shared across surfaces. **Recommend deciding the surface set + the rollup-vs-per
 approach as the first task of A-V1**, since the Security page and dashboard tile already need a
 repo-wide findings rollup and a shared badge — build that rollup once and reuse it everywhere.
 
-### A-V1 — Breadth + observability
-1. Maven `OSVCoordinates` (`groupId:artifactId`).
-2. **Daily re-scan** via the Scheduler — advisories are published *retroactively*, so periodic re-scan is mandatory. **Hard-depends on scheduler-HA** (else N replicas re-scan in parallel).
-3. **Security admin page** `/ui/admin/security`: all findings, filter by repo/severity, **keyset-paginated** (reuse the audit-history mechanics).
-4. Dashboard tile ("N vulnerable components, M critical") + `forge_vulnerable_components{repo,severity}` Prometheus gauge.
-5. Tests: Maven mapping, re-scan idempotency, page pagination/filter.
+### A-V1 — Breadth + observability — COMPLETE 2026-06-23
+1. Maven `OSVCoordinates` (`groupId:artifactId`). **DONE in A-V0** (shipped with the seam).
+2. **Daily re-scan** — DONE. Not a second leader/lock: `cleanup.Scheduler.WithTickHook` runs inside the
+   existing cleanup leader lock with the shared, persisted lastRun; the server's `VulnRescanTick` enqueues
+   a `vuln.scan` per scannable repo once the 24h interval elapses, keyed in a `"__vuln__:"` namespace so it
+   never collides with cleanup's per-repo entries. Reuses scheduler-HA wholesale (exactly-once + cross-
+   leadership memory, no schema change); keeps `cleanup` free of vuln/queue deps via the plain-typed hook.
+3. **Security admin page** `/ui/admin/security` — DONE. All vulnerable findings, filter by repo + min
+   severity, keyset-paginated by `(repo, component, version)` (in-memory over per-repo sorted `List`,
+   reusing the audit-history page chrome). A dedicated findings-querier table is the noted scale path.
+4. Dashboard tile + repos-table Security column + `forge_vulnerable_components{repo,severity}` gauge
+   (`obs.Metrics.SetVulnerableComponents`, re-set from the rollup at scan-end + startup sweep) — DONE.
+5. Tests: rollup aggregation/degradation, scan persists rollup, surfaces carry severity, no-badge-when-
+   unconfigured, re-scan interval/leader gating, Security page list/filter/empty-state — DONE.
+   Also fixed a pre-existing cleanup on-publish goroutine/TempDir race (Scheduler now tracks runs in a
+   WaitGroup + `Wait()`). `go test ./...` + `go vet` + `bash test.sh` (20/20) green; binary rebuilt.
 
 ### A-V2 — Policy & enforcement (warn vs block)
 The full design from the design discussion:
