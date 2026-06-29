@@ -259,6 +259,71 @@ registry), *not* in-process. Findings flow into the **same** `vuln.Store`/UI/pol
 - **B-O2 — Policy:** reuse the Plan A-V2 policy engine and download gate for OCI pulls (`/v2/...`). Same Off/Warn/Block semantics.
 - **Open:** DB refresh cadence for Trivy; airgapped DB mirroring; per-layer vs per-image granularity; scan cost on large images (async only, never inline).
 
+## Plan B — Grounded design (2026-06-29)
+
+### Seams already in place — no changes needed
+- `vuln.SourceTrivy = "trivy"` (`vuln.go:22`) — constant exists; `Finding{Source:"trivy"}` slots into
+  the same store, Security page, badge, and policy engine with zero spine changes.
+- `vuln.Store` + `Rollup` + badge — browse detail calls `vuln.Store.Get(repo, image, tag)` and will
+  show Trivy findings with no UI change.
+- `pol.Decision(f, found)` — source-agnostic; doesn't care if advisories came from OSV or Trivy.
+- `indexer.Worker.Register` — same shared worker as webhook delivery and OSV scans.
+- OCI `BrowseRepo` (`oci.go:510`) — returns `BrowseEntry{Name:image, Versions:[]string{tags}}` —
+  same shape as npm/Maven; a repo-wide Trivy scan can enumerate it identically.
+- On-push hook in middleware (`server.go:703`) — `ociManifestRef` block detects manifest PUT and
+  emits a webhook event; a parallel `enqueueTrivyScan` goroutine fits here.
+
+### New code required per phase
+
+**B-O0 — Trivy exec wrapper + server wiring + on-push enqueue**
+
+`internal/trivy` package (stdlib only: `os/exec`, `encoding/json`, `os`):
+- `Executor` interface: `Run(ctx, env []string, args ...string) ([]byte, error)` — injected so
+  tests provide a fake without spawning a real process. `osExecutor` is the real impl.
+- `Scanner` struct: `Binary, RegistryAddr, AuthToken string` (Binary defaults to `"trivy"` in PATH,
+  RegistryAddr is forge's `/v2/` host e.g. `localhost:8080`, AuthToken passed as `TRIVY_REGISTRY_TOKEN`).
+- `ImageRef(repoName, image, tag)` → `"{RegistryAddr}/{repoName}/{image}:{tag}"` — what docker
+  clients (and Trivy) use against forge's OCI registry.
+- `ScanImage(ctx, ref)` → runs `trivy image --format json --quiet --insecure {ref}` with optional
+  `TRIVY_REGISTRY_TOKEN` env; parses `Results[].Vulnerabilities[]` → `[]vuln.Advisory`.
+  Deduplicates by `VulnerabilityID` across layers. Trivy severities
+  CRITICAL/HIGH/MEDIUM/LOW/UNKNOWN map to our SeverityCritical/High/Moderate/Low/Unknown bucket.
+  Stdout is parsed even on non-zero exit (trivy exits 1 with `--exit-code 1`; default is 0).
+
+Server additions (`server/trivy_scan.go`):
+- `trivyScanJobType = "trivy.scan.oci"` + `trivyScanPayload{Repo, Image, Tag}`.
+- `Server.Trivy *trivy.Scanner` field, `WithTrivy` method; registered in `WithQueue` when non-nil.
+- `scanOCIImage(ctx, repoName, image, tag)` — builds ref via `Trivy.ImageRef`, calls `ScanImage`,
+  writes `Finding{Source:"trivy"}`, then rebuilds rollup from `Vuln.List` (Trivy scans one image/tag
+  at a time unlike OSV's whole-repo batch) → `PutRollup` + `SetVulnerableComponents`.
+- `enqueueTrivyScan(repoName, image, tag)` — goroutine enqueue, failure-isolated.
+- Flags: `-trivy-binary` (default `"trivy"`), `-trivy-addr` (required to enable), `-trivy-auth-token`.
+
+On-push: refactor the `ociManifestRef` block in middleware to not be gated on `s.Webhooks != nil`;
+add `enqueueTrivyScan` call for tag refs (skip `sha256:` digest refs — not primary tag publishes).
+
+**B-O1 — Full repo scan + manual + daily**
+- `scanOCIRepo(ctx, repoName)` — enumerate via `BrowseRepo`, call `scanOCIImage` per image/tag.
+- `handleVulnScan` extended: OCI repos with Trivy configured → enqueue trivy job (currently 501).
+- `VulnRescanTick` extended: also enqueue trivy scans for OCI repos when `s.Trivy != nil`.
+- Badge and Security page: zero changes — Trivy findings slot in via the existing vuln.Store.
+
+**B-O2 — Policy gate on OCI manifest pulls**
+- OCI handler implements `format.VulnGate`: `VulnGateTarget(sub)` parses sub → returns
+  `(image, ref, op=="manifests" && !isDigest(ref))`. Tag-based manifest GETs are gated; digest
+  refs fail open (safe direction — worst case a vulnerable image bypasses gating by digest; noted
+  fast-follow: reverse digest→tag lookup in OCI meta store).
+- `handleOCI` gets the same 3-line gate call as `handleRepo` (only on GET/HEAD).
+
+### Open questions resolved
+| Question | Decision |
+|---|---|
+| Per-layer vs per-image? | Per-image (one Finding/tag, advisory list = union of all CVEs across layers). |
+| Async only? | Yes — never inline; Trivy can take 10–30s on large images. |
+| Auth for Trivy | `-trivy-auth-token` → `TRIVY_REGISTRY_TOKEN` env. Eval (no auth) works without it. |
+| Trivy DB refresh | Trivy auto-downloads DB to `~/.cache/trivy`; a `CronJob` in Helm handles `--download-db-only` daily. No forge code. |
+| Digest pulls gated? | Not in B-O2; fails open. Fast-follow: reverse digest→tag lookup. |
+
 ---
 
 # Plan C — Helm

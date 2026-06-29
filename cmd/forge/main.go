@@ -35,6 +35,7 @@ import (
 	"forge/internal/queue"
 	"forge/internal/repo"
 	"forge/internal/server"
+	"forge/internal/trivy"
 	"forge/internal/vuln"
 	"forge/internal/webhook"
 )
@@ -59,6 +60,12 @@ func main() {
 	oidcGroupMappings := flag.String("oidc-group-mappings", os.Getenv("OIDC_GROUP_MAPPINGS"), "IdP group→role map, e.g. forge-admins:admin,devs:write,staff:read (env OIDC_GROUP_MAPPINGS)")
 	oidcTokenTTL := flag.String("oidc-token-ttl", os.Getenv("OIDC_TOKEN_TTL"), "lifetime of an SSO session (default 8h) (env OIDC_TOKEN_TTL)")
 	auditRetention := flag.String("audit-retention", os.Getenv("AUDIT_RETENTION"), "how long to keep Postgres audit_log entries, e.g. 2160h (default 90d); 0 disables pruning (env AUDIT_RETENTION)")
+	// Trivy OCI image scanning. Setting -trivy-addr enables the sidecar scanner;
+	// Trivy must be reachable at -trivy-binary (default: found in PATH).
+	// Each flag defaults to its TRIVY_* env var so either works.
+	trivyBinary    := flag.String("trivy-binary", envOr("TRIVY_BINARY", "trivy"), "path to the trivy binary (env TRIVY_BINARY)")
+	trivyAddr      := flag.String("trivy-addr", os.Getenv("TRIVY_ADDR"), "forge registry address for Trivy image pulls, e.g. localhost:8080; setting this enables OCI scanning (env TRIVY_ADDR)")
+	trivyAuthToken := flag.String("trivy-auth-token", os.Getenv("TRIVY_AUTH_TOKEN"), "forge API token for Trivy registry auth; empty = no auth (env TRIVY_AUTH_TOKEN)")
 	flag.Parse()
 
 	obs.InitLog(*logFormat)
@@ -262,12 +269,19 @@ func main() {
 		slog.Info("audit log: in-memory (eval mode)")
 	}
 
+	var trivyScanner *trivy.Scanner
+	if *trivyAddr != "" {
+		trivyScanner = trivy.New(*trivyBinary, *trivyAddr, *trivyAuthToken)
+		slog.Info("trivy: OCI image scanning enabled", "addr", *trivyAddr, "binary", *trivyBinary)
+	}
+
 	forgeSrv := server.New(mgr, reg, blobStore, metaStore, authStore).
 		WithMetrics(metrics, promReg).
 		WithGlobalStats(globalStats).
 		WithWebhooks(webhookEngine).
 		WithVuln(vulnStore, osvClient).
 		WithVulnPolicy(vulnPolicies).
+		WithTrivy(trivyScanner).
 		WithQueue(workerCtx, q).
 		WithCleanup(cleanupPolicies).
 		WithScheduler(cleanupScheduler).
@@ -357,6 +371,14 @@ func must(err error) {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
 	}
+}
+
+// envOr returns the value of the env var name, or fallback when unset/empty.
+func envOr(name, fallback string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return fallback
 }
 
 // envTrue reports whether an env var is set to a truthy value (1/true/yes/on).

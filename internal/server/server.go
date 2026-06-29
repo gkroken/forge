@@ -34,6 +34,7 @@ import (
 	"forge/internal/oidc"
 	"forge/internal/queue"
 	"forge/internal/repo"
+	"forge/internal/trivy"
 	"forge/internal/vuln"
 	"forge/internal/webhook"
 )
@@ -80,6 +81,7 @@ type Server struct {
 	Webhooks    *webhook.Engine        // nil = webhooks not configured (no event emission)
 	Vuln        *vuln.Store            // nil = vulnerability scanning not configured
 	OSV         *vuln.Client           // nil = no OSV producer (scans disabled)
+	Trivy       *trivy.Scanner         // nil = OCI image scanning not configured
 	VulnPolicy  *vuln.PolicyManager    // nil = no download-policy gate
 	MaxUpload   int64                  // per-request body limit; 0 = use defaultMaxUpload
 	reg         prometheus.Gatherer
@@ -151,6 +153,9 @@ func (s *Server) WithQueue(ctx context.Context, q queue.Queue) *Server {
 	}
 	if s.Vuln != nil && s.OSV != nil {
 		w.Register(vulnScanJobType, s.handleVulnScanJob)
+	}
+	if s.Trivy != nil && s.Vuln != nil {
+		w.Register(trivyScanJobType, s.handleTrivyScanJob)
 	}
 	go w.Work(ctx, q) //nolint:errcheck
 	return s
@@ -699,19 +704,26 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 
 		// OCI manifest PUT under /v2/ makes an image tag- (or digest-) addressable:
 		// that is the publish moment. Blob and upload PUTs are NOT publishes, and
-		// cleanup/walk don't cover OCI, so this emits the webhook only.
-		if s.Webhooks != nil && r.Method == http.MethodPut && status >= 200 && status < 300 &&
+		// cleanup/walk don't cover OCI, so this emits the webhook and enqueues a scan.
+		if r.Method == http.MethodPut && status >= 200 && status < 300 &&
 			strings.HasPrefix(r.URL.Path, "/v2/") {
 			repoName, sub, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/v2/"), "/")
 			if image, ref, ok := ociManifestRef(sub); ok && repoName != "" {
-				go s.Webhooks.Dispatch(context.Background(), webhook.Event{
-					Type:      webhook.EventArtifactPublished,
-					Repo:      repoName,
-					Format:    "oci",
-					Path:      image + ":" + ref,
-					Actor:     actorLabel(r, s.Auth),
-					Timestamp: start,
-				})
+				if s.Webhooks != nil {
+					go s.Webhooks.Dispatch(context.Background(), webhook.Event{
+						Type:      webhook.EventArtifactPublished,
+						Repo:      repoName,
+						Format:    "oci",
+						Path:      image + ":" + ref,
+						Actor:     actorLabel(r, s.Auth),
+						Timestamp: start,
+					})
+				}
+				// Enqueue a Trivy scan for tag-based manifest pushes. Skip digest refs
+				// (sha256:...) — trivy image needs a tag, not a content-addressed ref.
+				if !strings.HasPrefix(ref, "sha256:") {
+					s.enqueueTrivyScan(repoName, image, ref)
+				}
 			}
 		}
 
