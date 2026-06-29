@@ -183,8 +183,11 @@ Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses du
   handleVulnScan OCI path (→ Trivy, 202 / 501-unconfigured); VulnRescanTick dual-path (OSV __vuln__:
   + Trivy __trivy__: independent intervals); OCI handler VulnGateTarget (tag=gated, digest=fail-open,
   blob/upload/tags-list=never); gate call in handleOCI (mirrors handleRepo). Flags: -trivy-binary /
-  -trivy-addr / -trivy-auth-token. NEXT = Config-as-Code (declarative forge.config.json + reconcile),
-  then Plan C (Helm).
+  -trivy-addr / -trivy-auth-token. NEXT = Plan C (Helm vuln).
+- **Config-as-Code — DONE 2026-06-29**: internal/config (Load/Plan/Apply/Export), -config /
+  -config-check / -config-export / FORGE_CONFIG flags, managed-set prune guard, Helm ConfigMap
+  + checksum/config rollout annotation, CI gate on forge.example.json, runbook at
+  docs/runbooks/config-as-code.md. NEXT = Plan C (Helm vuln scanning).
 - **Vuln scanning design (for reference)** — `WORKPLAN-VULN.md` — three
   separate phased plans: Plan A OSV (npm+Maven, V0 slice→V1 breadth+obs→V2 warn/block policy),
   Plan B OCI (Trivy/Grype sidecar, NOT in-process), Plan C Helm (config + referenced-image).
