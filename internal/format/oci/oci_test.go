@@ -469,3 +469,38 @@ func TestProxy_RejectsWrites(t *testing.T) {
 		t.Fatalf("expected 405, got %d", rw.Code)
 	}
 }
+
+func TestVulnGateTarget(t *testing.T) {
+	h := New()
+	cases := []struct {
+		sub       string
+		wantComp  string
+		wantVer   string
+		wantOK    bool
+	}{
+		// Tag-addressed manifest pulls are gated.
+		{"myapp/manifests/latest", "myapp", "latest", true},
+		{"myapp/manifests/v1.0.0", "myapp", "v1.0.0", true},
+		{"org/image/manifests/stable", "org/image", "stable", true},
+		// Digest refs fail open — can't reverse-map to a scanned tag.
+		{"myapp/manifests/sha256:abc123", "", "", false},
+		// Blob paths are never gated.
+		{"myapp/blobs/sha256:abc123", "", "", false},
+		// Upload paths are never gated.
+		{"myapp/blobs/uploads/", "", "", false},
+		{"myapp/blobs/uploads/uuid-123", "", "", false},
+		// Tag list is never gated.
+		{"myapp/tags/list", "", "", false},
+	}
+	for _, tc := range cases {
+		comp, ver, ok := h.VulnGateTarget(tc.sub)
+		if ok != tc.wantOK {
+			t.Errorf("VulnGateTarget(%q): ok = %v, want %v", tc.sub, ok, tc.wantOK)
+			continue
+		}
+		if ok && (comp != tc.wantComp || ver != tc.wantVer) {
+			t.Errorf("VulnGateTarget(%q): got (%q, %q), want (%q, %q)",
+				tc.sub, comp, ver, tc.wantComp, tc.wantVer)
+		}
+	}
+}

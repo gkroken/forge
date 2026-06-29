@@ -175,7 +175,16 @@ Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses du
   blast radius; suppressions stamped who/when. UI: `/ui/admin/security-policies` (global default + named,
   Findings|Policies sub-nav) + per-repo Security tab (resolved view + assign + Preview impact + ungateable
   note); `.chip-warn` token. LIVE-VERIFIED e2e: published lodash@4.17.20, live OSV scan → high finding →
-  Block GET=403, Warn GET=200+header. NEXT = Plan B (OCI/Trivy sidecar), then Plan C (Helm).
+  Block GET=403, Warn GET=200+header.
+  **Plan B = COMPLETE 2026-06-29** (commits 0312702 + 9f98fbb, NOT pushed): internal/trivy package
+  (Executor interface + ScanImage + parseOutput + dedup + severity map; no new Go dep — os/exec only);
+  trivyScanJobType (per-tag on-push) + trivyRepoScanJobType (whole-repo, manual+daily); scanOCIImage
+  (writes Finding{Source:"trivy"}, rebuilds rollup from Vuln.List); scanOCIRepo (BrowseRepo enumerate);
+  handleVulnScan OCI path (→ Trivy, 202 / 501-unconfigured); VulnRescanTick dual-path (OSV __vuln__:
+  + Trivy __trivy__: independent intervals); OCI handler VulnGateTarget (tag=gated, digest=fail-open,
+  blob/upload/tags-list=never); gate call in handleOCI (mirrors handleRepo). Flags: -trivy-binary /
+  -trivy-addr / -trivy-auth-token. NEXT = Config-as-Code (declarative forge.config.json + reconcile),
+  then Plan C (Helm).
 - **Vuln scanning design (for reference)** — `WORKPLAN-VULN.md` — three
   separate phased plans: Plan A OSV (npm+Maven, V0 slice→V1 breadth+obs→V2 warn/block policy),
   Plan B OCI (Trivy/Grype sidecar, NOT in-process), Plan C Helm (config + referenced-image).
