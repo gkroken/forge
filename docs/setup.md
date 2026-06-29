@@ -381,6 +381,34 @@ before applying.
 
 ---
 
+## Declarative configuration (config-as-code)
+
+Instead of relying on the hardcoded seed repos and managing configuration via
+the admin UI, you can provide a `forge.config.json` file that forge reads on
+boot and reconciles to. This is the recommended approach for GitOps deployments.
+
+```bash
+# Export current state as a starting point (secrets are blanked).
+./forge -config-export -data ./data > forge.config.json
+
+# Validate the file without making changes.
+./forge -config-check -config forge.config.json -data ./data
+
+# Start forge in config mode (seed repos are skipped).
+./forge -config forge.config.json -data ./data
+```
+
+In Kubernetes, set `config.content` (inline JSON) or `config.existingConfigMap`
+in the Helm values. The chart renders a ConfigMap, mounts it, appends
+`-config /etc/forge/config.json` to the container args, and adds a
+`checksum/config` pod annotation so a config change rolls the Deployment.
+
+See [docs/runbooks/config-as-code.md](runbooks/config-as-code.md) for the full
+schema reference, secret injection via `${ENV_VAR}`, prune semantics, and the
+GitOps migration guide.
+
+---
+
 ## Default repositories
 
 forge seeds the following repositories on first start:

@@ -33,6 +33,12 @@ jobs:
           version: v3.17.3
       - name: helm lint
         run: helm lint deploy/helm/forge/
+      - name: config-check example
+        run: |
+          go build -o /tmp/forge-check ./cmd/forge
+          WEBHOOK_URL=https://example.com WEBHOOK_SECRET=dummy \
+            /tmp/forge-check -config-check -config deploy/config/forge.example.json \
+            -data /tmp/forge-config-check
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "~1.5"
