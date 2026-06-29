@@ -23,6 +23,7 @@ import (
 	"forge/internal/auth"
 	"forge/internal/blob"
 	"forge/internal/cleanup"
+	"forge/internal/config"
 	"forge/internal/format"
 	"forge/internal/format/cran"
 	"forge/internal/format/helm"
@@ -66,6 +67,14 @@ func main() {
 	trivyBinary    := flag.String("trivy-binary", envOr("TRIVY_BINARY", "trivy"), "path to the trivy binary (env TRIVY_BINARY)")
 	trivyAddr      := flag.String("trivy-addr", os.Getenv("TRIVY_ADDR"), "forge registry address for Trivy image pulls, e.g. localhost:8080; setting this enables OCI scanning (env TRIVY_ADDR)")
 	trivyAuthToken := flag.String("trivy-auth-token", os.Getenv("TRIVY_AUTH_TOKEN"), "forge API token for Trivy registry auth; empty = no auth (env TRIVY_AUTH_TOKEN)")
+
+	// Declarative config-as-code. When -config is set, forge reads the JSON
+	// file on every boot and reconciles repos/policies/roles/webhooks to match.
+	// Secrets are injected via ${ENV_VAR} placeholders — never commit them.
+	// env FORGE_CONFIG overrides the default (empty = eval mode, seeds used).
+	configPath   := flag.String("config", envOr("FORGE_CONFIG", ""), "path to forge.config.json; enables config-as-code mode (env FORGE_CONFIG)")
+	configCheck  := flag.Bool("config-check", false, "validate -config file and print plan, then exit 0 (valid) / 1 (invalid)")
+	configExport := flag.Bool("config-export", false, "print current state as forge.config.json to stdout and exit 0")
 	flag.Parse()
 
 	obs.InitLog(*logFormat)
@@ -144,49 +153,52 @@ func main() {
 	reg.Register(oci.New())
 
 	// Repository manager: load persisted repos from the meta store, then seed
-	// defaults on first run (when the store is empty).
+	// defaults on first run (when the store is empty). Skipped when -config is
+	// set — the config file is the source of truth in that mode.
 	mgr := repo.NewManager()
 	must(mgr.WithStore(metaStore))
 
-	if mgr.Len() == 0 {
-		slog.Info("seeding default repositories")
-	}
-	for _, r := range []repo.Repository{
-		// Hosted repos: writes always require a token; reads require one too
-		// unless auth is disabled (eval mode) or AnonymousRead is set.
-		// Hosted: source of truth for internal artifacts.
-		{Name: "maven-hosted", Format: "maven", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
-		{Name: "npm-hosted", Format: "npm", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
-		{Name: "helm-hosted", Format: "helm", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
-		{Name: "cran-hosted", Format: "cran", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
-		// Proxy: read-through caches of public registries.
-		{Name: "maven-central", Format: "maven", Kind: repo.Proxy,
-			Upstream: "https://repo1.maven.org/maven2", AnonymousRead: true},
-		{Name: "npm-proxy", Format: "npm", Kind: repo.Proxy,
-			Upstream: "https://registry.npmjs.org", AnonymousRead: true},
-		{Name: "cran-proxy", Format: "cran", Kind: repo.Proxy,
-			Upstream: cranProxyUpstream(), AnonymousRead: true},
-		{Name: "helm-proxy", Format: "helm", Kind: repo.Proxy,
-			Upstream: "https://charts.bitnami.com/bitnami", AnonymousRead: true},
-		// OCI / Docker
-		{Name: "docker-hosted", Format: "oci", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
-		// Group: merged read-only views (hosted first so internal artifacts shadow upstream).
-		{Name: "maven-public", Format: "maven", Kind: repo.Group,
-			Members: []string{"maven-hosted", "maven-central"}, AnonymousRead: true},
-		{Name: "npm-public", Format: "npm", Kind: repo.Group,
-			Members: []string{"npm-hosted", "npm-proxy"}, AnonymousRead: true},
-		{Name: "helm-public", Format: "helm", Kind: repo.Group,
-			Members: []string{"helm-hosted", "helm-proxy"}, AnonymousRead: true},
-		{Name: "cran-public", Format: "cran", Kind: repo.Group,
-			Members: []string{"cran-hosted", "cran-proxy"}, AnonymousRead: true},
-	} {
-		// Seeded repos start online. Enabled has no "unset" sentinel, so the
-		// struct literals above leave it false; set it here before persisting
-		// or a fresh data dir comes up with every repo offline (503).
-		r.Enabled = true
-		// Add only if not already persisted (idempotent first-run seeding).
-		if err := mgr.Add(r); err != nil {
-			slog.Debug("skipping repo seed (already exists)", "name", r.Name)
+	if *configPath == "" {
+		if mgr.Len() == 0 {
+			slog.Info("seeding default repositories")
+		}
+		for _, r := range []repo.Repository{
+			// Hosted repos: writes always require a token; reads require one too
+			// unless auth is disabled (eval mode) or AnonymousRead is set.
+			// Hosted: source of truth for internal artifacts.
+			{Name: "maven-hosted", Format: "maven", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
+			{Name: "npm-hosted", Format: "npm", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
+			{Name: "helm-hosted", Format: "helm", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
+			{Name: "cran-hosted", Format: "cran", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
+			// Proxy: read-through caches of public registries.
+			{Name: "maven-central", Format: "maven", Kind: repo.Proxy,
+				Upstream: "https://repo1.maven.org/maven2", AnonymousRead: true},
+			{Name: "npm-proxy", Format: "npm", Kind: repo.Proxy,
+				Upstream: "https://registry.npmjs.org", AnonymousRead: true},
+			{Name: "cran-proxy", Format: "cran", Kind: repo.Proxy,
+				Upstream: cranProxyUpstream(), AnonymousRead: true},
+			{Name: "helm-proxy", Format: "helm", Kind: repo.Proxy,
+				Upstream: "https://charts.bitnami.com/bitnami", AnonymousRead: true},
+			// OCI / Docker
+			{Name: "docker-hosted", Format: "oci", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
+			// Group: merged read-only views (hosted first so internal artifacts shadow upstream).
+			{Name: "maven-public", Format: "maven", Kind: repo.Group,
+				Members: []string{"maven-hosted", "maven-central"}, AnonymousRead: true},
+			{Name: "npm-public", Format: "npm", Kind: repo.Group,
+				Members: []string{"npm-hosted", "npm-proxy"}, AnonymousRead: true},
+			{Name: "helm-public", Format: "helm", Kind: repo.Group,
+				Members: []string{"helm-hosted", "helm-proxy"}, AnonymousRead: true},
+			{Name: "cran-public", Format: "cran", Kind: repo.Group,
+				Members: []string{"cran-hosted", "cran-proxy"}, AnonymousRead: true},
+		} {
+			// Seeded repos start online. Enabled has no "unset" sentinel, so the
+			// struct literals above leave it false; set it here before persisting
+			// or a fresh data dir comes up with every repo offline (503).
+			r.Enabled = true
+			// Add only if not already persisted (idempotent first-run seeding).
+			if err := mgr.Add(r); err != nil {
+				slog.Debug("skipping repo seed (already exists)", "name", r.Name)
+			}
 		}
 	}
 
@@ -273,6 +285,70 @@ func main() {
 	if *trivyAddr != "" {
 		trivyScanner = trivy.New(*trivyBinary, *trivyAddr, *trivyAuthToken)
 		slog.Info("trivy: OCI image scanning enabled", "addr", *trivyAddr, "binary", *trivyBinary)
+	}
+
+	// Config-as-code reconcile / export / check. All three modes need the
+	// same Appliers (built from the stores above). Only one mode runs.
+	cfgAppliers := config.Appliers{
+		Repos:    mgr,
+		Cleanup:  cleanupPolicies,
+		Vuln:     vulnPolicies,
+		Roles:    roleStore,
+		Webhooks: webhookEngine.Store(),
+		Meta:     metaStore,
+	}
+	if *configExport {
+		f, err := config.Export(cfgAppliers)
+		must(err)
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		must(enc.Encode(f))
+		os.Exit(0)
+	}
+	if *configPath != "" || *configCheck {
+		if *configPath == "" {
+			slog.Error("-config-check requires -config <path>")
+			os.Exit(1)
+		}
+		f, err := config.Load(*configPath)
+		if err != nil {
+			slog.Error("config: load failed", "err", err)
+			os.Exit(1)
+		}
+		if *configCheck {
+			res, err := config.Plan(f, cfgAppliers)
+			if err != nil {
+				slog.Error("config: validation failed", "err", err)
+				os.Exit(1)
+			}
+			slog.Info("config plan",
+				"repos_create", res.Repositories.Created,
+				"repos_update", res.Repositories.Updated,
+				"repos_noop", res.Repositories.Noop,
+				"repos_delete", res.Repositories.Deleted,
+				"cleanup_create", res.CleanupPolicies.Created,
+				"cleanup_update", res.CleanupPolicies.Updated,
+				"vuln_create", res.SecurityPolicies.Created,
+				"vuln_update", res.SecurityPolicies.Updated,
+				"roles_create", res.Roles.Created,
+				"roles_update", res.Roles.Updated,
+				"webhooks_create", res.Webhooks.Created,
+				"webhooks_update", res.Webhooks.Updated,
+				"security_default_set", res.SecurityDefaultSet,
+			)
+			os.Exit(0)
+		}
+		// -config mode: apply on boot (fatal on error — bad desired state must
+		// stop a rollout before traffic reaches the pod).
+		res, err := config.Apply(f, cfgAppliers)
+		must(err)
+		slog.Info("config applied",
+			"repos", res.Repositories.Changes(),
+			"cleanup_policies", res.CleanupPolicies.Changes(),
+			"security_policies", res.SecurityPolicies.Changes(),
+			"roles", res.Roles.Changes(),
+			"webhooks", res.Webhooks.Changes(),
+		)
 	}
 
 	forgeSrv := server.New(mgr, reg, blobStore, metaStore, authStore).
