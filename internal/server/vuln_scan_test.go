@@ -16,9 +16,11 @@ import (
 	"forge/internal/format"
 	"forge/internal/format/helm"
 	"forge/internal/format/npm"
+	"forge/internal/format/oci"
 	"forge/internal/meta"
 	"forge/internal/queue"
 	"forge/internal/repo"
+	"forge/internal/trivy"
 	"forge/internal/vuln"
 )
 
@@ -446,5 +448,119 @@ func TestEnqueueVulnScan_Enqueues(t *testing.T) {
 	jobs := q.snapshot()
 	if len(jobs) != 1 || jobs[0].typ != vulnScanJobType {
 		t.Fatalf("jobs = %+v", jobs)
+	}
+}
+
+// newOCIVulnServer extends newVulnServer with an OCI hosted repo and a Trivy
+// scanner backed by the given executor output.
+func newOCIVulnServer(t *testing.T, osvURL, trivyOut string) *Server {
+	t.Helper()
+	srv := newVulnServer(t, osvURL)
+	// Reuse the same stores; add OCI repo and handler.
+	srv.Handlers.Register(oci.New())
+	srv.Repos.Add(repo.Repository{Name: "docker-hosted", Format: "oci", Kind: repo.Hosted, Enabled: true}) //nolint:errcheck
+	sc := trivy.New("trivy", "localhost:8080", "").WithExecutor(&fakeTrivyExecutor{out: trivyOut})
+	srv.Trivy = sc
+	return srv
+}
+
+// TestVulnRescanTick_EnqueuesOCIRepoScan verifies that the daily tick enqueues
+// a trivy.scan.oci.repo job for OCI repos when Trivy is configured.
+func TestVulnRescanTick_EnqueuesOCIRepoScan(t *testing.T) {
+	srv := newOCIVulnServer(t, "http://unused.example", trivyCleanJSON)
+	fq := &fakeQueue{}
+	srv.Queue = fq
+
+	now := time.Now()
+	lastRun := map[string]time.Time{}
+
+	srv.VulnRescanTick(now, lastRun)
+
+	var trivyJobs, osvJobs []fakeJob
+	for _, j := range fq.snapshot() {
+		switch j.typ {
+		case trivyRepoScanJobType:
+			trivyJobs = append(trivyJobs, j)
+		case vulnScanJobType:
+			osvJobs = append(osvJobs, j)
+		}
+	}
+	if len(trivyJobs) != 1 || !strings.Contains(trivyJobs[0].payload, `"docker-hosted"`) {
+		t.Errorf("trivy repo-scan jobs = %+v, want one for docker-hosted", trivyJobs)
+	}
+	// OSV still fires for npm-hosted.
+	if len(osvJobs) != 1 {
+		t.Errorf("OSV scan jobs = %d, want 1 for npm-hosted", len(osvJobs))
+	}
+	if lastRun[trivyRescanKey("docker-hosted")].IsZero() {
+		t.Error("docker-hosted trivy lastRun not stamped")
+	}
+
+	// Within-interval tick: no new trivy job.
+	srv.VulnRescanTick(now.Add(time.Hour), lastRun)
+	var newTrivy int
+	for _, j := range fq.snapshot() {
+		if j.typ == trivyRepoScanJobType {
+			newTrivy++
+		}
+	}
+	if newTrivy != 1 {
+		t.Errorf("within-interval tick enqueued extra trivy jobs: total %d, want 1", newTrivy)
+	}
+}
+
+// TestVulnRescanTick_OSVOnlyWhenTrivyUnconfigured verifies that OCI repos are
+// skipped in the tick when Trivy is nil (no double-scan risk).
+func TestVulnRescanTick_OSVOnlyWhenTrivyUnconfigured(t *testing.T) {
+	srv := newOCIVulnServer(t, "http://unused.example", trivyCleanJSON)
+	srv.Trivy = nil // Trivy disabled
+	fq := &fakeQueue{}
+	srv.Queue = fq
+
+	srv.VulnRescanTick(time.Now(), map[string]time.Time{})
+
+	for _, j := range fq.snapshot() {
+		if j.typ == trivyRepoScanJobType {
+			t.Errorf("Trivy job enqueued when Trivy not configured: %+v", j)
+		}
+	}
+}
+
+// TestHandleVulnScan_OCI_EnqueuesTrivyRepoScan verifies that POST /scan for an
+// OCI repo enqueues a trivy.scan.oci.repo job and returns 202.
+func TestHandleVulnScan_OCI_EnqueuesTrivyRepoScan(t *testing.T) {
+	srv := newOCIVulnServer(t, "http://unused.example", trivyCleanJSON)
+	q := &fakeQueue{}
+	srv.Queue = q
+
+	rw := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/repos/docker-hosted/scan", nil)
+	srv.handleVulnScan(rw, req, "docker-hosted")
+
+	if rw.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rw.Code)
+	}
+	jobs := q.snapshot()
+	if len(jobs) != 1 || jobs[0].typ != trivyRepoScanJobType {
+		t.Fatalf("jobs = %+v, want one trivy.scan.oci.repo", jobs)
+	}
+	if !strings.Contains(jobs[0].payload, `"docker-hosted"`) {
+		t.Errorf("payload = %s", jobs[0].payload)
+	}
+}
+
+// TestHandleVulnScan_OCI_NotImplementedWhenUnconfigured verifies that POST
+// /scan for an OCI repo returns 501 when Trivy is not configured.
+func TestHandleVulnScan_OCI_NotImplementedWhenUnconfigured(t *testing.T) {
+	srv := newOCIVulnServer(t, "http://unused.example", trivyCleanJSON)
+	srv.Trivy = nil // not configured
+	srv.Queue = &fakeQueue{}
+
+	rw := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/repos/docker-hosted/scan", nil)
+	srv.handleVulnScan(rw, req, "docker-hosted")
+
+	if rw.Code != http.StatusNotImplemented {
+		t.Errorf("status = %d, want 501 when Trivy unconfigured", rw.Code)
 	}
 }

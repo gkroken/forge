@@ -505,6 +505,23 @@ func newUUID() string {
 	return hex.EncodeToString(b)
 }
 
+// VulnGateTarget implements format.VulnGate for the download-policy gate. It
+// returns the image name and tag for tag-addressed manifest GETs so the gate
+// can look up findings in the vuln store. Digest refs (sha256:...) fail open —
+// the gate can't map a digest to a specific scanned tag without a reverse
+// lookup, so they are excluded rather than incorrectly blocked. All non-manifest
+// paths (blobs, uploads, tags/list) return ok=false and are never gated.
+func (h *Handler) VulnGateTarget(sub string) (component, version string, ok bool) {
+	image, op, ref, parsed := parseOCISub(sub)
+	if !parsed || op != "manifests" || ref == "" || strings.HasPrefix(ref, "sha256:") {
+		return "", "", false
+	}
+	return image, ref, true
+}
+
+// compile-time assertion: Handler satisfies format.VulnGate.
+var _ interface{ VulnGateTarget(string) (string, string, bool) } = (*Handler)(nil)
+
 // BrowseRepo implements format.Browsable.
 // OCI tags are stored at meta key "tags/{image}/{tag}".
 func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {

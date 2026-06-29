@@ -296,5 +296,107 @@ func TestHandleTrivyScanJob_Dispatches(t *testing.T) {
 	}
 }
 
+// TestOCIGate_BlocksWhenFindingExceedsThreshold verifies that a manifest GET
+// for a tag with a HIGH finding is blocked (403) when the policy is Block/high.
+func TestOCIGate_BlocksWhenFindingExceedsThreshold(t *testing.T) {
+	srv, m := newOCIServer(t, trivyCleanJSON)
+	seedTag(t, m, "docker-hosted", "myapp", "v1")
+
+	// Write a HIGH finding for myapp:v1.
+	srv.Vuln.Put("docker-hosted", vuln.Finding{ //nolint:errcheck
+		Component: "myapp", Version: "v1", Source: vuln.SourceTrivy,
+		Advisories: []vuln.Advisory{{ID: "CVE-2024-9999", Severity: vuln.SeverityHigh}},
+	})
+
+	// Attach a Block policy at threshold High.
+	pm := vuln.NewPolicyManager(m)
+	pm.SetDefault(vuln.Policy{Mode: vuln.ModeBlock, Threshold: vuln.SeverityHigh})
+	srv.VulnPolicy = pm
+
+	// Push the manifest so it exists.
+	body := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","layers":[]}`)
+	putReq := httptest.NewRequest(http.MethodPut, "/v2/docker-hosted/myapp/manifests/v1", strings.NewReader(string(body)))
+	putReq.Header.Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+	putRec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(putRec, putReq)
+	if putRec.Code != http.StatusCreated {
+		t.Fatalf("manifest PUT status = %d, want 201", putRec.Code)
+	}
+
+	// GET the manifest: should be blocked.
+	getReq := httptest.NewRequest(http.MethodGet, "/v2/docker-hosted/myapp/manifests/v1", nil)
+	getRec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusForbidden {
+		t.Errorf("manifest GET status = %d, want 403 (blocked by policy)", getRec.Code)
+	}
+}
+
+// TestOCIGate_WarnAddsPolicyHeader verifies that a manifest GET for a
+// Warn-policy repo adds X-Forge-Vulnerabilities and still returns 200.
+func TestOCIGate_WarnAddsPolicyHeader(t *testing.T) {
+	srv, m := newOCIServer(t, trivyCleanJSON)
+	seedTag(t, m, "docker-hosted", "myapp", "v1")
+
+	srv.Vuln.Put("docker-hosted", vuln.Finding{ //nolint:errcheck
+		Component: "myapp", Version: "v1", Source: vuln.SourceTrivy,
+		Advisories: []vuln.Advisory{{ID: "CVE-2024-9999", Severity: vuln.SeverityHigh}},
+	})
+
+	pm := vuln.NewPolicyManager(m)
+	pm.SetDefault(vuln.Policy{Mode: vuln.ModeWarn, Threshold: vuln.SeverityHigh})
+	srv.VulnPolicy = pm
+
+	body := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","layers":[]}`)
+	putReq := httptest.NewRequest(http.MethodPut, "/v2/docker-hosted/myapp/manifests/v1", strings.NewReader(string(body)))
+	putReq.Header.Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+	putRec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(putRec, putReq)
+	if putRec.Code != http.StatusCreated {
+		t.Fatalf("manifest PUT status = %d, want 201", putRec.Code)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/v2/docker-hosted/myapp/manifests/v1", nil)
+	getRec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Errorf("manifest GET status = %d, want 200 (warn serves)", getRec.Code)
+	}
+	if h := getRec.Header().Get("X-Forge-Vulnerabilities"); h == "" {
+		t.Error("X-Forge-Vulnerabilities header missing in Warn mode")
+	}
+}
+
+// TestOCIGate_DigestPullFailsOpen verifies that a digest-based manifest GET
+// is never blocked (digest refs are excluded from the gate).
+func TestOCIGate_DigestPullFailsOpen(t *testing.T) {
+	srv, m := newOCIServer(t, trivyCleanJSON)
+
+	pm := vuln.NewPolicyManager(m)
+	pm.SetDefault(vuln.Policy{Mode: vuln.ModeBlock, Threshold: vuln.SeverityLow})
+	srv.VulnPolicy = pm
+
+	// Push a manifest (the digest will be sha256:...).
+	body := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","layers":[]}`)
+	putReq := httptest.NewRequest(http.MethodPut, "/v2/docker-hosted/myapp/manifests/latest", strings.NewReader(string(body)))
+	putReq.Header.Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+	putRec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(putRec, putReq)
+
+	// Extract the digest from the response headers.
+	dgst := putRec.Header().Get("Docker-Content-Digest")
+	if dgst == "" {
+		t.Fatal("manifest PUT did not return Docker-Content-Digest")
+	}
+
+	// GET by digest — should never be blocked regardless of policy.
+	getReq := httptest.NewRequest(http.MethodGet, "/v2/docker-hosted/myapp/manifests/"+dgst, nil)
+	getRec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(getRec, getReq)
+	if getRec.Code == http.StatusForbidden {
+		t.Error("digest-based manifest GET should not be blocked (gate fails open for digests)")
+	}
+}
+
 // compile-time: fakeQueue must satisfy queue.Queue
 var _ queue.Queue = (*fakeQueue)(nil)

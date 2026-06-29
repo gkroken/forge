@@ -13,14 +13,22 @@ import (
 )
 
 // trivyScanJobType is the async job that runs a Trivy scan of one OCI image
-// tag. Registered on the shared worker (see WithQueue) when Trivy is configured,
-// mirroring vulnScanJobType for OSV.
-const trivyScanJobType = "trivy.scan.oci"
+// tag (enqueued on manifest push). trivyRepoScanJobType scans all tags in a
+// repo (enqueued by manual /scan and the daily re-scan tick). Both are
+// registered on the shared worker when Trivy is configured.
+const (
+	trivyScanJobType     = "trivy.scan.oci"
+	trivyRepoScanJobType = "trivy.scan.oci.repo"
+)
 
 type trivyScanPayload struct {
 	Repo  string `json:"repo"`
 	Image string `json:"image"`
 	Tag   string `json:"tag"`
+}
+
+type trivyRepoScanPayload struct {
+	Repo string `json:"repo"`
 }
 
 // enqueueTrivyScan schedules an async Trivy scan of one image tag. Runs off the
@@ -42,9 +50,8 @@ func (s *Server) enqueueTrivyScan(repoName, image, tag string) {
 	}()
 }
 
-// handleTrivyScanJob is the worker handler for trivy.scan.oci jobs. Returns nil
-// on scan failure so the PG queue can't retry-spin and hammer Trivy; the periodic
-// re-scan (B-O1) is the eventual-coverage safety net.
+// handleTrivyScanJob is the worker handler for trivy.scan.oci jobs (per-tag).
+// Returns nil on failure so the PG queue can't retry-spin and hammer Trivy.
 func (s *Server) handleTrivyScanJob(ctx context.Context, j queue.Job) error {
 	var p trivyScanPayload
 	if err := j.UnmarshalPayload(&p); err != nil {
@@ -54,6 +61,20 @@ func (s *Server) handleTrivyScanJob(ctx context.Context, j queue.Job) error {
 	if err := s.scanOCIImage(ctx, p.Repo, p.Image, p.Tag); err != nil {
 		slog.Warn("trivy: scan failed",
 			"repo", p.Repo, "image", p.Image, "tag", p.Tag, "err", err)
+	}
+	return nil
+}
+
+// handleTrivyRepoScanJob is the worker handler for trivy.scan.oci.repo jobs
+// (whole-repo scan, used by the manual endpoint and the daily re-scan tick).
+func (s *Server) handleTrivyRepoScanJob(ctx context.Context, j queue.Job) error {
+	var p trivyRepoScanPayload
+	if err := j.UnmarshalPayload(&p); err != nil {
+		slog.Warn("trivy: bad repo-scan payload", "err", err)
+		return nil
+	}
+	if err := s.scanOCIRepo(ctx, p.Repo); err != nil {
+		slog.Warn("trivy: repo scan failed", "repo", p.Repo, "err", err)
 	}
 	return nil
 }

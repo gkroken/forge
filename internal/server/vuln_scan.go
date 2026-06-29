@@ -44,32 +44,51 @@ const vulnRescanInterval = 24 * time.Hour
 // lastRun map so it never collides with cleanup's plain per-repo entries.
 func vulnRescanKey(repo string) string { return "__vuln__:" + repo }
 
+// trivyRescanKey namespaces an OCI repo's Trivy re-scan timestamp separately
+// from the OSV keys so they never collide in the shared lastRun map.
+func trivyRescanKey(repo string) string { return "__trivy__:" + repo }
+
 // VulnRescanTick is the scheduler tick hook (registered via WithTickHook). It
 // runs inside the cleanup leader lock with the shared, persisted lastRun map, so
 // it fires exactly once across replicas and remembers the last re-scan across
-// leadership changes. For every scannable repo whose interval has elapsed it
-// enqueues a vuln.scan job (the same async path as on-publish / manual).
+// leadership changes. It covers two scan paths:
+//   - OSV (npm, Maven): enqueues vuln.scan when VulnCoordinates is implemented.
+//   - Trivy (OCI): enqueues trivy.scan.oci.repo when Trivy is configured.
 func (s *Server) VulnRescanTick(now time.Time, lastRun map[string]time.Time) {
-	if s.Vuln == nil || s.OSV == nil || s.Queue == nil {
-		return
+	if s.Vuln == nil || s.Queue == nil {
+		return // base requirements; individual paths check their own scanner below
 	}
 	for _, rp := range s.Repos.All() {
 		h, ok := s.Handlers.For(rp.Format)
 		if !ok {
 			continue
 		}
-		if _, scannable := h.(format.VulnCoordinates); !scannable {
-			continue // helm/oci/cran: no OSV source
+
+		// OSV path: formats that implement VulnCoordinates (npm, Maven).
+		if s.OSV != nil {
+			if _, scannable := h.(format.VulnCoordinates); scannable {
+				key := vulnRescanKey(rp.Name)
+				if now.Sub(lastRun[key]) >= vulnRescanInterval {
+					if err := s.Queue.Enqueue(context.Background(), vulnScanJobType, vulnScanPayload{Repo: rp.Name}); err != nil {
+						slog.Warn("vuln: enqueue daily re-scan failed", "repo", rp.Name, "err", err)
+					} else {
+						lastRun[key] = now
+					}
+				}
+			}
 		}
-		key := vulnRescanKey(rp.Name)
-		if now.Sub(lastRun[key]) < vulnRescanInterval {
-			continue
+
+		// Trivy path: OCI repos when the Trivy sidecar is configured.
+		if s.Trivy != nil && rp.Format == "oci" {
+			key := trivyRescanKey(rp.Name)
+			if now.Sub(lastRun[key]) >= vulnRescanInterval {
+				if err := s.Queue.Enqueue(context.Background(), trivyRepoScanJobType, trivyRepoScanPayload{Repo: rp.Name}); err != nil {
+					slog.Warn("trivy: enqueue daily re-scan failed", "repo", rp.Name, "err", err)
+				} else {
+					lastRun[key] = now
+				}
+			}
 		}
-		if err := s.Queue.Enqueue(context.Background(), vulnScanJobType, vulnScanPayload{Repo: rp.Name}); err != nil {
-			slog.Warn("vuln: enqueue daily re-scan failed", "repo", rp.Name, "err", err)
-			continue // leave lastRun unset so the next tick retries
-		}
-		lastRun[key] = now
 	}
 }
 
@@ -173,20 +192,43 @@ func (s *Server) scanRepo(ctx context.Context, repoName string) error {
 	return nil
 }
 
-// handleVulnScan serves POST /api/v1/repos/{repo}/scan — enqueue an async OSV
-// scan ("Scan now"). Admin-only (gated by the caller). Returns 202 Accepted.
+// handleVulnScan serves POST /api/v1/repos/{repo}/scan — enqueue an async scan
+// ("Scan now"). Admin-only (gated by the caller). Returns 202 Accepted.
+// Dispatches to Trivy for OCI repos and to OSV for all other scannable formats.
 func (s *Server) handleVulnScan(w http.ResponseWriter, r *http.Request, repoName string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if s.Vuln == nil || s.OSV == nil || s.Queue == nil {
+	if s.Vuln == nil || s.Queue == nil {
 		jsonError(w, "vulnerability scanning not configured", http.StatusServiceUnavailable)
 		return
 	}
 	rp, ok := s.Repos.Get(repoName)
 	if !ok {
 		jsonError(w, "repository not found: "+repoName, http.StatusNotFound)
+		return
+	}
+
+	// OCI repos: use the Trivy producer (not OSV).
+	if rp.Format == "oci" {
+		if s.Trivy == nil {
+			jsonError(w, "OCI image scanning not configured (set -trivy-addr)", http.StatusNotImplemented)
+			return
+		}
+		if err := s.Queue.Enqueue(r.Context(), trivyRepoScanJobType, trivyRepoScanPayload{Repo: repoName}); err != nil {
+			jsonError(w, "enqueue failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "scan enqueued", "repo": repoName})
+		return
+	}
+
+	// All other formats: OSV producer.
+	if s.OSV == nil {
+		jsonError(w, "vulnerability scanning not configured", http.StatusServiceUnavailable)
 		return
 	}
 	if h, ok := s.Handlers.For(rp.Format); ok {

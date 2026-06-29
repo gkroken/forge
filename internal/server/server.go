@@ -156,6 +156,7 @@ func (s *Server) WithQueue(ctx context.Context, q queue.Queue) *Server {
 	}
 	if s.Trivy != nil && s.Vuln != nil {
 		w.Register(trivyScanJobType, s.handleTrivyScanJob)
+		w.Register(trivyRepoScanJobType, s.handleTrivyRepoScanJob)
 	}
 	go w.Work(ctx, q) //nolint:errcheck
 	return s
@@ -473,6 +474,14 @@ func (s *Server) handleOCI(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		ociError(w, "UNSUPPORTED", "OCI handler not registered", http.StatusNotImplemented)
 		return
+	}
+	// Vulnerability download policy gate: tag-addressed manifest GETs only.
+	// Mirrors the same gate in handleRepo; digest pulls and non-manifest paths
+	// fail open (VulnGateTarget returns ok=false for those).
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		if s.vulnGateBlocks(w, r, rp, h, sub) {
+			return
+		}
 	}
 	h.Serve(w, r, &format.Context{
 		Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: s.client,
