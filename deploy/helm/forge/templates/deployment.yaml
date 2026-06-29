@@ -29,6 +29,11 @@ spec:
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
+        {{- if .Values.config.content }}
+        checksum/config: {{ .Values.config.content | sha256sum }}
+        {{- else if .Values.config.existingConfigMap }}
+        checksum/config: {{ .Values.config.existingConfigMap | sha256sum }}
+        {{- end }}
       labels:
         {{- include "forge.selectorLabels" . | nindent 8 }}
     spec:
@@ -58,6 +63,10 @@ spec:
             - /data
             - -drain-timeout
             - {{ .Values.drainTimeout | quote }}
+            {{- if or .Values.config.content .Values.config.existingConfigMap }}
+            - -config
+            - /etc/forge/config.json
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
@@ -84,6 +93,11 @@ spec:
               mountPath: /data
             - name: tmp
               mountPath: /tmp
+            {{- if or .Values.config.content .Values.config.existingConfigMap }}
+            - name: forge-config
+              mountPath: /etc/forge
+              readOnly: true
+            {{- end }}
       volumes:
         - name: data
           {{- if eq .Values.storage.type "fs" }}
@@ -94,6 +108,11 @@ spec:
           {{- end }}
         - name: tmp
           emptyDir: {}
+        {{- if or .Values.config.content .Values.config.existingConfigMap }}
+        - name: forge-config
+          configMap:
+            name: {{ if .Values.config.existingConfigMap }}{{ .Values.config.existingConfigMap }}{{ else }}{{ include "forge.fullname" . }}-config{{ end }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

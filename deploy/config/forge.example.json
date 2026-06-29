@@ -1,0 +1,105 @@
+{
+  "repositories": [
+    {
+      "name": "maven-hosted",
+      "format": "maven",
+      "kind": "hosted",
+      "enabled": true,
+      "anonymousRead": false,
+      "cleanupPolicyName": "keep-releases-30d"
+    },
+    {
+      "name": "npm-hosted",
+      "format": "npm",
+      "kind": "hosted",
+      "enabled": true,
+      "anonymousRead": false,
+      "securityPolicyName": "warn-high"
+    },
+    {
+      "name": "helm-hosted",
+      "format": "helm",
+      "kind": "hosted",
+      "enabled": true,
+      "anonymousRead": false
+    },
+    {
+      "name": "docker-hosted",
+      "format": "oci",
+      "kind": "hosted",
+      "enabled": true,
+      "anonymousRead": false
+    },
+    {
+      "name": "maven-central",
+      "format": "maven",
+      "kind": "proxy",
+      "enabled": true,
+      "anonymousRead": true,
+      "upstream": "https://repo1.maven.org/maven2"
+    },
+    {
+      "name": "npm-proxy",
+      "format": "npm",
+      "kind": "proxy",
+      "enabled": true,
+      "anonymousRead": true,
+      "upstream": "https://registry.npmjs.org"
+    },
+    {
+      "name": "maven-public",
+      "format": "maven",
+      "kind": "group",
+      "enabled": true,
+      "anonymousRead": true,
+      "members": ["maven-hosted", "maven-central"]
+    },
+    {
+      "name": "npm-public",
+      "format": "npm",
+      "kind": "group",
+      "enabled": true,
+      "anonymousRead": true,
+      "members": ["npm-hosted", "npm-proxy"]
+    }
+  ],
+  "cleanupPolicies": [
+    {
+      "name": "keep-releases-30d",
+      "description": "Keep only release versions; remove anything older than 30 days",
+      "keepReleasesOnly": true,
+      "deleteOlderThanDays": 30,
+      "interval": "24h"
+    }
+  ],
+  "securityPolicies": [
+    {
+      "name": "warn-high",
+      "description": "Warn on downloads that have HIGH or CRITICAL vulnerabilities",
+      "mode": "warn",
+      "threshold": "high",
+      "failOpen": true
+    }
+  ],
+  "securityDefault": {
+    "mode": "off",
+    "threshold": "critical",
+    "failOpen": true
+  },
+  "roles": [
+    {
+      "name": "ci-deployer",
+      "description": "CI pipeline: publish artifacts, no admin access",
+      "baseRole": "write"
+    }
+  ],
+  "webhooks": [
+    {
+      "name": "ci-publish-notify",
+      "url": "${WEBHOOK_URL}",
+      "secret": "${WEBHOOK_SECRET}",
+      "events": ["artifact.published"],
+      "enabled": true
+    }
+  ]
+}

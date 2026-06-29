@@ -139,6 +139,19 @@ metrics:
     metricRelabelings: []
     namespaceSelector: {}
 
+# Declarative configuration (config-as-code). Two mutually exclusive options:
+#   content         — inline JSON; forge renders a ConfigMap and mounts it.
+#   existingConfigMap — name of an existing ConfigMap whose key "forge.config.json"
+#                       holds the config; forge mounts it directly (no rendered CM).
+# When either is set, forge starts with -config /etc/forge/config.json and the
+# hardcoded seed repos are skipped. A checksum annotation on the Pod ensures
+# Argo/Flux roll the Deployment when the ConfigMap content changes.
+# Secrets must NOT be inlined here — inject them via ${ENV_VAR} placeholders in
+# the JSON and set actual values through extraEnv or extraEnvFrom.
+config:
+  content: ""
+  existingConfigMap: ""
+
 # Grafana dashboard auto-import via grafana-sidecar
 grafana:
   dashboard:

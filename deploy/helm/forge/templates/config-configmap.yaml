@@ -1,0 +1,11 @@
+{{- if .Values.config.content }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "forge.fullname" . }}-config
+  labels:
+    {{- include "forge.labels" . | nindent 4 }}
+data:
+  forge.config.json: |
+    {{- .Values.config.content | nindent 4 }}
+{{- end }}

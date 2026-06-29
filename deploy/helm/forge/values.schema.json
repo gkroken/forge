@@ -70,6 +70,13 @@
         "requests": { "type": "object" },
         "limits":   { "type": "object" }
       }
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "content":          { "type": "string" },
+        "existingConfigMap": { "type": "string" }
+      }
     }
   }
 }
