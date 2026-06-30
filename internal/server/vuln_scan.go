@@ -48,6 +48,10 @@ func vulnRescanKey(repo string) string { return "__vuln__:" + repo }
 // from the OSV keys so they never collide in the shared lastRun map.
 func trivyRescanKey(repo string) string { return "__trivy__:" + repo }
 
+// helmRescanKey namespaces a Helm repo's config re-scan timestamp separately
+// from the OSV/Trivy keys in the shared lastRun map.
+func helmRescanKey(repo string) string { return "__helm__:" + repo }
+
 // VulnRescanTick is the scheduler tick hook (registered via WithTickHook). It
 // runs inside the cleanup leader lock with the shared, persisted lastRun map, so
 // it fires exactly once across replicas and remembers the last re-scan across
@@ -84,6 +88,18 @@ func (s *Server) VulnRescanTick(now time.Time, lastRun map[string]time.Time) {
 			if now.Sub(lastRun[key]) >= vulnRescanInterval {
 				if err := s.Queue.Enqueue(context.Background(), trivyRepoScanJobType, trivyRepoScanPayload{Repo: rp.Name}); err != nil {
 					slog.Warn("trivy: enqueue daily re-scan failed", "repo", rp.Name, "err", err)
+				} else {
+					lastRun[key] = now
+				}
+			}
+		}
+
+		// Helm path: config (misconfiguration) scan when Trivy is configured.
+		if s.Trivy != nil && rp.Format == "helm" {
+			key := helmRescanKey(rp.Name)
+			if now.Sub(lastRun[key]) >= vulnRescanInterval {
+				if err := s.Queue.Enqueue(context.Background(), helmRepoScanJobType, helmRepoScanPayload{Repo: rp.Name}); err != nil {
+					slog.Warn("helm: enqueue daily re-scan failed", "repo", rp.Name, "err", err)
 				} else {
 					lastRun[key] = now
 				}
@@ -217,6 +233,22 @@ func (s *Server) handleVulnScan(w http.ResponseWriter, r *http.Request, repoName
 			return
 		}
 		if err := s.Queue.Enqueue(r.Context(), trivyRepoScanJobType, trivyRepoScanPayload{Repo: repoName}); err != nil {
+			jsonError(w, "enqueue failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "scan enqueued", "repo": repoName})
+		return
+	}
+
+	// Helm repos: Trivy config (misconfiguration) scan of every chart.
+	if rp.Format == "helm" {
+		if s.Trivy == nil {
+			jsonError(w, "Helm chart scanning not configured (set -trivy-addr)", http.StatusNotImplemented)
+			return
+		}
+		if err := s.Queue.Enqueue(r.Context(), helmRepoScanJobType, helmRepoScanPayload{Repo: repoName}); err != nil {
 			jsonError(w, "enqueue failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}

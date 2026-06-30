@@ -442,11 +442,11 @@ func (s *Server) vulnInfoFor(rp repo.Repository, h format.Handler, pkg, ver stri
 	}
 	vi := &vulnInfo{}
 	// A version is "scannable" if any producer covers its format: OSV (formats
-	// implementing VulnCoordinates — npm/Maven) or the Trivy sidecar (OCI, when
-	// configured). Keying solely on VulnCoordinates wrongly reported OCI images
-	// as unsupported even after Trivy had written a finding for them.
+	// implementing VulnCoordinates — npm/Maven) or the Trivy sidecar (OCI images
+	// and Helm chart configs, when configured). Keying solely on VulnCoordinates
+	// wrongly reported OCI/Helm as unsupported even after Trivy wrote a finding.
 	_, osvSupported := h.(format.VulnCoordinates)
-	vi.Supported = osvSupported || s.trivyScannable(rp.Format)
+	vi.Supported = osvSupported || s.trivyScannable(rp.Format) || s.helmScannable(rp.Format)
 	if !vi.Supported {
 		return vi // e.g. helm/cran: "not scanned — unsupported"
 	}

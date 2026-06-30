@@ -157,6 +157,7 @@ func (s *Server) WithQueue(ctx context.Context, q queue.Queue) *Server {
 	if s.Trivy != nil && s.Vuln != nil {
 		w.Register(trivyScanJobType, s.handleTrivyScanJob)
 		w.Register(trivyRepoScanJobType, s.handleTrivyRepoScanJob)
+		w.Register(helmRepoScanJobType, s.handleHelmRepoScanJob)
 	}
 	go w.Work(ctx, q) //nolint:errcheck
 	return s
@@ -693,6 +694,10 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			// Enqueue an OSV scan of the repo. Off the request path and
 			// failure-isolated — a missing OSV egress never breaks a publish.
 			s.enqueueVulnScan(repoName)
+			// Helm chart upload (POST .../api/charts) → Trivy config scan. The
+			// chart name/version live in the .tgz body, not the path, so this
+			// enqueues a whole-repo scan. Self-gated on helm format + Trivy.
+			s.enqueueHelmScan(repoName)
 			// Emit an artifact.published webhook event. Off the request path: the
 			// engine only enqueues durable delivery jobs here. Background context
 			// so the enqueue outlives the request.
