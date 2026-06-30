@@ -116,6 +116,100 @@ func TestParseOutput_DeduplicatesAcrossLayers(t *testing.T) {
 	}
 }
 
+// trivyConfigReport mirrors the real `trivy config --format json` shape (captured
+// from trivy v0.72.0 scanning a Helm chart): Results[].Misconfigurations[], each
+// with a FAIL Status, a KSV rule ID, and PrimaryURL as the canonical link. The
+// duplicate KSV-0001 (two resources fail the same rule) exercises ID dedup; the
+// PASS entry must be dropped.
+const trivyConfigReport = `{
+  "Results": [
+    {
+      "Target": "templates/pod.yaml",
+      "Class": "config",
+      "Type": "kubernetes",
+      "Misconfigurations": [
+        {"ID": "KSV-0001", "Title": "Can elevate its own privileges", "Severity": "MEDIUM",
+         "Status": "FAIL", "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv001",
+         "References": ["https://example.com/ref"]},
+        {"ID": "KSV-0017", "Title": "Privileged container", "Severity": "HIGH",
+         "Status": "FAIL", "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv017"},
+        {"ID": "KSV-0118", "Title": "Default security context configured", "Severity": "LOW",
+         "Status": "FAIL", "References": ["https://example.com/only-ref"]}
+      ]
+    },
+    {
+      "Target": "templates/svc.yaml",
+      "Class": "config",
+      "Type": "kubernetes",
+      "Misconfigurations": [
+        {"ID": "KSV-0001", "Title": "Can elevate its own privileges", "Severity": "MEDIUM",
+         "Status": "FAIL", "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv001"},
+        {"ID": "KSV-9999", "Title": "Passed check", "Severity": "HIGH", "Status": "PASS"}
+      ]
+    }
+  ]
+}`
+
+func TestParseConfigOutput(t *testing.T) {
+	advs, err := parseConfigOutput([]byte(trivyConfigReport))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// KSV-0001 (deduped), KSV-0017, KSV-0118 — KSV-9999 (PASS) dropped.
+	if len(advs) != 3 {
+		t.Fatalf("want 3 advisories, got %d: %+v", len(advs), advs)
+	}
+	byID := map[string]vuln.Advisory{}
+	for _, a := range advs {
+		byID[a.ID] = a
+	}
+	if _, ok := byID["KSV-9999"]; ok {
+		t.Error("PASS-status check must be excluded")
+	}
+	if byID["KSV-0017"].Severity != vuln.SeverityHigh {
+		t.Errorf("KSV-0017 severity: want High, got %v", byID["KSV-0017"].Severity)
+	}
+	if byID["KSV-0001"].URL != "https://avd.aquasec.com/misconfig/ksv001" {
+		t.Errorf("KSV-0001 URL: want PrimaryURL, got %q", byID["KSV-0001"].URL)
+	}
+	// PrimaryURL absent → fall back to References[0].
+	if byID["KSV-0118"].URL != "https://example.com/only-ref" {
+		t.Errorf("KSV-0118 URL: want References fallback, got %q", byID["KSV-0118"].URL)
+	}
+	if byID["KSV-0017"].Summary != "Privileged container" {
+		t.Errorf("KSV-0017 summary: %q", byID["KSV-0017"].Summary)
+	}
+}
+
+func TestScanConfigFile(t *testing.T) {
+	s := scanner(trivyConfigReport)
+	advs, err := s.ScanConfigFile(context.Background(), "/charts/badchart-0.1.0.tgz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(advs) != 3 {
+		t.Fatalf("want 3 advisories, got %d", len(advs))
+	}
+}
+
+func TestScanConfigFile_Clean(t *testing.T) {
+	s := scanner(trivyClean)
+	advs, err := s.ScanConfigFile(context.Background(), "/charts/ok.tgz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(advs) != 0 {
+		t.Fatalf("want 0 advisories for clean chart, got %d", len(advs))
+	}
+}
+
+func TestScanConfigFile_ExecErrorNoOutput(t *testing.T) {
+	s := New("trivy", "", "").WithExecutor(&fakeExecutor{err: errors.New("exit status 127")})
+	if _, err := s.ScanConfigFile(context.Background(), "/charts/x.tgz"); err == nil {
+		t.Fatal("expected error when trivy binary not found")
+	}
+}
+
 func TestMapSeverity(t *testing.T) {
 	cases := []struct {
 		in   string

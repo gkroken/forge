@@ -113,6 +113,67 @@ func (s *Scanner) ScanImage(ctx context.Context, ref string) ([]vuln.Advisory, e
 	return nil, fmt.Errorf("trivy: scan %s: empty output", ref)
 }
 
+// ScanConfigFile runs Trivy's misconfiguration scanner (`trivy config`) against
+// a local path — a Helm chart .tgz or an unpacked chart directory; Trivy renders
+// the templates and checks the resulting K8s manifests. It returns the failing
+// checks as advisories tagged by the caller with vuln.SourceTrivyConfig. This is
+// static IaC analysis, not a CVE-DB lookup. An empty slice with a nil error means
+// Trivy ran and found no failing checks. No registry/auth is involved (it reads a
+// local file), so no TRIVY_REGISTRY_TOKEN is passed.
+func (s *Scanner) ScanConfigFile(ctx context.Context, path string) ([]vuln.Advisory, error) {
+	args := []string{"config", "--format", "json", "--quiet", path}
+	out, execErr := s.exec.Run(ctx, nil, args...)
+	if len(out) > 0 {
+		advs, parseErr := parseConfigOutput(out)
+		if parseErr == nil {
+			return advs, nil
+		}
+	}
+	if execErr != nil {
+		return nil, fmt.Errorf("trivy: config scan %s: %w", path, execErr)
+	}
+	return nil, fmt.Errorf("trivy: config scan %s: empty output", path)
+}
+
+// parseConfigOutput converts a `trivy config` JSON report to []vuln.Advisory.
+// The same misconfiguration rule can fail on several resources in one chart; we
+// deduplicate by rule ID (a chart-level "this rule fails" signal — severity for
+// a given ID is fixed). Only FAIL-status entries are kept (trivy config emits
+// failures by default, but guard in case PASS slips in).
+func parseConfigOutput(data []byte) ([]vuln.Advisory, error) {
+	var report trivyReport
+	if err := json.Unmarshal(data, &report); err != nil {
+		return nil, fmt.Errorf("trivy: parse config output: %w", err)
+	}
+	seen := map[string]bool{}
+	var out []vuln.Advisory
+	for _, target := range report.Results {
+		for _, mc := range target.Misconfigurations {
+			if mc.ID == "" {
+				continue
+			}
+			if mc.Status != "" && strings.ToUpper(mc.Status) != "FAIL" {
+				continue
+			}
+			if seen[mc.ID] {
+				continue
+			}
+			seen[mc.ID] = true
+			url := mc.PrimaryURL
+			if url == "" && len(mc.References) > 0 {
+				url = mc.References[0]
+			}
+			out = append(out, vuln.Advisory{
+				ID:       mc.ID,
+				Summary:  mc.Title,
+				Severity: mapSeverity(mc.Severity),
+				URL:      url,
+			})
+		}
+	}
+	return out, nil
+}
+
 // --- JSON model (trivy image --format json) ----------------------------------
 
 type trivyReport struct {
@@ -120,8 +181,22 @@ type trivyReport struct {
 }
 
 type trivyTarget struct {
-	Target          string      `json:"Target"`
-	Vulnerabilities []trivyVuln `json:"Vulnerabilities"`
+	Target            string           `json:"Target"`
+	Vulnerabilities   []trivyVuln      `json:"Vulnerabilities"`
+	Misconfigurations []trivyMisconfig `json:"Misconfigurations"`
+}
+
+// trivyMisconfig is one entry from `trivy config` (Results[].Misconfigurations[]).
+// Distinct schema from trivyVuln: no installed/fixed version (it's a static IaC
+// finding, not a package CVE), and the canonical link is PrimaryURL.
+type trivyMisconfig struct {
+	ID         string   `json:"ID"` // e.g. "KSV-0001"
+	Title      string   `json:"Title"`
+	Severity   string   `json:"Severity"`
+	Resolution string   `json:"Resolution"`
+	PrimaryURL string   `json:"PrimaryURL"`
+	References []string `json:"References"`
+	Status     string   `json:"Status"` // "FAIL" for actual findings
 }
 
 type trivyVuln struct {

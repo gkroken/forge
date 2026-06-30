@@ -20,6 +20,10 @@ import (
 const (
 	SourceOSV   = "osv"
 	SourceTrivy = "trivy"
+	// SourceTrivyConfig tags Helm chart misconfiguration findings produced by
+	// `trivy config` (static IaC analysis of rendered K8s templates) — a distinct
+	// class from CVE-DB lookups, so it coexists with SourceTrivy without collision.
+	SourceTrivyConfig = "trivy-config"
 )
 
 // Severity is an ordered severity bucket. Higher is worse, so findings compare
