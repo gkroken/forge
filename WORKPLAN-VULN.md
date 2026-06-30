@@ -339,6 +339,81 @@ both lower priority:
 
 Recommend deferring Helm until A + B are proven; it reuses B's engine for C-2.
 
+## C-0 — Document the Trivy requirement + validate the real binary (prerequisite — added 2026-06-30)
+
+**Why this is a prerequisite, not an afterthought.** Plan B shipped the Trivy *code* (exec
+wrapper, on-push job, policy gate) with fake-executor unit tests, but the real binary path was
+never exercised and the binary is not present in any forge artifact:
+
+- The runtime image is `gcr.io/distroless/static-debian12:nonroot` — **no shell, no package
+  manager, no trivy.** `internal/trivy` calls `exec.CommandContext(ctx, "trivy", …)`, which
+  needs the binary **in forge's own container PATH** (it is an in-container subprocess, *not* a
+  k8s sidecar despite the package comment). So on the stock image, setting `-trivy-addr` makes
+  every scan fail with "executable file not found".
+- The CI `docker` job runs `aquasecurity/trivy-action` to scan *forge's own image* — unrelated
+  to forge-the-product scanning artifacts it hosts. No CI job exercises the B-O0 path.
+
+C-1 and C-2 add **two more** trivy-dependent code paths (`trivy config`, `trivy image` against
+external refs). All three share this one gap, so close it first.
+
+**Audiences (keep straight):** *consumers* (npm/helm/docker pull) never need trivy. Only an
+*operator who opts into scanning* does. Scanning stays **off by default**; `s.Trivy == nil` ⇒
+no-op everywhere.
+
+### Decision: operator-supplied, well-documented (Option D) — do NOT package trivy in Helm
+
+Scanning is an opt-in feature most operators won't enable. Building it into the Helm chart (an
+init container + DB PVC + refresh CronJob + schema + CI) is permanent chart complexity to serve a
+minority — over-engineering for the current stage. Forge instead treats trivy as a documented
+external dependency the operator supplies (the normal "bring your own X" pattern), and keeps the
+default image tiny and distroless. Revisit packaging (the previously-considered init-container
+approach) only if scanning becomes a headline feature with real demand.
+
+### C-0 deliverables (docs + one-time validation — **no Go, no Helm changes**)
+
+1. **Document the requirement clearly** (README / setup.md, by the `-trivy-addr` flag): scanning
+   needs the `trivy` binary reachable on forge's PATH; the stock distroless image does not include
+   it; how to enable (build a forge image with trivy added, or run forge on a host/image that has
+   it). One concrete example snippet, not a full supported integration.
+2. **One-time local validation (closes the B-O0 gap):** install trivy locally, run forge, push one
+   image to a forge OCI repo, run a real scan, and confirm the live trivy JSON still matches
+   `parseOutput` (guards against trivy schema/flag drift). This is the "validate auth/network
+   path" exit criterion B-O0 never met. Record the trivy version validated against.
+
+**Exit:** the trivy requirement is documented so an operator can enable scanning without guesswork,
+and the real-binary path has been exercised once against live trivy output. Default install is
+unchanged (still the tiny distroless image, scanning off).
+
+#### Validation run — 2026-06-30 (deliverable #2 DONE; docs #1 still open)
+
+Live-validated the Plan B real-binary path end-to-end against **trivy v0.72.0**:
+`docker push localhost:8080/docker-hosted/alpine:3.12` → on-push hook **and** manual
+`POST /api/v1/repos/docker-hosted/scan` both fired → `trivy image --format json` ran → finding
+written to `vuln.Store`. Forge's stored advisory (`CVE-2022-37434`, critical, fixedIn `1.2.12-r2`)
+matched a direct `trivy` run exactly, confirming `parseOutput` handles v0.72.0's JSON schema.
+Rollup + Prometheus gauge populated correctly.
+
+**Bug found & fixed (live validation caught what fake-executor unit tests missed):** the browse
+**detail pane** reported OCI images as "not scanned — unsupported" even with a stored Trivy
+finding. `vulnInfoFor` (`server/browse.go`) keyed `Supported` solely on `format.VulnCoordinates`
+(OSV — npm/Maven only), so OCI never reached the finding lookup. The rollup-driven surfaces (list
+badge, dashboard, Security page, gauge) were unaffected, so the two disagreed. Fixed:
+`Supported = osvSupported || trivyScannable(format)`. Regression test `TestVulnInfoFor_OCITrivy`
+covers OCI-with-Trivy (supported) and OCI-without-Trivy (unsupported). `go test ./...` + `go vet`
++ `bash test.sh` (20/20) green.
+
+Still open in C-0: deliverable **#1** (operator-facing docs for the trivy requirement).
+
+### Sub-track renumber (after C-0)
+
+- **C-1 — Chart misconfiguration** (`trivy config`): `Source:"trivy-config"`; new
+  `Scanner.ScanConfigFile` + `Misconfigurations[]` parser (distinct from `Vulnerabilities[]`).
+- **C-2 — Referenced images:** `Source:"trivy-helm-image"`; parse `values.yaml` image refs →
+  `Scanner.ScanExternalImage` (no `TRIVY_REGISTRY_TOKEN`; pulls from external registries) →
+  reuse Plan B parser. Plus Helm `VulnGateTarget` + on-upload/daily/manual scan wiring.
+
+C-0 is the gate; C-1 and C-2 build on it.
+
 ---
 
 # Dependencies, sequencing, scope
