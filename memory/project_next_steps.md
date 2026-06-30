@@ -138,9 +138,41 @@ Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses du
     private/ULA/unspecified/multicast/169.254.169.254 — `ValidateURL` at create/update AND a
     `net.Dialer.Control` hook on the engine transport re-checks the dialed IP (defeats DNS
     rebinding); `WEBHOOK_ALLOW_PRIVATE` escape hatch.
-- **NEXT (candidates surveyed):** PyPI format (the final extensibility test), vuln scanning
-  (deferred, designed in WORKPLAN-VULN.md), artifact signing/SBOM, LDAP bind, editable group-map
-  UI, SAML, policy-violation webhook events (once vuln scanning lands).
+- **NEXT — NEXUS-COMPETITOR ROADMAP (agreed 2026-06-30, reviewing `main` after Plan C; discussion
+  only, not yet built).** Dependency-ordered spine, replacing the old flat candidate list:
+  1. **LDAP/AD** (identity). Path 1 = AD login to the Forge UI → mint a normal Forge token → token
+     used in `.npmrc`/`settings.xml`/CI (raw AD creds NOT put in client config). search-then-bind,
+     TLS/StartTLS, group→role via the existing `auth.GroupRoleMapper`, failover, read-only admin
+     panel (mirrors OIDC), `-ldap-*`/`LDAP_*` flags + config-as-code entry, live-validated vs an
+     OpenLDAP/AD container. Reuses `establishSSOSession(source="ldap")`. KEY: AD-group→access is
+     identical regardless of credential path; auth only matters for publish / private-repo reads /
+     admin — anonymous-read repos need no auth. **SAML DESCOPED** (XML-dsig security risk + legacy;
+     OIDC+LDAP suffice). OUT: SCIM/JIT, nested groups, multi-directory.
+  2. **Granular permissions + selector schema** (authz). Current `auth.Grant{Repo,Role}` (read/
+     write/admin, wildcard `*`) is the hard-to-reverse persisted client-facing shape — design the
+     action-granular + selector grammar here. Selector grammar (`com.acme.*`, `@acme/*`) is the
+     shared primitive reused by dependency-confusion (#5).
+  3. **Integrity verify (read-only)** — orphans/missing/checksum-mismatch report, NO auto-repair.
+     Built before migration as the tool to prove a migrated store is intact. (`/repos/{name}/reindex`
+     is currently a literal stub; blob checksums computed on write but never verified/reconciled.)
+  4. **Migration from Nexus** — first real user need ("migrate everything from Nexus"); CONSUMES the
+     permission model so it follows #2. Split content+repos (early) vs permissions (needs #2 schema).
+  5. **Dependency-confusion protection** — reuses the selector grammar; block proxy fall-through for
+     names owned by a hosted member.
+  6. **Quota enforcement + soft-delete** — small. `QuotaGB` exists on the repo model but is NEVER
+     enforced; storage reporting + async cleanup + cleanup dry-run already DONE.
+  7. **Promotion (COPY semantics, not reference) + immutability.** Blob keys are `{repo}/{path}`
+     (not CAS), so reference would need cross-repo refcount GC = sprawl/data-loss risk; copy keeps
+     repos self-contained and is reversible toward dedup later (keep the logical copy API, swap the
+     backing store to content-addressed dedup transparently). Provenance ("promoted from A@sha256")
+     is metadata, identical either way. Target repos should be immutable/write-once.
+  8. **PyPI** — capstone extensibility test, LAST before ship. Success = touches only
+     `internal/format/pypi/` + `reg.Register` + main.go repo entries, ZERO routing/blob/meta/repo-
+     model/auth/vuln-spine changes; gets OSV scanning free via `VulnCoordinates`.
+  9. **Artifact provenance (SBOM/sig/attestation for STORED artifacts) + formal release/support
+     policy** — later, when courting external adopters. (Forge already signs its own CI images.)
+  Full decision rationale in `~/.claude` memory `project-nexus-roadmap`. Old candidates folded in:
+  signing/SBOM=#9, PyPI=#8, LDAP=#1, SAML dropped.
 - **Vuln scanning = A-V0 SHIPPED (2026-06-22).** Plan A (OSV) vertical slice landed across 5
   commits on `feature/foundry-remaining-tabs`: `internal/vuln` source-agnostic findings model +
   `meta`-backed store (`{repo}:vuln`); OSV client (querybatch→hydrate, id+modified advisory cache,
