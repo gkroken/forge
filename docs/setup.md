@@ -409,6 +409,84 @@ GitOps migration guide.
 
 ---
 
+## OCI image scanning (Trivy, optional)
+
+npm and Maven vulnerability scanning is built in (OSV.dev, no setup). Scanning
+**OCI/Docker images** that forge hosts is **opt-in** and needs the external
+[Trivy](https://aquasecurity.github.io/trivy/) scanner. It is **off by default** —
+if you don't enable it, nothing below applies and forge runs exactly as before.
+
+### How forge uses Trivy
+
+forge shells out to the `trivy` binary (`trivy image …`) and parses its JSON into
+the same findings store, Security UI, and download-policy gate as OSV. **forge does
+not bundle Trivy** — you supply it. Two consequences:
+
+- The binary must be **on forge's `PATH`** (it runs as an in-process subprocess, not
+  a network service).
+- The default container image is **distroless and does not include Trivy**. Setting
+  the flag on the stock image will fail every scan with "executable file not found".
+  In Kubernetes you must run forge from an image that *also* contains the trivy
+  binary (see below).
+
+### Flags / environment
+
+| Flag | Env | Purpose |
+|------|-----|---------|
+| `-trivy-addr` | `TRIVY_ADDR` | forge's own registry host:port (e.g. `localhost:8080`). **Setting this enables OCI scanning.** |
+| `-trivy-binary` | `TRIVY_BINARY` | path to the trivy binary (default `trivy`, looked up on `PATH`) |
+| `-trivy-auth-token` | `TRIVY_AUTH_TOKEN` | forge API token Trivy uses to pull from an auth-enabled forge registry; empty = anonymous |
+
+### Eval / local (binary mode)
+
+```bash
+# Install trivy (see https://aquasecurity.github.io/trivy/ for your platform), then:
+trivy image --download-db-only      # pre-warm the vuln DB (~100 MB, cached in ~/.cache/trivy)
+
+./forge -addr :8080 -data ./data -trivy-addr localhost:8080
+
+# Push an image to the hosted OCI repo and scan it.
+docker push localhost:8080/docker-hosted/myapp:1.0
+curl -X POST http://localhost:8080/api/v1/repos/docker-hosted/scan   # 202; async
+```
+
+Findings then appear on the Browse detail pane, the Security column, the dashboard
+tile, and **Security → Findings** — identical to npm/Maven. The download policy gate
+(Off/Warn/Block) applies to OCI pulls too. Scans also run automatically on image push
+and on the daily re-scan tick.
+
+### Kubernetes
+
+Because the stock image has no trivy, build a thin derived image and deploy that:
+
+```dockerfile
+# Dockerfile.scanning
+FROM ghcr.io/<org>/forge:latest
+COPY --from=aquasec/trivy:0.72.0 /usr/local/bin/trivy /usr/local/bin/trivy
+```
+
+```bash
+helm upgrade --install forge deploy/helm/forge \
+  --set image.repository=<your-registry>/forge-scanning \
+  --set extraEnv.TRIVY_ADDR="localhost:8080"
+```
+
+Operational notes:
+
+- **Vuln DB:** Trivy auto-downloads its DB (~100 MB) on first scan into
+  `~/.cache/trivy`. Mount a writable volume for it (the runtime is
+  `readOnlyRootFilesystem`) and optionally pre-warm/refresh it with a `CronJob`
+  running `trivy image --download-db-only` so scans never block on a cold DB.
+- **Egress:** scanning images referenced from *external* registries (Helm charts,
+  later) needs pod egress to those registries; scanning forge-hosted images does not.
+- Scanning is async and best-effort — a scan never blocks or fails a push or pull.
+
+> Validated against **Trivy v0.72.0**. Trivy's JSON output is parsed by
+> `internal/trivy`; if a future Trivy release changes that schema, update
+> `parseOutput` there. Pin the trivy version in your derived image.
+
+---
+
 ## Default repositories
 
 forge seeds the following repositories on first start:

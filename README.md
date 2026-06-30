@@ -312,11 +312,14 @@ kind cluster install + conformance smoke, timed quickstart gate (< 10 min).
 ## Vulnerability scanning & download policy
 
 forge scans stored and proxied **npm** and **Maven** artifacts against
-[OSV.dev](https://osv.dev) and surfaces findings on the Browse detail pane, the
-per-repo Security column, the dashboard tile, and the **Security → Findings**
-admin page. Other formats are labelled "not scanned" rather than shown a
-misleading green (CRAN has no credible advisory source; OCI/Helm are tracked
-separately).
+[OSV.dev](https://osv.dev) (built in, no setup) and surfaces findings on the
+Browse detail pane, the per-repo Security column, the dashboard tile, and the
+**Security → Findings** admin page. Hosted **OCI/Docker images** can also be
+scanned via [Trivy](https://aquasecurity.github.io/trivy/) — opt-in and off by
+default; it needs an operator-supplied trivy binary (see
+[Setup → OCI image scanning](docs/setup.md#oci-image-scanning-trivy-optional)).
+Other formats are labelled "not scanned" rather than shown a misleading green
+(CRAN has no credible advisory source; Helm is tracked separately).
 
 A **download policy** can then warn on — or block — vulnerable downloads.
 Configure it under **Security → Policies**:

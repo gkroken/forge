@@ -402,7 +402,12 @@ badge, dashboard, Security page, gauge) were unaffected, so the two disagreed. F
 covers OCI-with-Trivy (supported) and OCI-without-Trivy (unsupported). `go test ./...` + `go vet`
 + `bash test.sh` (20/20) green.
 
-Still open in C-0: deliverable **#1** (operator-facing docs for the trivy requirement).
+C-0 deliverable **#1** (operator-facing docs) DONE 2026-06-30: `docs/setup.md` §"OCI image
+scanning (Trivy, optional)" documents the requirement (trivy on PATH; stock distroless image
+excludes it), the flags/env, an eval binary-mode walkthrough, the Kubernetes derived-image
+pattern, DB/egress notes, and the validated v0.72.0 pin; README scanning section updated to
+reflect OCI-via-Trivy and link to it. **C-0 COMPLETE.** Next: C-1 (chart misconfig) / C-2
+(referenced images).
 
 ### Sub-track renumber (after C-0)
 
