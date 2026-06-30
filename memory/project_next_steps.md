@@ -183,11 +183,27 @@ Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses du
   handleVulnScan OCI path (→ Trivy, 202 / 501-unconfigured); VulnRescanTick dual-path (OSV __vuln__:
   + Trivy __trivy__: independent intervals); OCI handler VulnGateTarget (tag=gated, digest=fail-open,
   blob/upload/tags-list=never); gate call in handleOCI (mirrors handleRepo). Flags: -trivy-binary /
-  -trivy-addr / -trivy-auth-token. NEXT = Plan C (Helm vuln).
+  -trivy-addr / -trivy-auth-token. (Plan B was live-validated for the first time on 2026-06-30 —
+  see Plan C below — which surfaced + fixed the OCI detail-pane Supported bug.)
+- **Plan C (Helm vuln) — COMPLETE 2026-06-30** (NOT pushed). All 3 sub-tracks live-validated
+  vs trivy v0.72.0. **C-0** (`6a64457`/`fd1706c`): Option D — trivy is operator-supplied + documented
+  (`docs/setup.md` §OCI image scanning), NOT packaged in Helm; also closed the B-O0 real-binary-
+  validation gap. **OCI detail bug fix** (`81bbb8c`): vulnInfoFor.Supported was OSV-only → broadened
+  to `osvSupported||trivyScannable||helmScannable`. **C-1** (`6fd244e`/`56d449e`) chart misconfig:
+  vuln.SourceTrivyConfig; trivy.ScanConfigFile (`trivy config` on the .tgz directly — no extraction);
+  parseConfigOutput reads Misconfigurations[] (KSV dedup, FAIL-only); server/helm_scan.go scanHelmChart
+  +scanHelmRepo; helm.scan.config job; on-upload/manual/daily wiring (whole-repo, name+ver are in the
+  tgz body). **C-2** (`2a9003f`/`8e0124a`) referenced images: trivy.ScanExternalImage (no registry
+  token); helm.ValuesImageRefs (flat + structured forms, tagged-only, no YAML lib); new optional
+  `format.ReferencedImages` seam. KEY: vuln.Store keys by component@version WITHOUT Source, so C-2
+  MERGES image CVEs into the C-1 chart Finding (a separate finding would overwrite) — ref-prefixed
+  summaries, KSV-*/CVE-* distinguish. Validated: chart→nginx:1.19 = 17 config + 270 CVEs, one critical
+  finding. Open/not pursued: Helm VulnGateTarget (chart-pull enforcement), private-registry auth for C-2.
+  **NEXT = PyPI / signing+SBOM / LDAP.**
 - **Config-as-Code — DONE 2026-06-29**: internal/config (Load/Plan/Apply/Export), -config /
   -config-check / -config-export / FORGE_CONFIG flags, managed-set prune guard, Helm ConfigMap
   + checksum/config rollout annotation, CI gate on forge.example.json, runbook at
-  docs/runbooks/config-as-code.md. NEXT = Plan C (Helm vuln scanning).
+  docs/runbooks/config-as-code.md.
 - **Vuln scanning design (for reference)** — `WORKPLAN-VULN.md` — three
   separate phased plans: Plan A OSV (npm+Maven, V0 slice→V1 breadth+obs→V2 warn/block policy),
   Plan B OCI (Trivy/Grype sidecar, NOT in-process), Plan C Helm (config + referenced-image).
