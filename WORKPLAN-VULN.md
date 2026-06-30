@@ -413,11 +413,65 @@ reflect OCI-via-Trivy and link to it. **C-0 COMPLETE.** Next: C-1 (chart misconf
 
 - **C-1 — Chart misconfiguration** (`trivy config`): `Source:"trivy-config"`; new
   `Scanner.ScanConfigFile` + `Misconfigurations[]` parser (distinct from `Vulnerabilities[]`).
-- **C-2 — Referenced images:** `Source:"trivy-helm-image"`; parse `values.yaml` image refs →
-  `Scanner.ScanExternalImage` (no `TRIVY_REGISTRY_TOKEN`; pulls from external registries) →
-  reuse Plan B parser. Plus Helm `VulnGateTarget` + on-upload/daily/manual scan wiring.
+  **COMPLETE 2026-06-30.**
+- **C-2 — Referenced images:** parse `values.yaml` image refs → `Scanner.ScanExternalImage`
+  (no `TRIVY_REGISTRY_TOKEN`; pulls from external registries) → reuse Plan B parser.
+  **COMPLETE 2026-06-30.**
 
 C-0 is the gate; C-1 and C-2 build on it.
+
+### C-2 — DONE (2026-06-30)
+
+**Design correction (caught against the code, like the OCI detail bug):** the original plan said
+C-2 would write a separate `Source:"trivy-helm-image"` finding "coexisting without collision." But
+`vuln.Store`'s key is `component@version` — it does **not** include Source, and `Finding.Source`
+is a write-only display label. A second Put at `chart@version` would *overwrite* C-1's config
+finding. So C-2 **merges** image CVEs into the same chart Finding instead — also the better UX (one
+detail pane showing misconfigs + referenced-image CVEs). Image-CVE summaries are prefixed with
+their ref; KSV-*/CVE-* IDs distinguish the classes. The `trivy-helm-image` constant was dropped as
+unused.
+
+Two commits:
+- **C-2a** (`trivy`/`helm`): `Scanner.ScanExternalImage` (like ScanImage, no registry token —
+  Trivy pulls from upstream); `helm.ValuesImageRefs` parses flat (`image: repo:tag`) and
+  structured (`registry`/`repository`/`tag`) conventions sans YAML lib, tagged refs only; shared
+  `extractFile` factored out of `parseChartYAML`.
+- **C-2b** (`server`/`format`): new optional `format.ReferencedImages` seam (helm implements it;
+  keeps the scanner from importing the helm package); `scanHelmChart` scans each ref via
+  `ScanExternalImage` and merges advisories. Best-effort — unreachable/private images logged and
+  skipped.
+
+**Live-validated** against trivy v0.72.0: a chart referencing `nginx:1.19` (structured form) →
+17 config misconfigs + 270 referenced-image CVEs merged into one **critical** finding, image CVEs
+ref-prefixed, surfaced on the detail pane. `go test ./...` + `go vet` + `bash test.sh` (20/20)
+green; binary rebuilt.
+
+## Plan C — COMPLETE (2026-06-30)
+
+C-0 (deployable+documented Trivy), C-1 (chart misconfiguration), C-2 (referenced-image scanning)
+all shipped and live-validated. Helm now scans via the source-agnostic spine with zero spine
+changes beyond the `trivy-config` source tag. **Open / not pursued:** Helm `VulnGateTarget`
+(download-policy enforcement for chart pulls) — deferred; charts are gated differently from
+jar/tarball pulls and the value is lower than the scanning surface just shipped. Private external
+registry auth for C-2 images is out of scope (public images only).
+
+### C-1 — DONE (2026-06-30)
+
+Two commits on `feature/foundry-remaining-tabs`:
+- **C-1a** (`trivy`/`vuln`): `vuln.SourceTrivyConfig`; `Scanner.ScanConfigFile(ctx, path)` runs
+  `trivy config --format json` on a chart .tgz (scans the tgz directly — no extraction needed,
+  verified against v0.72.0); `parseConfigOutput` reads `Results[].Misconfigurations[]` (dedup by
+  rule ID, FAIL-only, `PrimaryURL`→`References` fallback). Unit tests off a real-shaped fragment.
+- **C-1b** (`server`): `helm_scan.go` — `scanHelmChart` (blob→temp file→`ScanConfigFile`→
+  `Finding{Source:trivy-config}`→rollup), `scanHelmRepo` (enumerate via `BrowseRepo`). Wiring
+  mirrors OCI: `helm.scan.config` job on the shared worker; on-upload enqueue (whole-repo, since
+  chart name/version are in the tgz body not the path); manual `/scan` 501→202; daily re-scan
+  branch (`__helm__:` key); `vulnInfoFor.Supported` broadened with `helmScannable`.
+
+**Live-validated** end-to-end against trivy v0.72.0: uploaded a privileged-pod chart →
+on-upload scan found 17 misconfigurations (KSV-* with AVD links) → stored as `trivy-config` →
+surfaced on the detail pane (supported/scanned/high/17) and component badge. `go test ./...` +
+`go vet` + `bash test.sh` (20/20) green; binary rebuilt.
 
 ---
 
