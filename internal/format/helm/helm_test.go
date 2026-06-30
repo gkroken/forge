@@ -554,3 +554,83 @@ generated: "2024-06-02T00:00:00Z"
 		t.Errorf("Description = %q\nwant         %q", recs[0].Description, want)
 	}
 }
+
+// makeChartWithValues builds a chart .tgz with both Chart.yaml and values.yaml.
+func makeChartWithValues(t *testing.T, name, version, values string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	write := func(path, content string) {
+		if err := tw.WriteHeader(&tar.Header{Name: path, Mode: 0644, Size: int64(len(content))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(name+"/Chart.yaml", fmt.Sprintf("name: %s\nversion: %s\napiVersion: v2\n", name, version))
+	write(name+"/values.yaml", values)
+	tw.Close()
+	gz.Close()
+	return buf.Bytes()
+}
+
+func TestValuesImageRefs(t *testing.T) {
+	values := `# a chart values file
+replicaCount: 1
+image:
+  registry: docker.io
+  repository: bitnami/nginx
+  tag: "1.25.3"
+  pullPolicy: IfNotPresent
+metrics:
+  image:
+    repository: prom/node-exporter
+    tag: v1.7.0
+sidecarImage: busybox:1.36
+proxy:
+  image: envoyproxy/envoy:v1.29
+# no-tag entries must be ignored:
+bareImage: alpine
+worker:
+  repository: only/repo-without-tag
+`
+	tgz := makeChartWithValues(t, "mychart", "1.0.0", values)
+	refs, err := ValuesImageRefs(tgz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, r := range refs {
+		got[r] = true
+	}
+	want := []string{
+		"docker.io/bitnami/nginx:1.25.3", // structured with registry
+		"prom/node-exporter:v1.7.0",      // structured nested, no registry
+		"busybox:1.36",                   // flat *Image key
+		"envoyproxy/envoy:v1.29",         // flat image: key with repo/name:tag
+	}
+	for _, w := range want {
+		if !got[w] {
+			t.Errorf("missing expected ref %q (got %v)", w, refs)
+		}
+	}
+	// "alpine" (no tag) and "only/repo-without-tag" (no tag) must NOT appear.
+	for _, bad := range []string{"alpine", "alpine:latest", "only/repo-without-tag", "only/repo-without-tag:latest"} {
+		if got[bad] {
+			t.Errorf("unexpected untagged ref %q in %v", bad, refs)
+		}
+	}
+	if len(refs) != 4 {
+		t.Errorf("want exactly 4 refs, got %d: %v", len(refs), refs)
+	}
+}
+
+func TestValuesImageRefs_NoValues(t *testing.T) {
+	// A chart without values.yaml yields an error (caller treats as best-effort).
+	tgz := makeChart(t, "novalues", "1.0.0")
+	if _, err := ValuesImageRefs(tgz); err == nil {
+		t.Error("expected error when values.yaml is absent")
+	}
+}

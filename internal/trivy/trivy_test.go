@@ -277,6 +277,24 @@ func TestScanImage_ExecErrorNoOutput(t *testing.T) {
 	}
 }
 
+func TestScanExternalImage_WithFindings(t *testing.T) {
+	s := scanner(trivyOneVuln)
+	advs, err := s.ScanExternalImage(context.Background(), "docker.io/nginx:1.19")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(advs) != 1 || advs[0].ID != "CVE-2023-1234" {
+		t.Fatalf("advisories = %+v", advs)
+	}
+}
+
+func TestScanExternalImage_ExecErrorNoOutput(t *testing.T) {
+	s := New("trivy", "", "").WithExecutor(&fakeExecutor{err: errors.New("manifest unknown")})
+	if _, err := s.ScanExternalImage(context.Background(), "docker.io/ghost:0"); err == nil {
+		t.Fatal("expected error when external image is unreachable")
+	}
+}
+
 func TestImageRef(t *testing.T) {
 	s := New("trivy", "localhost:8080/", "") // trailing slash stripped
 	got := s.ImageRef("docker-hosted", "myapp", "latest")

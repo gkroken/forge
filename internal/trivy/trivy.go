@@ -174,6 +174,33 @@ func parseConfigOutput(data []byte) ([]vuln.Advisory, error) {
 	return out, nil
 }
 
+// ScanExternalImage scans an image that forge does NOT host — e.g. an image
+// referenced from a Helm chart's values.yaml such as "docker.io/nginx:1.19".
+// Trivy pulls it from its own upstream registry, so forge's registry address and
+// auth token do not apply (no TRIVY_REGISTRY_TOKEN is set). Otherwise identical
+// to ScanImage: same JSON schema, same dedup. Best-effort — external images may
+// be unreachable or private, in which case the error is returned for the caller
+// to log and skip.
+func (s *Scanner) ScanExternalImage(ctx context.Context, imageRef string) ([]vuln.Advisory, error) {
+	args := []string{
+		"image",
+		"--format", "json",
+		"--quiet",
+		imageRef,
+	}
+	out, execErr := s.exec.Run(ctx, nil, args...)
+	if len(out) > 0 {
+		advs, parseErr := parseOutput(out)
+		if parseErr == nil {
+			return advs, nil
+		}
+	}
+	if execErr != nil {
+		return nil, fmt.Errorf("trivy: scan external %s: %w", imageRef, execErr)
+	}
+	return nil, fmt.Errorf("trivy: scan external %s: empty output", imageRef)
+}
+
 // --- JSON model (trivy image --format json) ----------------------------------
 
 type trivyReport struct {

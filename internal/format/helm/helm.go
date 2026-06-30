@@ -480,26 +480,11 @@ type chartMeta struct{ Name, Version, AppVersion, Description string }
 // library; chart metadata top-level fields are simple scalars so a line scan
 // is sufficient for the prototype.
 func parseChartYAML(tgz []byte) (chartMeta, error) {
-	gz, err := gzip.NewReader(bytes.NewReader(tgz))
+	data, err := extractFile(tgz, "Chart.yaml")
 	if err != nil {
 		return chartMeta{}, err
 	}
-	defer gz.Close()
-	tr := tar.NewReader(gz)
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return chartMeta{}, err
-		}
-		if path.Base(hdr.Name) == "Chart.yaml" {
-			data, _ := io.ReadAll(tr)
-			return scanChartYAML(data), nil
-		}
-	}
-	return chartMeta{}, fmt.Errorf("Chart.yaml not found in archive")
+	return scanChartYAML(data), nil
 }
 
 func scanChartYAML(data []byte) chartMeta {
@@ -525,6 +510,120 @@ func scanChartYAML(data []byte) chartMeta {
 		}
 	}
 	return m
+}
+
+// ValuesImageRefs extracts container image references from a chart's values.yaml
+// for referenced-image vulnerability scanning. It recognises the two dominant
+// conventions, without a YAML library (consistent with the rest of this package):
+//
+//   - flat:        image: repo/name:tag   (a key ending in "image" with a :tag value)
+//   - structured:  image:
+//                    registry: docker.io   (optional)
+//                    repository: repo/name
+//                    tag: "1.2.3"
+//
+// Only refs with an explicit tag are returned — a bare repository would scan
+// ":latest", which is rarely what the chart pins. Results are deduplicated and
+// sorted for deterministic output. A chart without a parseable values.yaml yields
+// nil (best-effort: image scanning is a supplement, never a hard dependency).
+func ValuesImageRefs(tgz []byte) ([]string, error) {
+	data, err := extractFile(tgz, "values.yaml")
+	if err != nil {
+		return nil, err
+	}
+	set := map[string]struct{}{}
+
+	// Structured accumulator: fields collected at the current image-block indent.
+	blockIndent := -1
+	var reg, repo, tag string
+	flush := func() {
+		if repo != "" && tag != "" {
+			ref := repo
+			if reg != "" {
+				ref = reg + "/" + repo
+			}
+			set[ref+":"+tag] = struct{}{}
+		}
+		blockIndent = -1
+		reg, repo, tag = "", "", ""
+	}
+
+	for _, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimRight(raw, "\r")
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		indent := len(line) - len(strings.TrimLeft(line, " "))
+		key, val, hasVal := strings.Cut(strings.TrimSpace(line), ":")
+		key = strings.TrimSpace(key)
+		val = strings.TrimSpace(strings.Trim(strings.TrimSpace(val), `"'`))
+
+		// A dedent below the active block ends it.
+		if blockIndent != -1 && indent < blockIndent {
+			flush()
+		}
+
+		switch key {
+		case "registry", "repository", "tag":
+			if hasVal && val != "" {
+				// A new repository/registry at a different indent starts a new block.
+				if blockIndent != -1 && indent != blockIndent {
+					flush()
+				}
+				if blockIndent == -1 {
+					blockIndent = indent
+				}
+				switch key {
+				case "registry":
+					reg = val
+				case "repository":
+					repo = val
+				case "tag":
+					tag = val
+				}
+			}
+			continue
+		}
+
+		// Flat form: a key ending in "image" with an inline ref value carrying a tag.
+		if hasVal && val != "" && strings.HasSuffix(strings.ToLower(key), "image") {
+			if i := strings.LastIndex(val, ":"); i > 0 && !strings.Contains(val[i+1:], "/") {
+				set[val] = struct{}{}
+			}
+		}
+	}
+	flush()
+
+	out := make([]string, 0, len(set))
+	for ref := range set {
+		out = append(out, ref)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// extractFile returns the contents of the first file in the chart .tgz whose base
+// name matches want (e.g. "values.yaml", "Chart.yaml").
+func extractFile(tgz []byte, want string) ([]byte, error) {
+	gz, err := gzip.NewReader(bytes.NewReader(tgz))
+	if err != nil {
+		return nil, err
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if path.Base(hdr.Name) == want {
+			return io.ReadAll(tr)
+		}
+	}
+	return nil, fmt.Errorf("%s not found in archive", want)
 }
 
 // BrowseRepo implements format.Browsable.
