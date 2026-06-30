@@ -92,8 +92,10 @@ func newVulnServer(t *testing.T, osvURL string) *Server {
 	reg := format.NewRegistry()
 	reg.Register(npm.New())
 	reg.Register(helm.New())
-	mgr.Add(repo.Repository{Name: "npm-hosted", Format: "npm", Kind: repo.Hosted})   //nolint:errcheck
-	mgr.Add(repo.Repository{Name: "helm-hosted", Format: "helm", Kind: repo.Hosted}) //nolint:errcheck
+	reg.Register(oci.New())
+	mgr.Add(repo.Repository{Name: "npm-hosted", Format: "npm", Kind: repo.Hosted})    //nolint:errcheck
+	mgr.Add(repo.Repository{Name: "helm-hosted", Format: "helm", Kind: repo.Hosted})  //nolint:errcheck
+	mgr.Add(repo.Repository{Name: "docker-hosted", Format: "oci", Kind: repo.Hosted}) //nolint:errcheck
 
 	m.PutJSON("npm-hosted:npm", "lodash", map[string]any{ //nolint:errcheck
 		"name":     "lodash",
@@ -427,6 +429,45 @@ func TestBrowseDetail_VulnStates(t *testing.T) {
 	d = get("helm-hosted", "mychart", "1.0.0")
 	if d.Vuln == nil || d.Vuln.Supported {
 		t.Errorf("unsupported: state = %+v", d.Vuln)
+	}
+}
+
+// TestVulnInfoFor_OCITrivy is a regression test: OCI findings come from the
+// Trivy producer, not OSV, so the security panel must report them as
+// supported+scanned even though the OCI handler does not implement
+// format.VulnCoordinates. Before the fix, "Supported" was keyed solely on
+// VulnCoordinates, so OCI images with a real Trivy finding were wrongly shown
+// as "not scanned — unsupported". (Tested at vulnInfoFor rather than the full
+// detail endpoint, which would need OCI manifest/blob fixtures unrelated to the
+// vuln-state logic under test.)
+func TestVulnInfoFor_OCITrivy(t *testing.T) {
+	srv := newVulnServer(t, "http://unused.example")
+	rp, _ := srv.Repos.Get("docker-hosted")
+	h, _ := srv.Handlers.For("oci")
+	srv.Vuln.Put("docker-hosted", vuln.Finding{ //nolint:errcheck
+		Component: "alpine", Version: "3.12", Source: vuln.SourceTrivy,
+		Advisories: []vuln.Advisory{{
+			ID: "CVE-2022-37434", Severity: vuln.SeverityCritical,
+			Summary: "zlib overflow", URL: "https://e/cve", FixedIn: []string{"1.2.12-r2"},
+		}},
+	})
+
+	// Trivy configured → OCI is scannable. The scanner is never invoked here;
+	// trivyScannable only checks that it is non-nil.
+	srv.Trivy = trivy.New("/bin/true", "localhost:8080", "")
+	vi := srv.vulnInfoFor(rp, h, "alpine", "3.12")
+	if vi == nil || !vi.Supported || !vi.Scanned {
+		t.Fatalf("OCI trivy finding: state = %+v", vi)
+	}
+	if vi.Severity != "critical" || len(vi.Advisories) != 1 || vi.Advisories[0].ID != "CVE-2022-37434" {
+		t.Errorf("OCI trivy finding: %+v", vi)
+	}
+
+	// With Trivy unconfigured, OCI is correctly unsupported (no producer covers it).
+	srv.Trivy = nil
+	vi = srv.vulnInfoFor(rp, h, "alpine", "3.12")
+	if vi == nil || vi.Supported {
+		t.Errorf("OCI without Trivy should be unsupported: state = %+v", vi)
 	}
 }
 
