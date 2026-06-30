@@ -512,6 +512,25 @@ func scanChartYAML(data []byte) chartMeta {
 	return m
 }
 
+// ReferencedImages implements format.ReferencedImages: it reads the stored chart
+// .tgz for name@version and extracts the container image refs from its
+// values.yaml, so the scanner can scan images the chart deploys.
+func (h *Handler) ReferencedImages(c *format.Context, name, version string) ([]string, error) {
+	filename := fmt.Sprintf("%s-%s.tgz", name, version)
+	rc, err := c.Blob.Get(c.Key(filename))
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return nil, err
+	}
+	return ValuesImageRefs(data)
+}
+
+var _ format.ReferencedImages = (*Handler)(nil)
+
 // ValuesImageRefs extracts container image references from a chart's values.yaml
 // for referenced-image vulnerability scanning. It recognises the two dominant
 // conventions, without a YAML library (consistent with the rest of this package):

@@ -10,6 +10,7 @@ import (
 
 	"forge/internal/format"
 	"forge/internal/queue"
+	"forge/internal/repo"
 	"forge/internal/vuln"
 )
 
@@ -63,6 +64,49 @@ func (s *Server) handleHelmRepoScanJob(ctx context.Context, j queue.Job) error {
 		slog.Warn("helm: config scan failed", "repo", p.Repo, "err", err)
 	}
 	return nil
+}
+
+// scanReferencedImages scans the external images a chart references (from its
+// values.yaml) and returns their advisories, each summary prefixed with the image
+// ref. Format-agnostic: it asks the helm handler for the refs via the optional
+// format.ReferencedImages seam, then reuses the Plan B external-image scanner.
+// Returns nil (never errors) — referenced-image scanning supplements the config
+// scan and must never fail the chart scan.
+func (s *Server) scanReferencedImages(ctx context.Context, rp repo.Repository, chart, version string) []vuln.Advisory {
+	h, ok := s.Handlers.For(rp.Format)
+	if !ok {
+		return nil
+	}
+	ri, ok := h.(format.ReferencedImages)
+	if !ok {
+		return nil
+	}
+	c := &format.Context{Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: s.client, Repos: s.Repos}
+	refs, err := ri.ReferencedImages(c, chart, version)
+	if err != nil {
+		slog.Debug("helm: no referenced images", "repo", rp.Name, "chart", chart, "version", version, "err", err)
+		return nil
+	}
+	var out []vuln.Advisory
+	for _, ref := range refs {
+		imgAdvs, err := s.Trivy.ScanExternalImage(ctx, ref)
+		if err != nil {
+			slog.Warn("helm: referenced image scan failed",
+				"repo", rp.Name, "chart", chart, "ref", ref, "err", err)
+			continue
+		}
+		for _, a := range imgAdvs {
+			if a.Summary != "" {
+				a.Summary = ref + ": " + a.Summary
+			} else {
+				a.Summary = ref
+			}
+			out = append(out, a)
+		}
+		slog.Info("helm: scanned referenced image",
+			"repo", rp.Name, "chart", chart, "ref", ref, "advisories", len(imgAdvs))
+	}
+	return out
 }
 
 // scanHelmRepo enumerates a Helm repository's charts and runs a Trivy config scan
@@ -146,6 +190,14 @@ func (s *Server) scanHelmChart(ctx context.Context, repoName, chart, version str
 	if err != nil {
 		return err
 	}
+
+	// C-2: also scan images the chart references in values.yaml. These usually
+	// live in external registries forge doesn't host, so Trivy pulls them from
+	// upstream. Merged into the same chart Finding (the store is one finding per
+	// component@version); each image-CVE summary is prefixed with its ref for
+	// traceability, and the CVE-*/KSV-* ID convention distinguishes the classes.
+	// Best-effort: an unreachable/private image is logged and skipped.
+	advs = append(advs, s.scanReferencedImages(ctx, rp, chart, version)...)
 
 	f := vuln.Finding{
 		Component:  chart,

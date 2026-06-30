@@ -197,6 +197,16 @@ type VulnCoordinates interface {
 	OSVCoordinates(component string) (ecosystem, name string, ok bool)
 }
 
+// ReferencedImages is an optional Handler extension: a format whose stored
+// components reference external container images (e.g. a Helm chart's values.yaml
+// names the images its templates deploy) returns those refs so the vulnerability
+// scanner can scan them too. The scanner stays format-agnostic — the parsing
+// knowledge lives in the plugin, like VulnCoordinates. Refs are fully-qualified
+// image references (e.g. "docker.io/nginx:1.19"); only helm implements it.
+type ReferencedImages interface {
+	ReferencedImages(c *Context, component, version string) ([]string, error)
+}
+
 // VulnGate is an optional Handler extension used by the download-policy gate. It
 // reverses a download sub-path back to the (component, version) the artifact
 // belongs to, reporting ok=false for paths that are not primary artifacts

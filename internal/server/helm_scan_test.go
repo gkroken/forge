@@ -80,6 +80,96 @@ func seedChart(t *testing.T, b blob.Store, m *meta.FS, repoName, name, version s
 	})
 }
 
+// argsTrivyExecutor returns different canned output for `trivy config` vs
+// `trivy image`, so a single scanHelmChart call can exercise both the config
+// scan and the referenced-image scan.
+type argsTrivyExecutor struct{ configOut, imageOut string }
+
+func (f *argsTrivyExecutor) Run(_ context.Context, _ []string, args ...string) ([]byte, error) {
+	if len(args) > 0 && args[0] == "config" {
+		return []byte(f.configOut), nil
+	}
+	return []byte(f.imageOut), nil
+}
+
+// chartWithValues builds a chart .tgz with a values.yaml referencing an image.
+func chartWithValues(t *testing.T, name, version, values string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	wr := func(p, c string) {
+		_ = tw.WriteHeader(&tar.Header{Name: p, Mode: 0644, Size: int64(len(c))})
+		_, _ = tw.Write([]byte(c))
+	}
+	wr(name+"/Chart.yaml", fmt.Sprintf("name: %s\nversion: %s\napiVersion: v2\n", name, version))
+	wr(name+"/values.yaml", values)
+	tw.Close()
+	gz.Close()
+	return buf.Bytes()
+}
+
+// TestScanHelmChart_MergesReferencedImageCVEs verifies C-2: a chart's config
+// misconfigurations AND the CVEs of images it references in values.yaml end up
+// in one merged Finding, with image-CVE summaries prefixed by the image ref.
+func TestScanHelmChart_MergesReferencedImageCVEs(t *testing.T) {
+	const imageCVE = `{"Results":[{"Target":"nginx","Vulnerabilities":[{
+	  "VulnerabilityID":"CVE-2024-1111","Title":"openssl flaw","Severity":"CRITICAL",
+	  "References":["https://example.com/cve"]}]}]}`
+
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	mgr := repo.NewManager()
+	reg := format.NewRegistry()
+	reg.Register(helm.New())
+	mgr.Add(repo.Repository{Name: "helm-hosted", Format: "helm", Kind: repo.Hosted, Enabled: true}) //nolint:errcheck
+	sc := trivy.New("trivy", "", "").WithExecutor(&argsTrivyExecutor{configOut: trivyConfigJSON, imageOut: imageCVE})
+	srv := New(mgr, reg, b, m, nil)
+	srv.Vuln = vuln.NewStore(m)
+	srv.Trivy = sc
+
+	// Store a chart whose values.yaml references nginx:1.19.
+	tgz := chartWithValues(t, "webapp", "1.0.0", "image: nginx:1.19\n")
+	if _, err := b.Put("helm-hosted/webapp-1.0.0.tgz", bytes.NewReader(tgz)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := srv.scanHelmChart(context.Background(), "helm-hosted", "webapp", "1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	f, ok, _ := srv.Vuln.Get("helm-hosted", "webapp", "1.0.0")
+	if !ok {
+		t.Fatal("no finding written")
+	}
+	var ksv, cve int
+	var prefixed bool
+	for _, a := range f.Advisories {
+		switch {
+		case a.ID == "CVE-2024-1111":
+			cve++
+			if a.Summary == "nginx:1.19: openssl flaw" {
+				prefixed = true
+			}
+		case len(a.ID) >= 3 && a.ID[:3] == "KSV":
+			ksv++
+		}
+	}
+	if ksv != 2 {
+		t.Errorf("want 2 config (KSV) advisories, got %d", ksv)
+	}
+	if cve != 1 {
+		t.Errorf("want 1 referenced-image CVE, got %d", cve)
+	}
+	if !prefixed {
+		t.Error("image CVE summary should be prefixed with the image ref")
+	}
+	// Worst across config (HIGH) + image (CRITICAL) must be CRITICAL.
+	if f.Worst() != vuln.SeverityCritical {
+		t.Errorf("Worst = %v, want critical", f.Worst())
+	}
+}
+
 func TestScanHelmChart_WritesMisconfigFinding(t *testing.T) {
 	srv, b, m := newHelmServer(t, trivyConfigJSON)
 	seedChart(t, b, m, "helm-hosted", "mychart", "1.0.0")
