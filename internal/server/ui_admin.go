@@ -112,12 +112,23 @@ type ssoInfo struct {
 	Mappings    []ssoMapping // empty = all SSO logins get the default grant
 }
 
+type ldapInfo struct {
+	Enabled    bool
+	URLs       []string
+	BindDN     string
+	UserBaseDN string
+	UserFilter string
+	GroupMode  string
+	Mappings   []ssoMapping // empty = all LDAP logins get the default grant
+}
+
 type adminAccessPage struct {
 	Title       string
 	ActiveNav   string
 	AuthEnabled bool
 	Rows        []accessRow
 	SSO         ssoInfo
+	LDAP        ldapInfo
 }
 
 // ── token types ───────────────────────────────────────────────────────────────
@@ -993,6 +1004,23 @@ func (s *Server) uiAdminAccess(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, rule := range s.GroupMapper.Rules() {
 			page.SSO.Mappings = append(page.SSO.Mappings, ssoMapping{
+				Group: rule.Group,
+				Role:  rule.Role.String(),
+			})
+		}
+	}
+
+	if s.LDAP != nil {
+		page.LDAP = ldapInfo{
+			Enabled:    true,
+			URLs:       s.LDAP.URLs(),
+			BindDN:     s.LDAP.BindDN(),
+			UserBaseDN: s.LDAP.UserBaseDN(),
+			UserFilter: s.LDAP.UserFilter(),
+			GroupMode:  s.LDAP.GroupMode(),
+		}
+		for _, rule := range s.ldapMapper.Rules() {
+			page.LDAP.Mappings = append(page.LDAP.Mappings, ssoMapping{
 				Group: rule.Group,
 				Role:  rule.Role.String(),
 			})

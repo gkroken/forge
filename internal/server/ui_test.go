@@ -638,6 +638,24 @@ func TestUIAccess_ShowsSSOPanel(t *testing.T) {
 	assertContains(t, body, "forge-admins")            // group mapping row
 }
 
+func TestUIAccess_ShowsLDAPPanel(t *testing.T) {
+	srv, secret := newUIServerWithAuth(t)
+	srv.LDAP = &fakeLDAP{}
+	srv.ldapMapper = auth.NewGroupRoleMapper([]auth.GroupRule{{Group: "forge-admins", Role: auth.RoleAdmin}})
+	h := srv.Routes()
+	r := httptest.NewRequest(http.MethodGet, "/ui/admin/access", nil)
+	r.AddCookie(&http.Cookie{Name: auth.UISessionCookie, Value: secret})
+	rw := httptest.NewRecorder()
+	h.ServeHTTP(rw, r)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status %d", rw.Code)
+	}
+	body := rw.Body.String()
+	assertContains(t, body, "DIRECTORY LOGIN")
+	assertContains(t, body, "ldap://dir.example.com:389") // server from fake
+	assertContains(t, body, "forge-admins")               // group mapping row
+}
+
 func TestUIAccess_SSONotConfigured(t *testing.T) {
 	srv, secret := newUIServerWithAuth(t) // no OIDC
 	h := srv.Routes()

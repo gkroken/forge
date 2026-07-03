@@ -51,6 +51,52 @@
   {{end}}
 </section>
 
+<!-- directory login: LDAP / Active Directory, read-only -->
+<section class="instrument-panel sso-panel">
+  <div class="inst-header">
+    <span class="inst-name">IDENTITY</span>
+    <span class="inst-sep">·</span>
+    <span>DIRECTORY LOGIN</span>
+    <span class="inst-sep">·</span>
+    <span>LDAP / AD</span>
+    <span class="inst-status {{if .LDAP.Enabled}}is-ok{{else}}is-warn{{end}}">
+      <span class="status-dot {{if .LDAP.Enabled}}dot-ok{{else}}dot-warn{{end}}"></span>{{if .LDAP.Enabled}}enabled{{else}}not configured{{end}}
+    </span>
+  </div>
+  {{if .LDAP.Enabled}}
+  <dl class="sso-defs">
+    <div><dt>Servers</dt><dd class="mono">{{range .LDAP.URLs}}{{.}} {{end}}</dd></div>
+    <div><dt>Bind DN</dt><dd class="mono">{{if .LDAP.BindDN}}{{.LDAP.BindDN}}{{else}}<span style="color:var(--text-muted)">anonymous</span>{{end}}</dd></div>
+    <div><dt>User base DN</dt><dd class="mono">{{.LDAP.UserBaseDN}}</dd></div>
+    <div><dt>User filter</dt><dd class="mono">{{.LDAP.UserFilter}}</dd></div>
+    <div><dt>Group mode</dt><dd class="mono">{{.LDAP.GroupMode}}</dd></div>
+  </dl>
+  <div class="sso-map">
+    <div class="panel-title">Group → role mapping</div>
+    {{if .LDAP.Mappings}}
+    <table class="sso-map-table">
+      <thead><tr><th>Directory group</th><th>Role</th></tr></thead>
+      <tbody>
+        {{range .LDAP.Mappings}}
+        <tr><td class="mono">{{.Group}}</td><td><code class="col-latest">{{.Role}}</code></td></tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <p class="sso-empty">No group rules configured — every LDAP login receives the default grant.
+      Set <code>-ldap-group-mappings</code> (e.g. <code>forge-admins:admin,forge-devs:write</code>) to map directory groups onto roles.</p>
+    {{end}}
+  </div>
+  {{else}}
+  <div class="sso-off">
+    <p>Direct LDAP / Active Directory login is not configured. Start forge with <code>-ldap-url</code>
+      (plus a bind DN, user base DN, and filter) to let users sign in on the form above with their AD
+      credentials — forge verifies them by search-then-bind and mints a normal forge token, so AD passwords
+      never land in <code>.npmrc</code>/<code>settings.xml</code>/CI.</p>
+  </div>
+  {{end}}
+</section>
+
 <p style="font-size:13px;color:var(--text-muted);margin-bottom:1.5rem">
   Per-repository access granted by active API tokens.
   Manage tokens on the <a href="/ui/admin/tokens">API Tokens</a> page.
