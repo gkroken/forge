@@ -18,8 +18,8 @@
       {{end}}
     </div>
     {{if .PolicyName}}
-    <button class="btn" id="dry-run-btn" onclick="runDry('{{.RepoName}}',this)">Dry run</button>
-    <button class="btn btn-danger" id="run-btn" onclick="runLive('{{.RepoName}}',this)">Run cleanup</button>
+    <button class="btn" id="dry-run-btn" data-action="cleanup-dry" data-repo="{{.RepoName}}">Dry run</button>
+    <button class="btn btn-danger" id="run-btn" data-action="cleanup-live" data-repo="{{.RepoName}}">Run cleanup</button>
     <span id="dry-run-status" style="margin-left:.75rem;font-size:.85em;color:var(--text-muted)"></span>
     <div id="dry-run-result" style="margin-top:1rem"></div>
     {{end}}
@@ -67,59 +67,5 @@
 
 </div>
 
-<script>
-function runDry(name, btn) {
-  btn.disabled = true;
-  var status = document.getElementById('dry-run-status');
-  var result = document.getElementById('dry-run-result');
-  status.textContent = 'Running…';
-  result.innerHTML = '';
-  fetch('/api/v1/repos/' + name + '/cleanup?dry=true', {method: 'POST'})
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-      var cands = d.candidates || [];
-      status.textContent = cands.length + ' candidate(s) found';
-      if (cands.length === 0) {
-        result.innerHTML = '<p style="font-size:.85em;color:var(--text-muted)">Nothing to clean up.</p>';
-        return;
-      }
-      var html = '<div class="admin-table-wrap"><table class="admin-table"><thead><tr>' +
-        '<th>Component</th><th>Version</th><th>Age (days)</th><th>Size</th><th>Reason</th>' +
-        '</tr></thead><tbody>';
-      cands.forEach(function(c) {
-        html += '<tr><td>' + esc(c.component) + '</td><td class="col-mono">' + esc(c.version) +
-          '</td><td>' + c.age_days + '</td><td>' +
-          (c.size_bytes / 1048576).toFixed(2) + ' MB</td><td style="font-size:.85em;color:var(--text-muted)">' +
-          esc(c.reason) + '</td></tr>';
-      });
-      html += '</tbody></table></div>';
-      result.innerHTML = html;
-    })
-    .catch(function(e) { status.textContent = 'Error: ' + e; })
-    .finally(function() { btn.disabled = false; });
-}
-function runLive(name, btn) {
-  if (!confirm('Permanently delete all artifacts matching this policy in "' + name + '"? This cannot be undone.')) return;
-  var dryBtn = document.getElementById('dry-run-btn');
-  btn.disabled = true; if (dryBtn) dryBtn.disabled = true;
-  var status = document.getElementById('dry-run-status');
-  var result = document.getElementById('dry-run-result');
-  status.textContent = 'Running…';
-  result.innerHTML = '';
-  fetch('/api/v1/repos/' + name + '/cleanup', {method: 'POST'})
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-      status.textContent = 'Deleted ' + (d.deleted || 0) + ' · freed ' +
-        ((d.freed_bytes || 0) / 1048576).toFixed(2) + ' MB — refreshing…';
-      setTimeout(function() { location.reload(); }, 900);
-    })
-    .catch(function(e) {
-      status.textContent = 'Error: ' + e;
-      btn.disabled = false; if (dryBtn) dryBtn.disabled = false;
-    });
-}
-function esc(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-</script>
+<script src="/ui/static/cleanup.js"></script>
 {{end}}

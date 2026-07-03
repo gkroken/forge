@@ -99,19 +99,11 @@
       <a href="/ui/admin/cleanup-policies" class="btn">Cancel</a>
       {{if .IsEdit}}
       <button type="button" class="btn" style="margin-left:auto;color:var(--danger,#c0392b)"
-              onclick="deletePol('{{.Policy.Name}}')">Delete</button>
+              data-action="policy-delete" data-policy="{{.Policy.Name}}">Delete</button>
       {{end}}
     </div>
   </form>
 </div>
 
-{{if .IsEdit}}
-<script>
-function deletePol(name) {
-  if (!confirm("Delete policy '" + name + "'?")) return;
-  fetch('/ui/admin/cleanup-policies/' + name, {method: 'DELETE'})
-    .then(function(r) { if (r.ok || r.status === 200) location.href = '/ui/admin/cleanup-policies'; });
-}
-</script>
-{{end}}
+<script src="/ui/static/cleanup.js"></script>
 {{end}}
