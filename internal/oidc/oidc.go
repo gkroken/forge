@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
@@ -52,36 +51,10 @@ func (c Config) Validate() error {
 }
 
 // ParseGroupMappings parses a "group:role,group:role" string into GroupRules.
-// Role is one of read|write|admin (reader|publisher|administrator also accepted).
-// The group name is everything before the final colon, so it may itself contain
-// colons. An empty string yields no rules.
+// It delegates to auth.ParseGroupMappings, which is shared with the LDAP frontend;
+// this alias is retained for existing callers.
 func ParseGroupMappings(s string) ([]auth.GroupRule, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil, nil
-	}
-	var rules []auth.GroupRule
-	for _, pair := range strings.Split(s, ",") {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-		i := strings.LastIndex(pair, ":")
-		if i < 0 {
-			return nil, fmt.Errorf("group mapping %q: expected group:role", pair)
-		}
-		group := strings.TrimSpace(pair[:i])
-		roleName := strings.TrimSpace(pair[i+1:])
-		if group == "" {
-			return nil, fmt.Errorf("group mapping %q: empty group name", pair)
-		}
-		role := auth.BaseRoleFor(roleName)
-		if role == auth.RoleNone {
-			return nil, fmt.Errorf("group mapping %q: unknown role %q (want read|write|admin)", pair, roleName)
-		}
-		rules = append(rules, auth.GroupRule{Group: group, Role: role})
-	}
-	return rules, nil
+	return auth.ParseGroupMappings(s)
 }
 
 // FromEnv reads OIDC configuration from environment variables.

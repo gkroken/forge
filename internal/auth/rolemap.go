@@ -1,6 +1,42 @@
 package auth
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
+
+// ParseGroupMappings parses a "group:role,group:role" string into GroupRules.
+// Role is one of read|write|admin (reader|publisher|administrator also accepted).
+// The group name is everything before the final colon, so it may itself contain
+// colons. An empty string yields no rules. Shared by the OIDC and LDAP frontends.
+func ParseGroupMappings(s string) ([]GroupRule, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	var rules []GroupRule
+	for _, pair := range strings.Split(s, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		i := strings.LastIndex(pair, ":")
+		if i < 0 {
+			return nil, fmt.Errorf("group mapping %q: expected group:role", pair)
+		}
+		group := strings.TrimSpace(pair[:i])
+		roleName := strings.TrimSpace(pair[i+1:])
+		if group == "" {
+			return nil, fmt.Errorf("group mapping %q: empty group name", pair)
+		}
+		role := BaseRoleFor(roleName)
+		if role == RoleNone {
+			return nil, fmt.Errorf("group mapping %q: unknown role %q (want read|write|admin)", pair, roleName)
+		}
+		rules = append(rules, GroupRule{Group: group, Role: role})
+	}
+	return rules, nil
+}
 
 // GroupRule maps a single identity-provider group name onto a base Role.
 // Group matching is case-insensitive (see GroupRoleMapper.Resolve).
