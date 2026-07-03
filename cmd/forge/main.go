@@ -32,6 +32,7 @@ import (
 	"forge/internal/format/oci"
 	"forge/internal/meta"
 	"forge/internal/obs"
+	"forge/internal/ldap"
 	"forge/internal/oidc"
 	"forge/internal/queue"
 	"forge/internal/repo"
@@ -60,6 +61,26 @@ func main() {
 	oidcGroupsClaim := flag.String("oidc-groups-claim", os.Getenv("OIDC_GROUPS_CLAIM"), "ID-token claim holding group membership (default \"groups\") (env OIDC_GROUPS_CLAIM)")
 	oidcGroupMappings := flag.String("oidc-group-mappings", os.Getenv("OIDC_GROUP_MAPPINGS"), "IdP group→role map, e.g. forge-admins:admin,devs:write,staff:read (env OIDC_GROUP_MAPPINGS)")
 	oidcTokenTTL := flag.String("oidc-token-ttl", os.Getenv("OIDC_TOKEN_TTL"), "lifetime of an SSO session (default 8h) (env OIDC_TOKEN_TTL)")
+
+	// LDAP / Active Directory. Each flag defaults to its LDAP_* env var. Setting
+	// -ldap-url enables direct AD/LDAP login on the web form (search-then-bind):
+	// the user's AD password is verified against the directory and forge mints a
+	// normal forge token — AD credentials never go into .npmrc/settings.xml/CI.
+	ldapURL := flag.String("ldap-url", os.Getenv("LDAP_URL"), "LDAP server URL(s), comma-separated for failover, e.g. ldaps://dc1:636,ldap://dc2:389 — enables AD/LDAP login (env LDAP_URL)")
+	ldapStartTLS := flag.Bool("ldap-start-tls", os.Getenv("LDAP_START_TLS") == "true", "issue StartTLS on ldap:// connections before binding (env LDAP_START_TLS)")
+	ldapCACert := flag.String("ldap-ca-cert", os.Getenv("LDAP_CA_CERT"), "path to a PEM CA bundle for the LDAP TLS connection; default system roots (env LDAP_CA_CERT)")
+	ldapInsecure := flag.Bool("ldap-insecure-skip-verify", os.Getenv("LDAP_INSECURE_SKIP_VERIFY") == "true", "disable LDAP TLS certificate verification — dev/test only (env LDAP_INSECURE_SKIP_VERIFY)")
+	ldapBindDN := flag.String("ldap-bind-dn", os.Getenv("LDAP_BIND_DN"), "service-account DN for the search step; empty = anonymous search (env LDAP_BIND_DN)")
+	ldapBindPassword := flag.String("ldap-bind-password", os.Getenv("LDAP_BIND_PASSWORD"), "service-account password — prefer the env var; flags are visible in ps (env LDAP_BIND_PASSWORD)")
+	ldapUserBaseDN := flag.String("ldap-user-base-dn", os.Getenv("LDAP_USER_BASE_DN"), "base DN for the user search, e.g. ou=people,dc=example,dc=com (env LDAP_USER_BASE_DN)")
+	ldapUserFilter := flag.String("ldap-user-filter", os.Getenv("LDAP_USER_FILTER"), "user search filter; %s = escaped login name; default (uid=%s); AD: (sAMAccountName=%s) (env LDAP_USER_FILTER)")
+	ldapEmailAttr := flag.String("ldap-email-attr", os.Getenv("LDAP_EMAIL_ATTR"), "attribute holding the user's email, default \"mail\" (env LDAP_EMAIL_ATTR)")
+	ldapGroupMode := flag.String("ldap-group-mode", os.Getenv("LDAP_GROUP_MODE"), "how to resolve groups: \"memberof\" (read attr off the user, AD default) or \"search\" (env LDAP_GROUP_MODE)")
+	ldapGroupBaseDN := flag.String("ldap-group-base-dn", os.Getenv("LDAP_GROUP_BASE_DN"), "base DN for group search (group mode \"search\") (env LDAP_GROUP_BASE_DN)")
+	ldapGroupFilter := flag.String("ldap-group-filter", os.Getenv("LDAP_GROUP_FILTER"), "group search filter; %s = escaped user DN, e.g. (&(objectClass=groupOfNames)(member=%s)) (env LDAP_GROUP_FILTER)")
+	ldapGroupAttr := flag.String("ldap-group-attr", os.Getenv("LDAP_GROUP_ATTR"), "attribute holding the group name, default \"cn\" (env LDAP_GROUP_ATTR)")
+	ldapGroupMappings := flag.String("ldap-group-mappings", os.Getenv("LDAP_GROUP_MAPPINGS"), "directory group→role map, e.g. forge-admins:admin,devs:write,staff:read (env LDAP_GROUP_MAPPINGS)")
+	ldapTokenTTL := flag.String("ldap-token-ttl", os.Getenv("LDAP_TOKEN_TTL"), "lifetime of an LDAP session (default 8h) (env LDAP_TOKEN_TTL)")
 	auditRetention := flag.String("audit-retention", os.Getenv("AUDIT_RETENTION"), "how long to keep Postgres audit_log entries, e.g. 2160h (default 90d); 0 disables pruning (env AUDIT_RETENTION)")
 	// Trivy OCI image scanning. Setting -trivy-addr enables the sidecar scanner;
 	// Trivy must be reachable at -trivy-binary (default: found in PATH).
@@ -416,6 +437,59 @@ func main() {
 			"groups_claim", cfg.GroupsClaim, "group_rules", len(mappings))
 	}
 
+	if *ldapURL != "" {
+		grants := []auth.Grant{{Repo: "*", Role: auth.RoleRead}}
+		if raw := os.Getenv("LDAP_DEFAULT_GRANTS"); raw != "" {
+			if err := json.Unmarshal([]byte(raw), &grants); err != nil {
+				slog.Error("ldap: invalid LDAP_DEFAULT_GRANTS", "err", err)
+				os.Exit(1)
+			}
+		}
+		ttl := 8 * time.Hour
+		if *ldapTokenTTL != "" {
+			d, err := time.ParseDuration(*ldapTokenTTL)
+			if err != nil {
+				slog.Error("ldap: invalid -ldap-token-ttl", "err", err)
+				os.Exit(1)
+			}
+			ttl = d
+		}
+		mappings, err := auth.ParseGroupMappings(*ldapGroupMappings)
+		if err != nil {
+			slog.Error("ldap: invalid -ldap-group-mappings", "err", err)
+			os.Exit(1)
+		}
+		cfg := ldap.Config{
+			URLs:               splitComma(*ldapURL),
+			StartTLS:           *ldapStartTLS,
+			CACertFile:         *ldapCACert,
+			InsecureSkipVerify: *ldapInsecure,
+			BindDN:             *ldapBindDN,
+			BindPassword:       *ldapBindPassword,
+			UserBaseDN:         *ldapUserBaseDN,
+			UserFilter:         *ldapUserFilter,
+			EmailAttr:          *ldapEmailAttr,
+			GroupMode:          *ldapGroupMode,
+			GroupBaseDN:        *ldapGroupBaseDN,
+			GroupFilter:        *ldapGroupFilter,
+			GroupAttr:          *ldapGroupAttr,
+			GroupMappings:      mappings,
+			DefaultGrants:      grants,
+			TokenTTL:           ttl,
+		}
+		client, err := ldap.New(cfg)
+		if err != nil {
+			slog.Error("ldap: invalid configuration", "err", err)
+			os.Exit(1)
+		}
+		forgeSrv = forgeSrv.WithLDAP(client, auth.NewGroupRoleMapper(mappings))
+		if *ldapInsecure {
+			slog.Warn("ldap: TLS certificate verification DISABLED (-ldap-insecure-skip-verify) — do not use in production")
+		}
+		slog.Info("ldap: configured", "servers", len(cfg.URLs),
+			"group_mode", client.GroupMode(), "group_rules", len(mappings))
+	}
+
 	srv := &http.Server{
 		Addr:    *addr,
 		Handler: forgeSrv.Routes(),
@@ -450,6 +524,18 @@ func must(err error) {
 }
 
 // envOr returns the value of the env var name, or fallback when unset/empty.
+// splitComma splits a comma-separated list, trimming blanks — used for the
+// failover-ordered LDAP server list.
+func splitComma(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func envOr(name, fallback string) string {
 	if v := os.Getenv(name); v != "" {
 		return v
