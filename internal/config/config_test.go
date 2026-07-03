@@ -9,6 +9,7 @@ import (
 	"forge/internal/auth"
 	"forge/internal/cleanup"
 	"forge/internal/config"
+	"forge/internal/ldap"
 	"forge/internal/meta"
 	"forge/internal/repo"
 	"forge/internal/vuln"
@@ -32,6 +33,42 @@ func newAppliers(t *testing.T) config.Appliers {
 		Roles:    auth.NewRoleStore(m),
 		Webhooks: webhook.NewStore(m),
 		Meta:     m,
+	}
+}
+
+func TestApply_LDAPSection(t *testing.T) {
+	a := newAppliers(t)
+
+	// Valid ldap block → applied cleanly, LDAPConfigured reported.
+	valid := config.File{LDAP: &ldap.Config{
+		URLs:       []string{"ldaps://dc1:636"},
+		UserBaseDN: "ou=people,dc=example,dc=com",
+	}}
+	res, err := config.Apply(valid, a)
+	if err != nil {
+		t.Fatalf("valid ldap block rejected: %v", err)
+	}
+	if !res.LDAPConfigured {
+		t.Error("expected LDAPConfigured=true")
+	}
+
+	// Invalid ldap block (search mode without group base DN) → validation error.
+	invalid := config.File{LDAP: &ldap.Config{
+		URLs:       []string{"ldaps://dc1:636"},
+		UserBaseDN: "ou=people,dc=example,dc=com",
+		GroupMode:  "search",
+	}}
+	if _, err := config.Apply(invalid, a); err == nil {
+		t.Fatal("expected invalid ldap block to be rejected")
+	}
+
+	// No ldap block → LDAPConfigured=false.
+	res, err = config.Apply(config.File{}, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.LDAPConfigured {
+		t.Error("expected LDAPConfigured=false when no ldap block")
 	}
 }
 

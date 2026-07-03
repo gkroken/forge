@@ -326,6 +326,9 @@ func main() {
 		must(enc.Encode(f))
 		os.Exit(0)
 	}
+	// ldapFromConfig, when set by a -config file's ldap block, overrides the
+	// -ldap-* flags at wiring time below.
+	var ldapFromConfig *ldap.Config
 	if *configPath != "" || *configCheck {
 		if *configPath == "" {
 			slog.Error("-config-check requires -config <path>")
@@ -356,6 +359,7 @@ func main() {
 				"webhooks_create", res.Webhooks.Created,
 				"webhooks_update", res.Webhooks.Updated,
 				"security_default_set", res.SecurityDefaultSet,
+				"ldap_configured", res.LDAPConfigured,
 			)
 			os.Exit(0)
 		}
@@ -363,6 +367,7 @@ func main() {
 		// stop a rollout before traffic reaches the pod).
 		res, err := config.Apply(f, cfgAppliers)
 		must(err)
+		ldapFromConfig = f.LDAP // consumed at the LDAP wiring block below
 		slog.Info("config applied",
 			"repos", res.Repositories.Changes(),
 			"cleanup_policies", res.CleanupPolicies.Changes(),
@@ -437,7 +442,12 @@ func main() {
 			"groups_claim", cfg.GroupsClaim, "group_rules", len(mappings))
 	}
 
-	if *ldapURL != "" {
+	// LDAP config source: a -config file's ldap block wins over the -ldap-* flags.
+	var ldapCfg *ldap.Config
+	switch {
+	case ldapFromConfig != nil:
+		ldapCfg = ldapFromConfig
+	case *ldapURL != "":
 		grants := []auth.Grant{{Repo: "*", Role: auth.RoleRead}}
 		if raw := os.Getenv("LDAP_DEFAULT_GRANTS"); raw != "" {
 			if err := json.Unmarshal([]byte(raw), &grants); err != nil {
@@ -459,7 +469,7 @@ func main() {
 			slog.Error("ldap: invalid -ldap-group-mappings", "err", err)
 			os.Exit(1)
 		}
-		cfg := ldap.Config{
+		ldapCfg = &ldap.Config{
 			URLs:               splitComma(*ldapURL),
 			StartTLS:           *ldapStartTLS,
 			CACertFile:         *ldapCACert,
@@ -477,17 +487,19 @@ func main() {
 			DefaultGrants:      grants,
 			TokenTTL:           ttl,
 		}
-		client, err := ldap.New(cfg)
+	}
+	if ldapCfg != nil {
+		client, err := ldap.New(*ldapCfg)
 		if err != nil {
 			slog.Error("ldap: invalid configuration", "err", err)
 			os.Exit(1)
 		}
-		forgeSrv = forgeSrv.WithLDAP(client, auth.NewGroupRoleMapper(mappings))
-		if *ldapInsecure {
-			slog.Warn("ldap: TLS certificate verification DISABLED (-ldap-insecure-skip-verify) — do not use in production")
+		forgeSrv = forgeSrv.WithLDAP(client, auth.NewGroupRoleMapper(ldapCfg.GroupMappings))
+		if ldapCfg.InsecureSkipVerify {
+			slog.Warn("ldap: TLS certificate verification DISABLED (InsecureSkipVerify) — do not use in production")
 		}
-		slog.Info("ldap: configured", "servers", len(cfg.URLs),
-			"group_mode", client.GroupMode(), "group_rules", len(mappings))
+		slog.Info("ldap: configured", "servers", len(ldapCfg.URLs),
+			"group_mode", client.GroupMode(), "group_rules", len(ldapCfg.GroupMappings))
 	}
 
 	srv := &http.Server{

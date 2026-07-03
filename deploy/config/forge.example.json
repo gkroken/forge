@@ -101,5 +101,20 @@
       "events": ["artifact.published"],
       "enabled": true
     }
-  ]
+  ],
+  "ldap": {
+    "urls": ["ldaps://dc1.example.com:636", "ldaps://dc2.example.com:636"],
+    "bindDN": "cn=forge-svc,ou=service,dc=example,dc=com",
+    "bindPassword": "${LDAP_BIND_PASSWORD}",
+    "userBaseDN": "ou=people,dc=example,dc=com",
+    "userFilter": "(sAMAccountName=%s)",
+    "emailAttr": "mail",
+    "groupMode": "memberof",
+    "groupMappings": [
+      { "group": "forge-admins", "role": "admin" },
+      { "group": "forge-devs", "role": "write" }
+    ],
+    "defaultGrants": [{ "repo": "*", "role": "read" }],
+    "tokenTTL": "8h"
+  }
 }

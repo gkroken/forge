@@ -1,11 +1,48 @@
 package ldap
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"forge/internal/auth"
 )
+
+func TestConfigJSON_RoundTrip(t *testing.T) {
+	in := Config{
+		URLs:          []string{"ldaps://dc1:636", "ldap://dc2:389"},
+		StartTLS:      true,
+		BindDN:        "cn=svc,dc=x",
+		BindPassword:  "s3cret",
+		UserBaseDN:    "ou=people,dc=x",
+		UserFilter:    "(sAMAccountName=%s)",
+		GroupMappings: []auth.GroupRule{{Group: "forge-admins", Role: auth.RoleAdmin}},
+		TokenTTL:      2 * time.Hour,
+		Timeout:       3 * time.Second,
+	}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Durations render as human strings under camelCase keys.
+	if !strings.Contains(string(b), `"tokenTTL":"2h0m0s"`) {
+		t.Errorf("tokenTTL not a duration string: %s", b)
+	}
+	if !strings.Contains(string(b), `"userBaseDN":"ou=people,dc=x"`) {
+		t.Errorf("expected camelCase keys: %s", b)
+	}
+	var out Config
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.TokenTTL != 2*time.Hour || out.Timeout != 3*time.Second {
+		t.Errorf("durations lost: ttl=%v timeout=%v", out.TokenTTL, out.Timeout)
+	}
+	if out.UserFilter != in.UserFilter || len(out.GroupMappings) != 1 {
+		t.Errorf("round-trip mismatch: %+v", out)
+	}
+}
 
 func TestConfigValidate_DefaultsAndErrors(t *testing.T) {
 	tests := []struct {

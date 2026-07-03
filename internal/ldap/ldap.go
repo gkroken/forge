@@ -14,6 +14,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -28,27 +29,118 @@ import (
 // Config holds LDAP client configuration. Assemble it from environment variables
 // (FromEnv) or command-line flags (see cmd/forge).
 type Config struct {
-	URLs               []string // ldap://host:389 / ldaps://host:636 — tried in order (failover)
-	StartTLS           bool     // upgrade ldap:// connections to TLS before any bind
-	CACertFile         string   // optional custom CA PEM; empty = system roots
-	InsecureSkipVerify bool     // dev/test only — disables TLS verification
+	URLs               []string `json:"urls,omitempty"`               // ldap://host:389 / ldaps://host:636 — tried in order (failover)
+	StartTLS           bool     `json:"startTLS,omitempty"`           // upgrade ldap:// connections to TLS before any bind
+	CACertFile         string   `json:"caCertFile,omitempty"`         // optional custom CA PEM; empty = system roots
+	InsecureSkipVerify bool     `json:"insecureSkipVerify,omitempty"` // dev/test only — disables TLS verification
 
-	BindDN       string // service account for the search step (empty = anonymous search)
-	BindPassword string // service-account password (secret)
+	BindDN       string `json:"bindDN,omitempty"`       // service account for the search step (empty = anonymous search)
+	BindPassword string `json:"bindPassword,omitempty"` // service-account password (secret)
 
-	UserBaseDN string // ou=people,dc=example,dc=com
-	UserFilter string // %s is replaced by the escaped login name, e.g. (uid=%s) — AD: (sAMAccountName=%s)
-	EmailAttr  string // attribute holding the user's email, default "mail"
+	UserBaseDN string `json:"userBaseDN,omitempty"` // ou=people,dc=example,dc=com
+	UserFilter string `json:"userFilter,omitempty"` // %s is replaced by the escaped login name, e.g. (uid=%s) — AD: (sAMAccountName=%s)
+	EmailAttr  string `json:"emailAttr,omitempty"`  // attribute holding the user's email, default "mail"
 
-	GroupMode   string // "memberof" (read attr off user entry — AD default) | "search"
-	GroupBaseDN string // base DN for GroupMode=="search"
-	GroupFilter string // %s is replaced by the escaped user DN, e.g. (&(objectClass=groupOfNames)(member=%s))
-	GroupAttr   string // attribute holding the group name, default "cn"
+	GroupMode   string `json:"groupMode,omitempty"`   // "memberof" (read attr off user entry — AD default) | "search"
+	GroupBaseDN string `json:"groupBaseDN,omitempty"` // base DN for GroupMode=="search"
+	GroupFilter string `json:"groupFilter,omitempty"` // %s is replaced by the escaped user DN, e.g. (&(objectClass=groupOfNames)(member=%s))
+	GroupAttr   string `json:"groupAttr,omitempty"`   // attribute holding the group name, default "cn"
 
-	GroupMappings []auth.GroupRule // IdP group → base role
-	DefaultGrants []auth.Grant     // fallback when no group matches, default read on *
-	TokenTTL      time.Duration    // lifetime of a minted session, default 8h
-	Timeout       time.Duration    // per-dial / per-operation timeout, default 5s
+	GroupMappings []auth.GroupRule `json:"groupMappings,omitempty"` // IdP group → base role
+	DefaultGrants []auth.Grant     `json:"defaultGrants,omitempty"` // fallback when no group matches, default read on *
+	TokenTTL      time.Duration    `json:"-"`                       // lifetime of a minted session, default 8h; JSON as "tokenTTL" string
+	Timeout       time.Duration    `json:"-"`                       // per-dial / per-operation timeout, default 5s; JSON as "timeout" string
+}
+
+// roleRuleJSON / grantJSON render roles as human strings ("read"/"write"/"admin")
+// in config-as-code, rather than the numeric auth.Role used in persisted tokens.
+type roleRuleJSON struct {
+	Group string `json:"group"`
+	Role  string `json:"role"`
+}
+type grantJSON struct {
+	Repo string `json:"repo"`
+	Role string `json:"role"`
+}
+
+// MarshalJSON renders durations as human strings ("8h", "5s") and roles as their
+// names, matching the config-as-code convention (see cleanup.NamedPolicy). The
+// group-mapping/grant fields are shadowed by string-role variants.
+func (c Config) MarshalJSON() ([]byte, error) {
+	type alias Config
+	a := alias(c)
+	a.GroupMappings, a.DefaultGrants = nil, nil // rendered via the envelope below
+	rules := make([]roleRuleJSON, len(c.GroupMappings))
+	for i, r := range c.GroupMappings {
+		rules[i] = roleRuleJSON{Group: r.Group, Role: r.Role.String()}
+	}
+	grants := make([]grantJSON, len(c.DefaultGrants))
+	for i, g := range c.DefaultGrants {
+		grants[i] = grantJSON{Repo: g.Repo, Role: g.Role.String()}
+	}
+	return json.Marshal(&struct {
+		alias
+		TokenTTL      string         `json:"tokenTTL,omitempty"`
+		Timeout       string         `json:"timeout,omitempty"`
+		GroupMappings []roleRuleJSON `json:"groupMappings,omitempty"`
+		DefaultGrants []grantJSON    `json:"defaultGrants,omitempty"`
+	}{alias: a, TokenTTL: durString(c.TokenTTL), Timeout: durString(c.Timeout),
+		GroupMappings: rules, DefaultGrants: grants})
+}
+
+// UnmarshalJSON parses the duration strings and the string-role group mappings /
+// default grants. It shadows the embedded numeric-role fields so callers write
+// "role": "admin", not "role": 3.
+func (c *Config) UnmarshalJSON(data []byte) error {
+	type alias Config
+	aux := &struct {
+		*alias
+		TokenTTL      string         `json:"tokenTTL,omitempty"`
+		Timeout       string         `json:"timeout,omitempty"`
+		GroupMappings []roleRuleJSON `json:"groupMappings,omitempty"`
+		DefaultGrants []grantJSON    `json:"defaultGrants,omitempty"`
+	}{alias: (*alias)(c)}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	for name, raw := range map[string]string{"tokenTTL": aux.TokenTTL, "timeout": aux.Timeout} {
+		if raw == "" {
+			continue
+		}
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return fmt.Errorf("ldap: invalid %s %q: %w", name, raw, err)
+		}
+		if name == "tokenTTL" {
+			c.TokenTTL = d
+		} else {
+			c.Timeout = d
+		}
+	}
+	c.GroupMappings = c.GroupMappings[:0]
+	for _, r := range aux.GroupMappings {
+		role := auth.BaseRoleFor(r.Role)
+		if role == auth.RoleNone {
+			return fmt.Errorf("ldap: group mapping %q: unknown role %q (want read|write|admin)", r.Group, r.Role)
+		}
+		c.GroupMappings = append(c.GroupMappings, auth.GroupRule{Group: r.Group, Role: role})
+	}
+	c.DefaultGrants = c.DefaultGrants[:0]
+	for _, g := range aux.DefaultGrants {
+		role := auth.BaseRoleFor(g.Role)
+		if role == auth.RoleNone {
+			return fmt.Errorf("ldap: default grant on %q: unknown role %q (want read|write|admin)", g.Repo, g.Role)
+		}
+		c.DefaultGrants = append(c.DefaultGrants, auth.Grant{Repo: g.Repo, Role: role})
+	}
+	return nil
+}
+
+func durString(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	return d.String()
 }
 
 const (

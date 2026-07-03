@@ -19,6 +19,7 @@ import (
 
 	"forge/internal/auth"
 	"forge/internal/cleanup"
+	"forge/internal/ldap"
 	"forge/internal/meta"
 	"forge/internal/repo"
 	"forge/internal/vuln"
@@ -35,6 +36,12 @@ type File struct {
 	SecurityDefault  *vuln.Policy           `json:"securityDefault,omitempty"`
 	Roles            []auth.CustomRole      `json:"roles,omitempty"`
 	Webhooks         []webhook.Subscription `json:"webhooks,omitempty"`
+	// LDAP declares the directory-authentication settings honored on boot in
+	// -config mode (an alternative to the -ldap-* flags; the block wins when both
+	// are set). The bind password should be supplied via ${ENV_VAR}. It is a
+	// runtime wiring input, not a managed object set, so Apply validates it but
+	// does not reconcile it, and Export omits it (like OIDC).
+	LDAP *ldap.Config `json:"ldap,omitempty"`
 	// Prune deletes objects previously managed by this file but now absent.
 	// Objects created via REST/UI are never pruned regardless of this flag.
 	Prune bool `json:"prune,omitempty"`
@@ -58,6 +65,7 @@ type Result struct {
 	Roles            KindResult
 	Webhooks         KindResult
 	SecurityDefaultSet bool // true when the config specified SecurityDefault
+	LDAPConfigured     bool // true when the config specified an ldap block
 }
 
 // KindResult holds per-object-kind operation counts.
@@ -185,6 +193,7 @@ func Plan(f File, a Appliers) (Result, error) {
 	if f.SecurityDefault != nil {
 		res.SecurityDefaultSet = true
 	}
+	res.LDAPConfigured = f.LDAP != nil
 
 	// Roles.
 	if a.Roles != nil {
@@ -287,6 +296,12 @@ func validate(f File, a Appliers) error {
 			if _, ok, _ := a.Vuln.Get(r.SecurityPolicyName); !ok {
 				errs = append(errs, fmt.Sprintf("repository %q: security policy %q not found in file or store", r.Name, r.SecurityPolicyName))
 			}
+		}
+	}
+	if f.LDAP != nil {
+		cp := *f.LDAP // Validate mutates (fills defaults); don't touch the caller's copy
+		if err := cp.Validate(); err != nil {
+			errs = append(errs, fmt.Sprintf("ldap: %v", err))
 		}
 	}
 	if len(errs) > 0 {
@@ -406,6 +421,7 @@ func Apply(f File, a Appliers) (Result, error) {
 		}
 		res.SecurityDefaultSet = true
 	}
+	res.LDAPConfigured = f.LDAP != nil
 
 	// 4. Repositories.
 	for _, r := range f.Repositories {
