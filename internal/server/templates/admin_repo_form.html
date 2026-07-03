@@ -31,7 +31,7 @@
 
     <div class="form-group">
       <label for="f-kind">Kind</label>
-      <select id="f-kind" name="kind" onchange="syncKind()">
+      <select id="f-kind" name="kind">
         {{range .Kinds}}
         <option value="{{.}}"{{if eq . $.KindStr}} selected{{end}}>{{.}}</option>
         {{end}}
@@ -39,19 +39,19 @@
     </div>
   </div>
 
-  <div class="form-group" id="g-upstream">
+  <div class="form-group" id="g-upstream" data-kind-show="proxy">
     <label for="f-upstream">Upstream URL</label>
     <input id="f-upstream" type="text" name="upstream" value="{{.Repo.Upstream}}"
            placeholder="https://repo1.maven.org/maven2">
   </div>
 
-  <div class="form-group" id="g-members">
+  <div class="form-group" id="g-members" data-kind-show="group">
     <label for="f-members">Members <span class="form-hint-inline">comma-separated, in priority order</span></label>
     <input id="f-members" type="text" name="members" value="{{join .Repo.Members ", "}}"
            placeholder="my-hosted, my-proxy">
   </div>
 
-  <div class="form-row" id="g-proxy-extra">
+  <div class="form-row" id="g-proxy-extra" data-kind-show="proxy">
     <div class="form-group">
       <label for="f-ttl">Proxy TTL</label>
       <input id="f-ttl" type="text" name="proxyTTL" value="{{durStr .Repo.ProxyTTL}}"
@@ -71,7 +71,7 @@
     </label>
   </div>
 
-  <fieldset id="g-cleanup">
+  <fieldset id="g-cleanup" data-kind-show="hosted">
     <legend>Cleanup policy <span class="form-hint-inline">(hosted only)</span></legend>
     <div class="form-group">
       <label for="f-cleanup-policy-name">Policy</label>
@@ -89,14 +89,6 @@
       {{end}}
       <span class="form-hint">Manage policies on the <a href="/ui/admin/cleanup-policies">Cleanup</a> page.</span>
     </div>
-    {{if .IsEdit}}
-    <div class="form-group" style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
-      <button type="button" class="btn"
-              onclick="runCleanup('{{.Repo.Name}}', this)">Run now</button>
-      <a href="/ui/admin/repos/{{.Repo.Name}}/cleanup" class="btn">Dry-run &amp; history</a>
-      <span id="cleanup-result" style="font-size:.85em"></span>
-    </div>
-    {{end}}
   </fieldset>
 
   <div class="form-actions">
@@ -107,25 +99,5 @@
   </div>
 </form>
 
-<script>
-function syncKind() {
-  var k = document.getElementById('f-kind').value;
-  document.getElementById('g-upstream').style.display    = k === 'proxy' ? '' : 'none';
-  document.getElementById('g-proxy-extra').style.display = k === 'proxy' ? '' : 'none';
-  document.getElementById('g-members').style.display     = k === 'group' ? '' : 'none';
-  document.getElementById('g-cleanup').style.display     = k === 'hosted' ? '' : 'none';
-}
-syncKind();
-
-function runCleanup(name, btn) {
-  btn.disabled = true;
-  var el = document.getElementById('cleanup-result');
-  el.textContent = 'Running…';
-  fetch('/api/v1/repos/' + name + '/cleanup', {method: 'POST'})
-    .then(function(r) { return r.json(); })
-    .then(function(d) { el.textContent = 'Done: ' + d.deleted + ' artifact(s) deleted, ' + (d.freed_bytes / 1048576).toFixed(2) + ' MB freed'; })
-    .catch(function(e) { el.textContent = 'Error: ' + e; })
-    .finally(function() { btn.disabled = false; });
-}
-</script>
+<script src="/ui/static/repo_form.js"></script>
 {{end}}
