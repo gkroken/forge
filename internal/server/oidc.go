@@ -117,7 +117,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.establishSSOSession(w, r, "oidc", info.Subject, info.Email, info.Groups,
-		s.OIDC.DefaultGrants(), s.OIDC.TokenTTL()); err != nil {
+		s.GroupMapper, s.OIDC.DefaultGrants(), s.OIDC.TokenTTL(), "/ui/"); err != nil {
 		slog.Error("oidc: establish session failed", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}
@@ -128,16 +128,18 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 // role from group membership, provisions/refreshes the User record, mints a forge
 // session token, sets the session cookie, and redirects to the UI.
 //
-// handleOIDCCallback calls it today; a future LDAP-bind handler would call it the
-// same way, passing source="ldap" and its own fallback grants/TTL — which is why
-// role mapping and user provisioning live here rather than in the OIDC package.
+// handleOIDCCallback calls it today (source="oidc", mapper=s.GroupMapper); the
+// LDAP form-login path calls it the same way with source="ldap", s.ldapMapper, and
+// its own fallback grants/TTL — which is why role mapping and user provisioning
+// live here rather than in the OIDC package. mapper may be nil (no group rules →
+// every login gets the fallback grant). next is the post-login redirect target.
 //
 // On success it writes the redirect itself and returns nil. It returns a non-nil
 // error only for internal failures the caller should surface as 500; the
 // disabled-account path is handled inline with a redirect and returns nil.
 func (s *Server) establishSSOSession(w http.ResponseWriter, r *http.Request,
-	source, subject, email string, groups []string,
-	fallback []auth.Grant, ttl time.Duration) error {
+	source, subject, email string, groups []string, mapper *auth.GroupRoleMapper,
+	fallback []auth.Grant, ttl time.Duration, next string) error {
 
 	label := email
 	if label == "" {
@@ -145,7 +147,7 @@ func (s *Server) establishSSOSession(w http.ResponseWriter, r *http.Request,
 	}
 
 	// Resolve grants from group membership; fall back when no group matches.
-	role, matched := s.GroupMapper.Resolve(groups)
+	role, matched := mapper.Resolve(groups)
 	var grants []auth.Grant
 	if matched {
 		grants = []auth.Grant{{Repo: "*", Role: role}}
@@ -191,7 +193,7 @@ func (s *Server) establishSSOSession(w http.ResponseWriter, r *http.Request,
 		Secure:   isSecureContext(r),
 		SameSite: http.SameSiteStrictMode,
 	})
-	http.Redirect(w, r, "/ui/", http.StatusSeeOther)
+	http.Redirect(w, r, next, http.StatusSeeOther) // #nosec G710 -- next is "/ui/" (OIDC) or sanitizeNext output (LDAP form)
 	return nil
 }
 

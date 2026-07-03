@@ -31,6 +31,7 @@ import (
 	"forge/internal/indexer"
 	"forge/internal/meta"
 	"forge/internal/obs"
+	"forge/internal/ldap"
 	"forge/internal/oidc"
 	"forge/internal/queue"
 	"forge/internal/repo"
@@ -70,7 +71,9 @@ type Server struct {
 	Auth        auth.Store             // nil = auth not enabled (eval mode)
 	Enforcer    *auth.Enforcer         // always non-nil; uses AllowAll when Auth is nil
 	OIDC        oidcProvider           // nil = OIDC not configured; *oidc.Provider satisfies this
-	GroupMapper *auth.GroupRoleMapper  // nil = no group→role mapping; SSO logins use fallback grants
+	GroupMapper *auth.GroupRoleMapper  // nil = no OIDC group→role mapping; SSO logins use fallback grants
+	LDAP        ldapAuthenticator      // nil = LDAP not configured; *ldap.Client satisfies this
+	ldapMapper  *auth.GroupRoleMapper  // nil = no LDAP group→role mapping; LDAP logins use fallback grants
 	Queue       queue.Queue            // nil = no async index regen (eval / tests)
 	Metrics     *obs.Metrics           // nil = no instrumentation (tests)
 	Cleanup     *cleanup.PolicyManager // nil = cleanup-policies API returns 503
@@ -129,6 +132,17 @@ func (s *Server) WithOIDC(p *oidc.Provider, mapper *auth.GroupRoleMapper) *Serve
 	if _, err := rand.Read(s.oidcKey); err != nil {
 		panic("server: crypto/rand unavailable: " + err.Error())
 	}
+	return s
+}
+
+// WithLDAP attaches an LDAP authenticator and its group→role mapper. The existing
+// username/password login form becomes the LDAP entry point (search-then-bind);
+// on success a normal forge session token is minted via establishSSOSession. mapper
+// may be nil (LDAP logins then fall back to the client's default grants). Call
+// before Routes().
+func (s *Server) WithLDAP(c *ldap.Client, mapper *auth.GroupRoleMapper) *Server {
+	s.LDAP = c
+	s.ldapMapper = mapper
 	return s
 }
 

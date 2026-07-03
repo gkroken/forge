@@ -465,7 +465,7 @@ func (s *Server) uiLogin(w http.ResponseWriter, r *http.Request) {
 				Title:        "Sign in",
 				Error:        "Invalid token or insufficient permissions.",
 				Next:         next,
-				UsersEnabled: s.Users != nil,
+				UsersEnabled: s.usersOrLDAP(),
 			})
 			return
 		}
@@ -487,45 +487,66 @@ func (s *Server) uiLogin(w http.ResponseWriter, r *http.Request) {
 		errMsg = "Invalid token or insufficient permissions."
 	case "oidc":
 		errMsg = "SSO login failed. Please try again or sign in with a token."
+	case "disabled":
+		errMsg = "This account is disabled."
 	}
 	render(w, tmplLogin, "base.html", loginPage{
 		Title:        "Sign in",
 		Error:        errMsg,
 		Next:         next,
 		OIDCEnabled:  s.OIDC != nil && s.Auth != nil,
-		UsersEnabled: s.Users != nil,
+		UsersEnabled: s.usersOrLDAP(),
 	})
 }
 
-// loginWithPassword authenticates a user with username/password, creates a
-// 24h session token, and sets the session cookie.
+// loginWithPassword authenticates a username/password submission. Local users are
+// tried first (so the bootstrap admin always works), then the LDAP directory if
+// configured. Either path mints a session cookie; a miss shows a generic error.
 func (s *Server) loginWithPassword(w http.ResponseWriter, r *http.Request, username, password, next string) {
 	fail := func(msg string) {
 		render(w, tmplLogin, "base.html", loginPage{
 			Title: "Sign in", Error: msg, Next: next,
-			OIDCEnabled: s.OIDC != nil && s.Auth != nil, UsersEnabled: s.Users != nil,
+			OIDCEnabled: s.OIDC != nil && s.Auth != nil, UsersEnabled: s.usersOrLDAP(),
 		})
 	}
-	if s.Users == nil || s.Auth == nil {
+	// 1. Local user store.
+	if s.tryLocalLogin(w, r, username, password, next, fail) {
+		return
+	}
+	// 2. LDAP directory (search-then-bind → forge token).
+	if s.tryLDAPLogin(w, r, username, password, next) {
+		return
+	}
+	// 3. Nothing matched.
+	if s.Users == nil && s.LDAP == nil {
 		fail("User authentication is not configured.")
 		return
 	}
+	fail("Invalid username or password.")
+}
+
+// tryLocalLogin authenticates against the local user store, minting a 24h session
+// on success. It returns handled=true when it wrote a response — either a success
+// redirect or a definitive local error (disabled/no-permission). A wrong password
+// or unknown user returns false so the caller can fall through to LDAP.
+func (s *Server) tryLocalLogin(w http.ResponseWriter, r *http.Request, username, password, next string, fail func(string)) (handled bool) {
+	if s.Users == nil || s.Auth == nil {
+		return false
+	}
 	u, err := s.Users.Authenticate(username, password)
 	if err != nil || u == nil {
-		fail("Invalid username or password.")
-		return
+		return false // unknown/wrong-password → let LDAP try
 	}
-	// Issue a 24h session token with the user's base role on all repos.
 	role := auth.BaseRoleFor(u.Role)
 	if role < auth.RoleRead {
 		fail("Account has no permissions.")
-		return
+		return true
 	}
 	exp := time.Now().UTC().Add(24 * time.Hour)
 	_, secret, err := s.Auth.Create("session:"+username, []auth.Grant{{Repo: "*", Role: role}}, &exp, username)
 	if err != nil {
 		fail("Failed to create session.")
-		return
+		return true
 	}
 	http.SetCookie(w, &http.Cookie{ // #nosec G124
 		Name:     auth.UISessionCookie,
@@ -536,7 +557,12 @@ func (s *Server) loginWithPassword(w http.ResponseWriter, r *http.Request, usern
 		SameSite: http.SameSiteStrictMode,
 	})
 	http.Redirect(w, r, next, http.StatusSeeOther) // #nosec G710
+	return true
 }
+
+// usersOrLDAP reports whether any username/password login path is available,
+// controlling whether the login form's credential fields are shown.
+func (s *Server) usersOrLDAP() bool { return s.Users != nil || s.LDAP != nil }
 
 func (s *Server) uiLogout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure set via isSecureContext; HttpOnly+SameSiteStrict already present
