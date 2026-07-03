@@ -99,10 +99,10 @@ before every handler.
 ### Single sign-on (OIDC)
 
 Forge authenticates operators against any OIDC identity provider — **Keycloak,
-Entra / Azure AD, Okta, ADFS**. Active Directory integrates through the IdP:
-Keycloak federates on-prem AD over LDAP; Entra ID fronts Azure AD directly. (A
-direct LDAP bind is not built yet; the role-mapping layer is factored so it can be
-added without rework.)
+Entra / Azure AD, Okta, ADFS**. Active Directory integrates either through the IdP
+(Keycloak federates on-prem AD over LDAP; Entra ID fronts Azure AD directly) or via
+a **direct LDAP/AD bind** — see [Direct LDAP / Active Directory login](#direct-ldap--active-directory-login)
+below. Both paths share the same group→role mapping.
 
 Setting the issuer enables SSO. Every flag has a matching `OIDC_*` env var (the
 flag overrides the env); prefer the env var for the client secret, since flags are
@@ -150,6 +150,80 @@ copy its secret; create a group `forge-admins` and a user in it; add a
 "Full group path" off) so the ID token carries the group. Then start forge with
 `-oidc-issuer http://localhost:8081/realms/forge` and
 `-oidc-group-mappings forge-admins:admin`, and sign in via "Sign in with SSO".
+
+### Direct LDAP / Active Directory login
+
+Users sign in on the normal login form with their **directory** username and
+password. Forge verifies the credentials against the directory by *search-then-bind*
+(bind as a service account → find the user → re-bind as that user) and, on success,
+mints a **normal forge token** — the AD password never leaves the login POST and is
+never written into `.npmrc`, `settings.xml`, or CI config. Group membership feeds the
+same group→role mapping as OIDC. Anonymous-read repositories need no login at all.
+
+Setting `-ldap-url` enables it. Every flag has a matching `LDAP_*` env var (prefer
+the env var for the bind password, which is visible in `ps` as a flag):
+
+```bash
+./forge -addr :8080 -data ./data -auth \
+  -ldap-url          ldaps://dc1.example.com:636,ldaps://dc2.example.com:636 \
+  -ldap-bind-dn      'cn=forge-svc,ou=service,dc=example,dc=com' \
+  -ldap-bind-password "$LDAP_BIND_PASSWORD" \
+  -ldap-user-base-dn 'ou=people,dc=example,dc=com' \
+  -ldap-user-filter  '(sAMAccountName=%s)' \
+  -ldap-group-mappings 'forge-admins:admin,forge-devs:write,staff:read'
+```
+
+| Flag / env | Purpose |
+|--|--|
+| `-ldap-url` / `LDAP_URL` | Server URL(s), comma-separated for failover; **set this to enable LDAP login** |
+| `-ldap-start-tls` / `LDAP_START_TLS` | Issue StartTLS on `ldap://` connections before binding |
+| `-ldap-ca-cert` / `LDAP_CA_CERT` | PEM CA bundle for the TLS connection (default: system roots) |
+| `-ldap-bind-dn` / `LDAP_BIND_DN` | Service-account DN for the search step (empty = anonymous search) |
+| `-ldap-bind-password` / `LDAP_BIND_PASSWORD` | Service-account password (prefer the env var) |
+| `-ldap-user-base-dn` / `LDAP_USER_BASE_DN` | Base DN for the user search |
+| `-ldap-user-filter` / `LDAP_USER_FILTER` | User filter; `%s` = escaped login name (default `(uid=%s)`; AD: `(sAMAccountName=%s)`) |
+| `-ldap-email-attr` / `LDAP_EMAIL_ATTR` | Attribute holding the user's email (default `mail`) |
+| `-ldap-group-mode` / `LDAP_GROUP_MODE` | `memberof` (read the attribute off the user — AD default) or `search` |
+| `-ldap-group-base-dn` / `LDAP_GROUP_BASE_DN` | Base DN for group search (mode `search`) |
+| `-ldap-group-filter` / `LDAP_GROUP_FILTER` | Group filter; `%s` = escaped user DN (e.g. `(&(objectClass=groupOfNames)(member=%s))`) |
+| `-ldap-group-attr` / `LDAP_GROUP_ATTR` | Attribute holding the group name (default `cn`) |
+| `-ldap-group-mappings` / `LDAP_GROUP_MAPPINGS` | `group:role,…` mapping directory groups onto roles |
+| `LDAP_DEFAULT_GRANTS` | JSON grants applied when no group matches (default: `read` on `*`) |
+| `-ldap-token-ttl` / `LDAP_TOKEN_TTL` | LDAP session lifetime (default `8h`) |
+
+The connection is TLS-protected: use `ldaps://`, or `ldap://` with `-ldap-start-tls`.
+`-ldap-insecure-skip-verify` disables certificate verification for dev only and logs a
+loud warning. When `-config` mode declares an `ldap` block, that block wins over these
+flags. Local users (if any) are tried before LDAP, so the bootstrap admin keeps working.
+The live config and mapping table are shown read-only on the **Access** admin page.
+
+#### OpenLDAP quick-start (local)
+
+```bash
+docker run -p 389:1389 \
+  -e LDAP_ADMIN_USERNAME=admin -e LDAP_ADMIN_PASSWORD=adminpassword \
+  -e LDAP_USERS=alice,bob -e LDAP_PASSWORDS=alicepw,bobpw \
+  -e LDAP_ROOT=dc=example,dc=org \
+  -e LDAP_ADMIN_DN=cn=admin,dc=example,dc=org \
+  bitnami/openldap:latest
+```
+
+Bitnami seeds users under `ou=users,dc=example,dc=org` and a group `readers`
+(`ou=users`, `groupOfNames`) containing them. Start forge with:
+
+```bash
+./forge -auth \
+  -ldap-url          ldap://localhost:389 \
+  -ldap-bind-dn      'cn=admin,dc=example,dc=org' \
+  -ldap-bind-password adminpassword \
+  -ldap-user-base-dn 'ou=users,dc=example,dc=org' \
+  -ldap-user-filter  '(cn=%s)' \
+  -ldap-group-mappings 'readers:write'
+```
+
+Then sign in on the login form as `alice` / `alicepw`. A repeatable end-to-end
+validation harness (custom LDIF for `forge-admins`/`forge-devs`, curl-driven login
+assertions) lives at [`scripts/ldap-validate.sh`](scripts/ldap-validate.sh).
 
 ---
 
