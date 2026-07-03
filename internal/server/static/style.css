@@ -1339,7 +1339,9 @@ thead th { font-size: var(--fs-eyebrow); letter-spacing: .1em; }
 .fw-600    { font-weight: 600; }
 
 /* ── toggle switch ───────────────────────────────────────────────────────── */
-.toggle-sw { position: relative; display: inline-flex; align-items: center; gap: .6rem; cursor: pointer; user-select: none; }
+/* `label.toggle-sw` (0,1,1) so it overrides `.form-group label` (block/600/margin)
+   on source order — a bare `.toggle-sw` (0,1,0) loses, collapsing the track. */
+label.toggle-sw { position: relative; display: inline-flex; align-items: center; gap: .6rem; margin-bottom: 0; font-weight: 400; cursor: pointer; user-select: none; }
 .toggle-sw input[type=checkbox] { -webkit-appearance: none; appearance: none; position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
 .toggle-sw-track { width: 36px; height: 20px; border-radius: 10px; background: var(--border); transition: background .18s; flex-shrink: 0; position: relative; }
 .toggle-sw input:checked ~ .toggle-sw-track { background: var(--accent); }
