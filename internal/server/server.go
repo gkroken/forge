@@ -173,8 +173,10 @@ func (s *Server) WithQueue(ctx context.Context, q queue.Queue) *Server {
 		w.Register(trivyRepoScanJobType, s.handleTrivyRepoScanJob)
 		w.Register(helmRepoScanJobType, s.handleHelmRepoScanJob)
 	}
-	// Integrity verify needs only the stores, so it is always registered.
+	// Integrity verify and Nexus migration need only the stores, so they are
+	// always registered.
 	w.Register(integrityJobType, s.handleIntegrityJob)
+	w.Register(migrationJobType, s.handleMigrationJob)
 	go w.Work(ctx, q) //nolint:errcheck
 	return s
 }
@@ -334,6 +336,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/v1/repos/", s.handleAdminRepos)
 	mux.HandleFunc("/api/v1/search", s.handleSearch)
 	mux.HandleFunc("/api/v1/integrity", s.handleIntegrityRollup)
+	mux.HandleFunc("/api/v1/migration", s.handleMigration)
+	mux.HandleFunc("/api/v1/migration/", s.handleMigration)
 	mux.HandleFunc("/api/v1/audit", s.handleAuditAPI)
 	mux.HandleFunc("/api/v1/blob-stores", s.handleBlobStores)
 	mux.HandleFunc("/api/v1/webhooks", s.handleWebhooks)
