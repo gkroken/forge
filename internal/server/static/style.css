@@ -1349,6 +1349,14 @@ label.toggle-sw { position: relative; display: inline-flex; align-items: center;
 .toggle-sw input:checked ~ .toggle-sw-track::after { transform: translateX(16px); }
 .toggle-sw-label { font-size: 13px; color: var(--text); }
 
+/* ── group member picker ─────────────────────────────────────────────────── */
+.member-picker { border: 1px solid var(--border); border-radius: 8px; padding: 4px; margin-top: 6px; max-height: 240px; overflow: auto; }
+/* label.member-opt (0,2,1) overrides .form-group label (block/600/margin). */
+.member-picker label.member-opt { display: flex; align-items: center; gap: 8px; margin: 0; padding: 6px 10px; border-radius: 6px; font-size: 13px; font-weight: 400; cursor: pointer; }
+.member-picker label.member-opt:hover { background: var(--bg-hover); }
+.member-opt input[type=checkbox] { margin: 0; flex-shrink: 0; }
+.member-opt-name { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; }
+
 /* ── status chip ─────────────────────────────────────────────────────────── */
 .chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 12px; font-size: 11px; font-weight: 600; border: 1px solid transparent; }
 .chip::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }

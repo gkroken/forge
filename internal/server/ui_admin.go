@@ -63,7 +63,58 @@ type adminFormPage struct {
 	Error       string
 	Formats     []string
 	Kinds       []string
-	PolicyNames []string // named cleanup policies available for selection
+	PolicyNames []string       // named cleanup policies available for selection
+	Members     []memberOption // candidate repos for a group's member picker
+}
+
+// memberOption is one selectable repo in a group's member picker. The picker
+// renders every eligible candidate (non-group, not self) tagged with its
+// format+kind; repo_form.js shows only those matching the group's format.
+type memberOption struct {
+	Name    string
+	Format  string
+	Kind    string
+	Checked bool
+}
+
+// memberOptions lists the repos a group can aggregate: every hosted/proxy repo
+// except the group itself. Already-selected members come first, in their saved
+// priority order, so editing a group preserves member ordering; the rest follow
+// hosted-first then by name. Filtering to the group's own format happens client
+// side (the format can change on the new-repo form).
+func (s *Server) memberOptions(current repo.Repository) []memberOption {
+	selected := map[string]bool{}
+	for _, m := range current.Members {
+		selected[m] = true
+	}
+	byName := map[string]repo.Repository{}
+	var rest []repo.Repository
+	for _, rp := range s.Repos.All() {
+		if rp.Name == current.Name || rp.Kind == repo.Group {
+			continue
+		}
+		byName[rp.Name] = rp
+		if !selected[rp.Name] {
+			rest = append(rest, rp)
+		}
+	}
+	sort.Slice(rest, func(i, j int) bool {
+		if rest[i].Kind != rest[j].Kind {
+			return rest[i].Kind == repo.Hosted // hosted before proxy
+		}
+		return rest[i].Name < rest[j].Name
+	})
+
+	var out []memberOption
+	for _, m := range current.Members { // saved order first
+		if rp, ok := byName[m]; ok {
+			out = append(out, memberOption{Name: rp.Name, Format: rp.Format, Kind: string(rp.Kind), Checked: true})
+		}
+	}
+	for _, rp := range rest {
+		out = append(out, memberOption{Name: rp.Name, Format: rp.Format, Kind: string(rp.Kind)})
+	}
+	return out
 }
 
 type repoConfigPage struct {
@@ -76,7 +127,8 @@ type repoConfigPage struct {
 	Formats        []string
 	Kinds          []string
 	PolicyNames    []string
-	ActiveTab      string // "settings" | "content" | "access" | "activity"
+	Members        []memberOption // candidate repos for a group's member picker
+	ActiveTab      string         // "settings" | "content" | "access" | "activity"
 	ArtifactCount  int
 	SizeBytes      int64
 	StoragePct     int
@@ -302,14 +354,16 @@ func (s *Server) uiAdminNewRepo(w http.ResponseWriter, r *http.Request) {
 		s.processRepoForm(w, r, "", false)
 		return
 	}
+	newRepo := repo.Repository{Kind: repo.Hosted}
 	render(w, tmplAdminForm, "admin_shell.html", adminFormPage{
 		Title:       "Admin — New repository",
 		ActiveNav:   "repos",
-		Repo:        repo.Repository{Kind: repo.Hosted},
+		Repo:        newRepo,
 		KindStr:     "hosted",
 		Formats:     allFormats,
 		Kinds:       allKinds,
 		PolicyNames: s.policyNames(),
+		Members:     s.memberOptions(newRepo),
 	})
 }
 
@@ -382,6 +436,7 @@ func (s *Server) renderRepoConfig(w http.ResponseWriter, rp repo.Repository, tab
 		Formats:        allFormats,
 		Kinds:          allKinds,
 		PolicyNames:    s.policyNames(),
+		Members:        s.memberOptions(rp),
 		ActiveTab:      tab,
 		ArtifactCount:  bsizes.CountByRepo[rp.Name],
 		SizeBytes:      sizeBytes,
@@ -430,10 +485,16 @@ func (s *Server) processRepoForm(w http.ResponseWriter, r *http.Request, existin
 		}
 	}
 
+	// Members arrive as repeated checkbox values from the picker; still split on
+	// commas so a legacy single comma-separated value keeps working. Dedupe while
+	// preserving the submitted (priority) order.
 	var members []string
-	if raw := strings.TrimSpace(r.FormValue("members")); raw != "" {
+	seen := map[string]bool{}
+	for _, raw := range r.Form["members"] {
 		for _, m := range strings.Split(raw, ",") {
-			if t := strings.TrimSpace(m); t != "" {
+			t := strings.TrimSpace(m)
+			if t != "" && !seen[t] {
+				seen[t] = true
 				members = append(members, t)
 			}
 		}
@@ -580,6 +641,7 @@ func (s *Server) reRenderForm(w http.ResponseWriter, r *http.Request, name strin
 		Formats:     allFormats,
 		Kinds:       allKinds,
 		PolicyNames: s.policyNames(),
+		Members:     s.memberOptions(rp),
 	})
 }
 

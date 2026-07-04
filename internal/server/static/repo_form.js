@@ -24,5 +24,42 @@
     apply();
   }
 
-  document.addEventListener('DOMContentLoaded', initKindScoping);
+  // Group member picker. The server renders every eligible candidate (non-group,
+  // not self) as a hidden-until-matched checkbox; show only those whose format
+  // matches the group's own, and uncheck the rest so a hidden box never submits.
+  // The format can change live on the new-repo form, so re-filter on its change.
+  function initMembersPicker() {
+    var picker = document.getElementById('members-picker');
+    if (!picker) return;
+
+    var opts = Array.prototype.slice.call(picker.querySelectorAll('.member-opt'));
+    var emptyHint = document.querySelector('#g-members .member-empty');
+    var fmtEl = document.getElementById('f-format'); // <select> (new) or readonly <input> (edit)
+
+    function currentFormat() { return fmtEl ? fmtEl.value : ''; }
+
+    function apply() {
+      var fmt = currentFormat();
+      var shown = 0;
+      opts.forEach(function (o) {
+        var match = o.getAttribute('data-format') === fmt;
+        o.style.display = match ? '' : 'none';
+        if (!match) {
+          var cb = o.querySelector('input[type=checkbox]');
+          if (cb) cb.checked = false;
+        } else {
+          shown++;
+        }
+      });
+      if (emptyHint) emptyHint.style.display = shown ? 'none' : '';
+    }
+
+    if (fmtEl && fmtEl.tagName === 'SELECT') fmtEl.addEventListener('change', apply);
+    apply();
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    initKindScoping();
+    initMembersPicker();
+  });
 })();

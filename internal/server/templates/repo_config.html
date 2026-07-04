@@ -100,9 +100,17 @@
 
           <!-- ── Group members ── -->
           <div class="form-group" id="g-members" data-kind-show="group">
-            <label for="f-members">Members <span class="form-hint-inline">comma-separated, in priority order</span></label>
-            <input id="f-members" type="text" name="members" value="{{join .Repo.Members ", "}}"
-                   placeholder="my-hosted, my-proxy">
+            <label>Members <span class="form-hint-inline">hosted &amp; proxy repos this group serves, in priority order</span></label>
+            <div id="members-picker" class="member-picker" data-self="{{.Repo.Name}}">
+              {{range .Members}}
+              <label class="member-opt" data-format="{{.Format}}" data-kind="{{.Kind}}">
+                <input type="checkbox" name="members" value="{{.Name}}"{{if .Checked}} checked{{end}}>
+                <span class="member-opt-name">{{.Name}}</span>
+                <span class="badge kind-{{.Kind}}">{{.Kind}}</span>
+              </label>
+              {{end}}
+            </div>
+            <p class="form-hint member-empty" style="display:none">No other hosted or proxy repositories of this format exist yet. <a href="/ui/admin/repos/new">Create one</a> first.</p>
           </div>
 
           <!-- ── Proxy section ── -->
