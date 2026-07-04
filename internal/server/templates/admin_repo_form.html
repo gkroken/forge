@@ -91,11 +91,11 @@
         {{end}}
       </select>
       {{else}}
-      <input id="f-cleanup-policy-name" type="text" name="cleanupPolicyName"
-             value="{{.Repo.CleanupPolicyName}}"
-             placeholder="e.g. keep-5-versions (leave blank for none)">
+      <select id="f-cleanup-policy-name" name="cleanupPolicyName" disabled>
+        <option>— no cleanup policies yet —</option>
+      </select>
       {{end}}
-      <span class="form-hint">Manage policies on the <a href="/ui/admin/cleanup-policies">Cleanup</a> page.</span>
+      <span class="form-hint">{{if not .PolicyNames}}<a href="/ui/admin/cleanup-policies/new">Create a cleanup policy</a> first, then assign it here.{{else}}Create and manage policies on the <a href="/ui/admin/cleanup-policies">Cleanup</a> page.{{end}}</span>
     </div>
   </fieldset>
 
