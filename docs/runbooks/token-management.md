@@ -23,17 +23,21 @@ curl -sf -X POST http://localhost:8080/api/v1/tokens \
   -d '{
     "description": "CI pipeline",
     "grants": [
-      {"repo": "npm-hosted", "role": "write"},
-      {"repo": "maven-hosted", "role": "write"}
+      {"repo": "npm-hosted", "actions": ["read", "write"]},
+      {"repo": "maven-hosted", "actions": ["read", "write"]}
     ]
   }'
 ```
 
 The response includes `secret` — shown once, store it immediately.
 
-**Roles:** `read` (GET/HEAD), `write` (read + PUT/POST/DELETE on artifacts), `admin` (write + token and repo management).
+**Actions:** `read` (GET/HEAD), `write` (PUT/POST — publish), `delete` (DELETE — remove content), `admin` (manage the repository). No hierarchy — grant each verb explicitly.
 
-**Wildcard grant:** `{"repo": "*", "role": "admin"}` grants admin on all repos.
+**Selectors:** `"selectors": ["com/acme/**"]` narrows read/write/delete to matching content paths (`*` = within a segment, `**` = across segments). `admin` cannot be selector-scoped.
+
+**Wildcard grant:** `{"repo": "*", "actions": ["read","write","delete","admin"]}` is the global administrator — required for token/user/webhook/repo-creation management. `admin` on a single repo delegates managing only that repo (`/api/v1/repos/{name}/...`).
+
+**Legacy shape:** `{"repo": "x", "role": "write"}` (or numeric roles) still parses — it expands to `[read, write, delete]`. See [docs/auth.md](../auth.md).
 
 **Expiry:** add `"expires_at": "2027-01-01T00:00:00Z"` for a time-limited token.
 

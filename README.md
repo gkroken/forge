@@ -89,10 +89,14 @@ Create scoped tokens via the API:
 curl -s -X POST http://localhost:8080/api/v1/tokens \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"description":"ci-bot","grants":[{"repo":"npm-hosted","role":"write"}]}'
+  -d '{"description":"ci-bot","grants":[{"repo":"npm-hosted","actions":["read","write"]}]}'
 ```
 
-Roles: `read`, `write`, `admin`. Repos support `anonymousRead: true` for open
+Grants carry explicit actions — `read`, `write`, `delete`, `admin` — per
+repository (`"*"` = all), optionally narrowed by content selectors
+(`"selectors":["com/acme/**"]`); `admin` on `*` is the global administrator,
+`admin` on one repo delegates managing just that repo (see
+[docs/auth.md](docs/auth.md)). Repos support `anonymousRead: true` for open
 access (typical for install/resolve paths). Token auth is enforced as middleware
 before every handler.
 

@@ -19,6 +19,8 @@ func TestGrant_LegacyUnmarshal(t *testing.T) {
 		want []auth.Action
 	}{
 		{`{"repo":"x","role":1}`, []auth.Action{auth.ActionRead}},
+		{`{"repo":"x","role":"read"}`, []auth.Action{auth.ActionRead}},
+		{`{"repo":"x","role":"write"}`, []auth.Action{auth.ActionRead, auth.ActionWrite, auth.ActionDelete}},
 		{`{"repo":"x","role":2}`, []auth.Action{auth.ActionRead, auth.ActionWrite, auth.ActionDelete}},
 		{`{"repo":"x","role":3}`, []auth.Action{auth.ActionRead, auth.ActionWrite, auth.ActionDelete, auth.ActionAdmin}},
 		// New shape wins when both present.

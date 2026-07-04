@@ -57,36 +57,75 @@ forge_99e25eabc1ef7461eea7fdd9bcbdd274e10dd8481c93551d3ce150bc1dd096e8
 Tokens are stored by their SHA-256 hash. The raw secret is never stored and
 cannot be recovered after creation.
 
-### Roles
+### Actions
 
-| Role | Value | Permissions |
-|------|-------|-------------|
-| `read` | 1 | GET and HEAD requests |
-| `write` | 2 | Everything in read + PUT, POST, DELETE, PATCH |
-| `admin` | 3 | Everything in write + token management + repo CRUD |
+A grant carries an explicit set of **actions** — there is no hierarchy;
+each verb must be granted:
 
-Roles are hierarchical — a `write` token can also read; an `admin` token can
-also write.
+| Action | Covers |
+|--------|--------|
+| `read` | GET / HEAD — download, resolve, browse |
+| `write` | PUT / POST — publish content |
+| `delete` | DELETE — remove content (npm unpublish, Helm chart delete, …) |
+| `admin` | Manage the repository — settings, cleanup, cache, scan, policy assignment |
+
+`admin` on the wildcard repo `*` is the **global administrator**: it
+additionally unlocks system-level surfaces (repository create/list, tokens,
+users, webhooks, global security policies). `admin` on a single repository is
+a **repo-scoped admin** — it can manage that repository's settings and
+operations via `/api/v1/repos/{name}/...` but nothing else.
 
 ### Grants
 
-Each token carries one or more **grants**, each of which assigns a role to a
-specific repository. Use `"repo": "*"` as a wildcard to match all
-repositories.
+Each token carries one or more **grants**: a repository (or `*` for all), a
+set of actions, and optionally **content selectors** that narrow the content
+actions (read/write/delete) to matching paths inside the repository.
 
 ```json
 {
-  "description": "ci-bot",
+  "description": "team-acme ci",
   "grants": [
-    { "repo": "npm-hosted", "role": "write" },
-    { "repo": "maven-hosted", "role": "write" },
-    { "repo": "helm-hosted", "role": "read" }
+    { "repo": "maven-hosted", "actions": ["read"] },
+    { "repo": "maven-hosted", "actions": ["write"], "selectors": ["com/acme/**"] },
+    { "repo": "npm-hosted", "actions": ["read", "write"], "selectors": ["@acme/**"] }
   ]
 }
 ```
 
-A request is allowed if **any** grant matches the target repository and the
-grant's role is sufficient for the HTTP method.
+A request is allowed if **any** grant matches the target repository, carries
+the action for the HTTP method, and (when the grant has selectors) at least
+one selector matches the repository-relative request path.
+
+#### Selector grammar
+
+Selectors are glob patterns over `/`-separated paths:
+
+- `*` matches any run of characters **within** one path segment
+- `**` (as a whole segment) matches **zero or more** segments
+- everything else matches literally, case-sensitively
+
+| Example | Meaning |
+|---------|---------|
+| `com/acme/**` | everything under the Maven groupId `com.acme` |
+| `@acme/**` | npm packages in the `@acme` scope (packuments and tarballs) |
+| `src/contrib/acme*` | CRAN sources whose file name starts with `acme` |
+
+Selectors match the request **path**, so they work best for path-addressed
+formats (Maven, npm, CRAN). Endpoints whose path does not contain the
+component name — a Helm chart upload (`POST /api/charts`), OCI blob uploads —
+do not match any selector and are denied for selector-scoped grants; grant
+whole-repo actions for those flows. Repo-wide indexes (Helm `index.yaml`,
+CRAN `PACKAGES`) are likewise outside any selector.
+
+`admin` cannot be combined with selectors — repository administration is not
+a path-level operation; such grants are rejected.
+
+#### Legacy role shape
+
+Grants created before the action vocabulary (`{"repo": "x", "role": 2}` or
+`"role": "write"`) are still accepted and expand to action bundles:
+`read` → `[read]`, `write` → `[read, write, delete]`, `admin` → all four.
+Stored tokens are migrated to the new shape transparently on next use.
 
 ---
 
@@ -102,7 +141,7 @@ curl -s -X POST http://localhost:8080/api/v1/tokens \
   -H "Content-Type: application/json" \
   -d '{
     "description": "admin",
-    "grants": [{ "repo": "*", "role": "admin" }]
+    "grants": [{ "repo": "*", "actions": ["read", "write", "delete", "admin"] }]
   }'
 ```
 
@@ -112,7 +151,7 @@ Response:
 {
   "id": "a1b2c3d4e5f6a7b8",
   "description": "admin",
-  "grants": [{ "repo": "*", "role": 3 }],
+  "grants": [{ "repo": "*", "actions": ["read", "write", "delete", "admin"] }],
   "created_at": "2026-05-31T12:00:00Z",
   "secret": "forge_99e25eabc1ef7461..."
 }
@@ -125,13 +164,13 @@ The `secret` field is only present in the creation response.
 ```bash
 ADMIN_TOKEN=forge_<your-admin-token>
 
-# CI token: write to npm-hosted only
+# CI token: publish to npm-hosted, no delete
 curl -s -X POST http://localhost:8080/api/v1/tokens \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "description": "jenkins-ci",
-    "grants": [{ "repo": "npm-hosted", "role": "write" }]
+    "grants": [{ "repo": "npm-hosted", "actions": ["read", "write"] }]
   }'
 
 # Read-only token: all repos
@@ -140,7 +179,28 @@ curl -s -X POST http://localhost:8080/api/v1/tokens \
   -H "Content-Type: application/json" \
   -d '{
     "description": "developer-read",
-    "grants": [{ "repo": "*", "role": "read" }]
+    "grants": [{ "repo": "*", "actions": ["read"] }]
+  }'
+
+# Team token: publish only within the team namespace
+curl -s -X POST http://localhost:8080/api/v1/tokens \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "team-acme",
+    "grants": [
+      { "repo": "maven-hosted", "actions": ["read"] },
+      { "repo": "maven-hosted", "actions": ["write"], "selectors": ["com/acme/**"] }
+    ]
+  }'
+
+# Delegated repo admin: manage one repository, nothing else
+curl -s -X POST http://localhost:8080/api/v1/tokens \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "npm-team-lead",
+    "grants": [{ "repo": "npm-hosted", "actions": ["read", "write", "delete", "admin"] }]
   }'
 ```
 
@@ -152,7 +212,7 @@ curl -s -X POST http://localhost:8080/api/v1/tokens \
   -H "Content-Type: application/json" \
   -d '{
     "description": "temp-30-days",
-    "grants": [{ "repo": "npm-hosted", "role": "write" }],
+    "grants": [{ "repo": "npm-hosted", "actions": ["read", "write"] }],
     "expires_at": "2026-06-30T00:00:00Z"
   }'
 ```
@@ -231,7 +291,7 @@ curl -s -X PUT http://localhost:8080/api/v1/repos/npm-hosted \
 
 With `anonymousRead: true`:
 - `GET` and `HEAD` requests succeed without a token
-- `PUT`, `POST`, `DELETE`, `PATCH` still require a token with write or higher
+- `PUT`/`POST` still require a token granting `write`; `DELETE` requires `delete`
 
 Proxy and group repositories default to `anonymousRead: true` because they
 are typically read-only consumer paths.

@@ -99,22 +99,36 @@ type Grant struct {
 }
 
 // UnmarshalJSON accepts both the current shape and the legacy pre-actions
-// shape {"repo":"x","role":2}, expanding the role tier into its action
-// bundle. Tokens persisted before the schema change keep working; they are
-// rewritten in the new shape on their next use (Verify updates LastUsed).
+// shape {"repo":"x","role":2} (or "role":"write" — the documented API form),
+// expanding the role tier into its action bundle. Tokens persisted before
+// the schema change keep working; they are rewritten in the new shape on
+// their next use (Verify updates LastUsed).
 func (g *Grant) UnmarshalJSON(b []byte) error {
 	var aux struct {
-		Repo      string   `json:"repo"`
-		Actions   []Action `json:"actions"`
-		Selectors []string `json:"selectors"`
-		Role      Role     `json:"role"`
+		Repo      string          `json:"repo"`
+		Actions   []Action        `json:"actions"`
+		Selectors []string        `json:"selectors"`
+		Role      json.RawMessage `json:"role"`
 	}
 	if err := json.Unmarshal(b, &aux); err != nil {
 		return err
 	}
 	g.Repo, g.Actions, g.Selectors = aux.Repo, aux.Actions, aux.Selectors
-	if len(g.Actions) == 0 && aux.Role != RoleNone {
-		g.Actions = actionsForRole(aux.Role)
+	if len(g.Actions) == 0 && len(aux.Role) > 0 {
+		var n int
+		var s string
+		switch {
+		case json.Unmarshal(aux.Role, &n) == nil:
+			g.Actions = actionsForRole(Role(n))
+		case json.Unmarshal(aux.Role, &s) == nil:
+			r, err := ParseRole(s)
+			if err != nil {
+				return fmt.Errorf("grant on %q: %w", aux.Repo, err)
+			}
+			g.Actions = actionsForRole(r)
+		default:
+			return fmt.Errorf("grant on %q: role must be a number or role name", aux.Repo)
+		}
 	}
 	return nil
 }
