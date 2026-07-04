@@ -63,7 +63,7 @@
      Use your package manager's publish command pointed at the registry URL below.</p>
   <div class="copy-row" style="margin-top:1rem">
     <code class="copy-url" id="reg-url">{{.RepoURL}}</code>
-    <button class="btn btn-sm" onclick="(function(){navigator.clipboard.writeText(document.getElementById('reg-url').textContent).catch(function(){})})()">Copy</button>
+    <button class="btn btn-sm" data-copy-id="reg-url">Copy</button>
   </div>
   {{if eq .Repo.Format "maven"}}
   <pre class="cli-hint">mvn deploy -DaltDeploymentRepository=forge::default::{{.RepoURL}}</pre>
@@ -72,4 +72,5 @@
   {{end}}
 </div>
 {{end}}
+<script src="/ui/static/copy.js" defer></script>
 {{end}}

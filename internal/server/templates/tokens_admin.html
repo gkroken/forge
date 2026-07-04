@@ -46,7 +46,7 @@
     <strong>Token created.</strong> Copy your secret now — it will not be shown again.
     <div class="copy-row" style="margin-top:.6rem">
       <code class="copy-url" id="new-secret">{{.NewSecret}}</code>
-      <button class="btn btn-sm" onclick="navigator.clipboard.writeText(document.getElementById('new-secret').textContent).catch(function(){})">Copy</button>
+      <button class="btn btn-sm" data-copy-id="new-secret">Copy</button>
     </div>
   </div>
   {{end}}
@@ -354,4 +354,5 @@
 
   {{end}}{{/* end AuthEnabled */}}
 </div>
+<script src="/ui/static/copy.js" defer></script>
 {{end}}
