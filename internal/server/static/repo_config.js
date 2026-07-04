@@ -318,15 +318,23 @@
       return;
     }
     var rows = grants.map(function (g) {
+      // g.role is the comma-joined action list ("read,write"); render one
+      // scope badge per action, plus the selector list when present.
+      var badges = String(g.role || '').split(',').map(function (a) {
+        a = a.trim();
+        return a ? '<span class="scope-badge scope-' + esc(a) + '">' + esc(a) + '</span>' : '';
+      }).join(' ');
+      var sel = (g.selectors && g.selectors.length)
+        ? '<div class="grant-sel">' + esc(g.selectors.join(', ')) + '</div>' : '';
       return '<tr>' +
-        '<td><span class="badge badge-' + esc(g.role === 'admin' ? 'err' : g.role === 'write' ? 'ok' : 'ok') + '" style="padding:2px 6px;font-size:11px">' + esc(g.role) + '</span></td>' +
+        '<td><div class="grant-line">' + badges + sel + '</div></td>' +
         '<td>' + esc(g.description) + '</td>' +
         '<td><span class="col-mono">' + esc(g.type) + '</span></td>' +
         '</tr>';
     }).join('');
     el.innerHTML =
       '<table class="admin-table">' +
-        '<thead><tr><th>Role</th><th>Token</th><th>Type</th></tr></thead>' +
+        '<thead><tr><th>Actions</th><th>Token</th><th>Type</th></tr></thead>' +
         '<tbody>' + rows + '</tbody>' +
       '</table>' +
       '<div style="padding:12px 18px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted)">' +

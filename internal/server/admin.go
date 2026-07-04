@@ -780,6 +780,8 @@ func (s *Server) handleRepoAccess(w http.ResponseWriter, r *http.Request, name s
 	if s.Auth != nil {
 		tokens, _ := s.Auth.List()
 		for _, t := range tokens {
+			// A token may carry several grants on the same repo (e.g. broad
+			// read + selector-scoped write); list each one.
 			for _, g := range t.Grants {
 				if g.Repo == name || g.Repo == "*" {
 					grants = append(grants, repoAccessGrant{
@@ -789,7 +791,6 @@ func (s *Server) handleRepoAccess(w http.ResponseWriter, r *http.Request, name s
 						Selectors:   g.Selectors,
 						Type:        "token",
 					})
-					break
 				}
 			}
 		}

@@ -1139,7 +1139,6 @@ func (s *Server) uiAdminAccess(w http.ResponseWriter, r *http.Request) {
 							Role:        formatActions(g.Actions),
 							Description: tok.Description,
 						})
-						break
 					}
 				}
 			}
