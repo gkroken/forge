@@ -449,7 +449,7 @@
         integReadout('Blobs checked', rep.blobsChecked) +
         integReadout('Records checked', rep.metaChecked) +
         integReadout('Data read', integFmtBytes(rep.bytesRead)) +
-        integReadout('Duration', (rep.durationMs != null ? (rep.durationMs < 1000 ? rep.durationMs + ' ms' : (rep.durationMs / 1000).toFixed(1) + ' s') : '—')) +
+        integReadout('Duration', (rep.durationMs ? (rep.durationMs < 1000 ? rep.durationMs + ' ms' : (rep.durationMs / 1000).toFixed(1) + ' s') : '< 1 ms')) +
         '</div></div>';
       if (rep.note) {
         html += '<div style="font-size:12.5px;color:var(--text-muted);margin-bottom:14px">' + esc(rep.note) + '</div>';
@@ -459,11 +459,13 @@
         html += '<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">' +
           Object.keys(counts).map(function (k) { return integKindChip(k, counts[k]); }).join('') + '</div>';
         html += '<div class="admin-table-wrap"><table class="admin-table"><thead><tr>' +
-          '<th style="width:90px">Kind</th><th>Object</th><th style="width:200px">Component</th><th>What happened</th>' +
+          '<th style="width:90px">Kind</th><th style="min-width:220px">Object</th><th style="width:170px">Component</th><th>What happened</th>' +
           '</tr></thead><tbody>' +
           (rep.findings || []).map(function (f) {
+            // The repo prefix on blob keys is redundant inside the repo's own page.
+            var obj = String(f.object || '').replace(new RegExp('^' + REPO.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/'), '');
             return '<tr><td>' + integKindChip(f.kind) + '</td>' +
-              '<td class="col-mono" style="font-size:11.5px;word-break:break-all">' + esc(f.object) + '</td>' +
+              '<td class="col-mono" style="font-size:11.5px;word-break:break-all">' + esc(obj) + '</td>' +
               '<td class="col-mono" style="font-size:12px">' + esc(f.component || '—') + (f.version ? '@' + esc(f.version) : '') + '</td>' +
               '<td style="font-size:12.5px;color:var(--text-muted)">' + esc(f.detail) + '</td></tr>';
           }).join('') + '</tbody></table></div>';
