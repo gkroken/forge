@@ -173,6 +173,8 @@ func (s *Server) WithQueue(ctx context.Context, q queue.Queue) *Server {
 		w.Register(trivyRepoScanJobType, s.handleTrivyRepoScanJob)
 		w.Register(helmRepoScanJobType, s.handleHelmRepoScanJob)
 	}
+	// Integrity verify needs only the stores, so it is always registered.
+	w.Register(integrityJobType, s.handleIntegrityJob)
 	go w.Work(ctx, q) //nolint:errcheck
 	return s
 }
@@ -331,6 +333,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/v1/repos", s.handleAdminRepos)
 	mux.HandleFunc("/api/v1/repos/", s.handleAdminRepos)
 	mux.HandleFunc("/api/v1/search", s.handleSearch)
+	mux.HandleFunc("/api/v1/integrity", s.handleIntegrityRollup)
 	mux.HandleFunc("/api/v1/audit", s.handleAuditAPI)
 	mux.HandleFunc("/api/v1/blob-stores", s.handleBlobStores)
 	mux.HandleFunc("/api/v1/webhooks", s.handleWebhooks)

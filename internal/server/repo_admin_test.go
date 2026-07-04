@@ -41,19 +41,23 @@ func TestRepoAdmin_Scoping(t *testing.T) {
 		{"get own repo", "GET", "/api/v1/repos/npm-hosted", repoAdmin, "", http.StatusOK},
 		{"update own repo", "PUT", "/api/v1/repos/npm-hosted", repoAdmin, repoBody, http.StatusOK},
 		{"access of own repo", "GET", "/api/v1/repos/npm-hosted/access", repoAdmin, "", http.StatusOK},
+		{"verify report of own repo", "GET", "/api/v1/repos/npm-hosted/verify", repoAdmin, "", http.StatusOK},
 
 		// Another repo: denied.
 		{"get other repo", "GET", "/api/v1/repos/maven-hosted", repoAdmin, "", http.StatusForbidden},
 		{"cleanup other repo", "POST", "/api/v1/repos/maven-hosted/cleanup", repoAdmin, "", http.StatusForbidden},
+		{"verify other repo", "POST", "/api/v1/repos/maven-hosted/verify", repoAdmin, "", http.StatusForbidden},
 
 		// System-level routes: repo admin is not enough.
 		{"list repos", "GET", "/api/v1/repos", repoAdmin, "", http.StatusForbidden},
 		{"create repo", "POST", "/api/v1/repos", repoAdmin, repoBody, http.StatusForbidden},
 		{"list tokens", "GET", "/api/v1/tokens", repoAdmin, "", http.StatusForbidden},
+		{"integrity rollup", "GET", "/api/v1/integrity", repoAdmin, "", http.StatusForbidden},
 
 		// Global admin passes everywhere.
 		{"global admin lists repos", "GET", "/api/v1/repos", globalAdmin, "", http.StatusOK},
 		{"global admin other repo", "GET", "/api/v1/repos/maven-hosted", globalAdmin, "", http.StatusOK},
+		{"global admin integrity rollup", "GET", "/api/v1/integrity", globalAdmin, "", http.StatusOK},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

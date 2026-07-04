@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"forge/internal/cleanup"
+	"forge/internal/format"
 	"forge/internal/obs"
 	"forge/internal/proxy"
 	"forge/internal/repo"
@@ -226,12 +227,21 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// /api/v1/repos/{name}/reindex — queue an index rebuild (stub).
+	// /api/v1/repos/{name}/reindex — rebuild materialized indexes (npm).
 	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "reindex" {
 		if !s.Enforcer.RequireRepoAdmin(w, r, repoName) {
 			return
 		}
 		s.handleReindex(w, r, repoName)
+		return
+	}
+
+	// /api/v1/repos/{name}/verify — read-only integrity verification.
+	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "verify" {
+		if !s.Enforcer.RequireRepoAdmin(w, r, repoName) {
+			return
+		}
+		s.handleVerify(w, r, repoName)
 		return
 	}
 
@@ -742,17 +752,43 @@ func (s *Server) handleRepoHealth(w http.ResponseWriter, r *http.Request, name s
 }
 
 // handleReindex serves POST /api/v1/repos/{name}/reindex.
-// Stub: logs the intent and returns queued status.
+// Formats with a materialized index (npm's packument) rebuild it via the
+// optional format.Reindexer seam — the repair for "drift" integrity findings.
+// Every other format generates its indexes on demand, so there is nothing to
+// rebuild and the response says so honestly.
 func (s *Server) handleReindex(w http.ResponseWriter, r *http.Request, name string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if _, ok := s.Repos.Get(name); !ok {
+	rp, ok := s.Repos.Get(name)
+	if !ok {
 		http.Error(w, "repository not found: "+name, http.StatusNotFound)
 		return
 	}
-	writeJSON(w, map[string]string{"status": "queued"})
+	h, ok := s.Handlers.For(rp.Format)
+	if !ok {
+		http.Error(w, "no handler for format: "+rp.Format, http.StatusNotImplemented)
+		return
+	}
+	ri, ok := h.(format.Reindexer)
+	if !ok {
+		writeJSON(w, map[string]string{
+			"status": "noop",
+			"detail": "indexes for " + rp.Format + " are generated on demand; there is nothing to rebuild",
+		})
+		return
+	}
+	c := &format.Context{
+		Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: nil,
+		Repos: s.Repos, Queue: s.Queue, Metrics: s.Metrics,
+	}
+	n, err := ri.Reindex(r.Context(), c)
+	if err != nil {
+		http.Error(w, "reindex failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"status": "reindexed", "rebuilt": n})
 }
 
 // repoAccessGrant is one principal→actions binding returned by /access.
