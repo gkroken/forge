@@ -426,6 +426,39 @@ and emit a `policy.violation` webhook; blocks increment
 
 ---
 
+## Storage integrity verify
+
+forge can prove a repository's storage is internally consistent — the tool to
+run after a migration, a restore from backup, or any time storage is suspect.
+`POST /api/v1/repos/{name}/verify` (or the **Verify now** button on the repo's
+**Integrity** tab / the **Integrity** admin rollup) enqueues a **read-only**
+pass on the shared worker; findings are reported, never repaired automatically.
+
+Four finding kinds, checked per format by the format plugin itself:
+
+- **missing** — a metadata record (npm version, Helm chart, CRAN package, OCI
+  manifest reference, Maven SNAPSHOT record) points at a blob that is gone.
+  Clients see 404s.
+- **mismatch** — stored bytes no longer match their recorded expectation:
+  Maven checksum sidecars, npm `dist.shasum`/`integrity`, Helm chart digests,
+  and OCI content-addresses are re-computed from the blob; CRAN (which stores
+  no digest) is validated via the tarball's gzip CRC.
+- **orphan** — an object nothing owns: a blob absent from every index, a
+  record whose content is gone, a stale OCI upload buffer.
+- **drift** — a materialized index out of sync with its source records (npm's
+  packument). `POST /api/v1/repos/{name}/reindex` rebuilds it.
+
+Two modes: **full** (default) re-reads every blob that carries an expectation —
+IO-heavy but linear, and the only way to catch silent corruption; **quick**
+cross-references records and blobs without hashing. One report per repo is
+persisted (re-runs replace it); the UI shows verdict, per-kind counts, bytes
+read, and staleness. Repo-scoped admins can verify their own repos; the fleet
+rollup at **Integrity** is global-admin. Proxy-cache findings are hygiene only —
+caches re-fetch from upstream on demand. Group repos own no storage; verify
+their members.
+
+---
+
 ## Post-GA roadmap
 
 - **OIDC SSO** — shipped: login against Keycloak/Entra/Okta/ADFS with group→role

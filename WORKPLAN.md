@@ -551,7 +551,7 @@ The current `Repository` struct and proxy layer do not support these yet.
 | Design button | Current state | Gap |
 |---|---|---|
 | Invalidate cache | Not implemented | New endpoint `POST /api/v1/repos/{name}/invalidate` — deletes all cached blobs |
-| Rebuild index | Reindex job exists | Wire `POST /api/v1/repos/{name}/reindex` to the indexer queue; add UI button |
+| Rebuild index | ✅ Done (2026-07-04) | `POST /api/v1/repos/{name}/reindex` dispatches `format.Reindexer` (npm rebuilds packuments; on-demand-index formats answer an honest noop) |
 
 #### New phases
 

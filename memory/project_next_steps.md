@@ -152,9 +152,11 @@ Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses du
      write/admin, wildcard `*`) is the hard-to-reverse persisted client-facing shape — design the
      action-granular + selector grammar here. Selector grammar (`com.acme.*`, `@acme/*`) is the
      shared primitive reused by dependency-confusion (#5).
-  3. **Integrity verify (read-only)** — orphans/missing/checksum-mismatch report, NO auto-repair.
-     Built before migration as the tool to prove a migrated store is intact. (`/repos/{name}/reindex`
-     is currently a literal stub; blob checksums computed on write but never verified/reconciled.)
+  3. **Integrity verify (read-only)** — ✅ DONE 2026-07-04. Orphans/missing/mismatch/drift report,
+     NO auto-repair: `internal/integrity` + `format.IntegrityChecker` seam (all 5 formats),
+     `integrity.verify` job on the shared worker, `POST/GET /repos/{name}/verify` (repo-admin),
+     `GET /api/v1/integrity` rollup, Integrity tab + /ui/admin/integrity page. The reindex stub is
+     now honest: `format.Reindexer` (npm packument regen = the drift repair; others noop).
   4. **Migration from Nexus** — first real user need ("migrate everything from Nexus"); CONSUMES the
      permission model so it follows #2. Split content+repos (early) vs permissions (needs #2 schema).
   5. **Dependency-confusion protection** — reuses the selector grammar; block proxy fall-through for
