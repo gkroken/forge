@@ -748,6 +748,11 @@ func (s *Server) applySecurityPlan(sp *securityPlan) securityResult {
 			res.RolesSkipped++
 			continue
 		}
+		// Re-check at apply time: the plan may predate an earlier (resumed) run.
+		if _, ok, _ := s.Roles.Get(r.ID); ok {
+			res.RolesSkipped++
+			continue
+		}
 		desc := r.Description
 		if desc == "" {
 			desc = "imported from Nexus"
@@ -766,6 +771,10 @@ func (s *Server) applySecurityPlan(sp *securityPlan) securityResult {
 	}
 	for _, u := range sp.Users {
 		if u.Action != "create" {
+			res.UsersSkipped++
+			continue
+		}
+		if _, ok, _ := s.Users.Get(u.Username); ok {
 			res.UsersSkipped++
 			continue
 		}

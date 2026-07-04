@@ -24,10 +24,11 @@ func (f *fakeNexus) handler() http.Handler {
 			w.WriteHeader(f.settingsStatus)
 			return
 		}
+		// Real /v1/repositorySettings shape: per-kind blocks at the TOP level.
 		fmt.Fprint(w, `[
-			{"name":"maven-hosted","format":"maven2","type":"hosted","attributes":{"storage":{"blobStoreName":"default"}}},
-			{"name":"npm-proxy","format":"npm","type":"proxy","attributes":{"proxy":{"remoteUrl":"https://registry.npmjs.org"}}},
-			{"name":"maven-all","format":"maven2","type":"group","attributes":{"group":{"memberNames":["maven-hosted"]}}}
+			{"name":"maven-hosted","format":"maven2","type":"hosted","storage":{"blobStoreName":"default"}},
+			{"name":"npm-proxy","format":"npm","type":"proxy","proxy":{"remoteUrl":"https://registry.npmjs.org"}},
+			{"name":"maven-all","format":"maven2","type":"group","group":{"memberNames":["maven-hosted"]}}
 		]`)
 	})
 	mux.HandleFunc("/service/rest/v1/repositories", func(w http.ResponseWriter, r *http.Request) {

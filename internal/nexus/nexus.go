@@ -47,13 +47,19 @@ type Repository struct {
 	Type   string `json:"type"`   // hosted, proxy, group
 	URL    string `json:"url"`
 
-	// Attributes carries the per-type settings blocks. The shapes we consume:
-	//   proxy.remoteUrl   — upstream URL for proxy repos
-	//   group.memberNames — member list for group repos
-	//   docker.httpPort   — the connector port (informational)
+	// The two listing endpoints disagree on shape: /v1/repositorySettings
+	// returns typed per-kind blocks at the TOP level (proxy.remoteUrl,
+	// group.memberNames), while /v1/repositories nests the same data under
+	// "attributes" (admin only). Both are parsed; normalize() lifts whichever
+	// is present into RemoteURL/Members.
+	ProxyBlock *struct {
+		RemoteURL string `json:"remoteUrl"`
+	} `json:"proxy,omitempty"`
+	GroupBlock *struct {
+		MemberNames []string `json:"memberNames"`
+	} `json:"group,omitempty"`
 	Attributes map[string]json.RawMessage `json:"attributes,omitempty"`
 
-	// These are populated from Attributes by normalize().
 	RemoteURL string   `json:"-"`
 	Members   []string `json:"-"`
 }
@@ -194,22 +200,33 @@ func (c *Client) ListRepositories(ctx context.Context) ([]Repository, error) {
 	return repos, nil
 }
 
-// normalize lifts the attribute blocks we consume into typed fields.
+// normalize lifts the per-kind settings blocks into typed fields, whichever
+// endpoint shape they arrived in.
 func (r *Repository) normalize() {
-	if raw, ok := r.Attributes["proxy"]; ok {
-		var p struct {
-			RemoteURL string `json:"remoteUrl"`
-		}
-		if json.Unmarshal(raw, &p) == nil {
-			r.RemoteURL = p.RemoteURL
+	if r.ProxyBlock != nil {
+		r.RemoteURL = r.ProxyBlock.RemoteURL
+	}
+	if r.GroupBlock != nil {
+		r.Members = r.GroupBlock.MemberNames
+	}
+	if r.RemoteURL == "" {
+		if raw, ok := r.Attributes["proxy"]; ok {
+			var p struct {
+				RemoteURL string `json:"remoteUrl"`
+			}
+			if json.Unmarshal(raw, &p) == nil {
+				r.RemoteURL = p.RemoteURL
+			}
 		}
 	}
-	if raw, ok := r.Attributes["group"]; ok {
-		var g struct {
-			MemberNames []string `json:"memberNames"`
-		}
-		if json.Unmarshal(raw, &g) == nil {
-			r.Members = g.MemberNames
+	if len(r.Members) == 0 {
+		if raw, ok := r.Attributes["group"]; ok {
+			var g struct {
+				MemberNames []string `json:"memberNames"`
+			}
+			if json.Unmarshal(raw, &g) == nil {
+				r.Members = g.MemberNames
+			}
 		}
 	}
 }
