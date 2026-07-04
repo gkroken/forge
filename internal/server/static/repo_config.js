@@ -370,6 +370,141 @@
     }).join('');
   }
 
+  // ── Integrity tab ──────────────────────────────────────────────────────────
+  // Finding kinds → severity token classes (mirrors ui_integrity.go):
+  // missing/mismatch mean data loss or corruption, orphan is hygiene, drift is
+  // regenerable via reindex.
+  var INTEG_KIND_SEV = { missing: 'critical', mismatch: 'high', orphan: 'moderate', drift: 'low' };
+  function integKindChip(kind, count) {
+    var sev = INTEG_KIND_SEV[kind] || 'unknown';
+    var label = count != null ? count + ' ' + kind : kind;
+    return '<span class="badge badge-sev sev-' + esc(sev) + '">' + esc(label) + '</span>';
+  }
+  function integFmtBytes(b) {
+    if (!b) return '0 B';
+    var units = ['B', 'KB', 'MB', 'GB', 'TB'], i = 0;
+    while (b >= 1024 && i < units.length - 1) { b /= 1024; i++; }
+    return (i === 0 ? b : b.toFixed(1)) + ' ' + units[i];
+  }
+  function integAgo(iso) {
+    var t = new Date(iso).getTime();
+    if (!t) return '';
+    var s = Math.floor((Date.now() - t) / 1000);
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 172800) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
+
+  function initIntegrityTab() {
+    var el = document.getElementById('integrity-content');
+    if (!el) return;
+    loadIntegrity(el, 0);
+  }
+
+  function loadIntegrity(el, polls) {
+    fetch('/api/v1/repos/' + encodeURIComponent(REPO) + '/verify')
+      .then(function (r) { return r.json(); })
+      .then(function (rep) { renderIntegrity(el, rep, polls); })
+      .catch(function () {
+        el.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px">Failed to load the integrity report.</div>';
+      });
+  }
+
+  function renderIntegrity(el, rep, polls) {
+    var status = rep.status || 'never';
+    var inFlight = status === 'queued' || status === 'running';
+    var html = '';
+
+    // Header: verdict chip + verified-at + action buttons.
+    var chip;
+    if (inFlight) chip = '<span class="chip chip-neutral">' + esc(status) + '…</span>';
+    else if (status === 'failed') chip = '<span class="chip chip-err">verify failed</span>';
+    else if (status === 'never') chip = '<span class="chip chip-neutral">never verified</span>';
+    else if (rep.totalFindings > 0) chip = '<span class="chip chip-err">' + rep.totalFindings + ' finding' + (rep.totalFindings === 1 ? '' : 's') + '</span>';
+    else chip = '<span class="chip chip-ok">intact</span>';
+
+    var when = '';
+    if (status === 'complete' && rep.finishedAt) {
+      when = '<span style="font-size:12px;color:var(--text-muted)">verified ' + esc(integAgo(rep.finishedAt)) +
+        ' · ' + esc(rep.mode || 'full') + ' mode</span>';
+    }
+    html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap">' +
+      '<span class="rail-card-title" style="margin-bottom:0">Storage integrity</span>' + chip + when +
+      '<span style="margin-left:auto;display:flex;gap:8px">' +
+      '<button class="btn btn-sm" data-integ="quick"' + (inFlight ? ' disabled' : '') + '>Quick check</button>' +
+      '<button class="btn btn-sm btn-primary" data-integ="full"' + (inFlight ? ' disabled' : '') + '>Verify now</button>' +
+      '</span></div>';
+
+    if (status === 'never') {
+      html += '<div style="font-size:13px;color:var(--text-muted);line-height:1.55">' +
+        'No integrity report yet. <strong>Verify now</strong> re-reads every artifact and re-checks its stored ' +
+        'checksums; <strong>Quick check</strong> cross-references records and blobs without hashing. ' +
+        'Both are read-only — findings are reported, never repaired automatically.</div>';
+    } else if (status === 'failed') {
+      html += '<div style="font-size:13px;color:var(--danger)">' + esc(rep.error || 'unknown error') + '</div>';
+    } else if (status === 'complete') {
+      // Instrument readouts.
+      html += '<div class="instrument-panel" style="margin-bottom:16px"><div class="inst-readouts">' +
+        integReadout('Blobs checked', rep.blobsChecked) +
+        integReadout('Records checked', rep.metaChecked) +
+        integReadout('Data read', integFmtBytes(rep.bytesRead)) +
+        integReadout('Duration', (rep.durationMs != null ? (rep.durationMs < 1000 ? rep.durationMs + ' ms' : (rep.durationMs / 1000).toFixed(1) + ' s') : '—')) +
+        '</div></div>';
+      if (rep.note) {
+        html += '<div style="font-size:12.5px;color:var(--text-muted);margin-bottom:14px">' + esc(rep.note) + '</div>';
+      }
+      if (rep.totalFindings > 0) {
+        var counts = rep.counts || {};
+        html += '<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">' +
+          Object.keys(counts).map(function (k) { return integKindChip(k, counts[k]); }).join('') + '</div>';
+        html += '<div class="admin-table-wrap"><table class="admin-table"><thead><tr>' +
+          '<th style="width:90px">Kind</th><th>Object</th><th style="width:200px">Component</th><th>What happened</th>' +
+          '</tr></thead><tbody>' +
+          (rep.findings || []).map(function (f) {
+            return '<tr><td>' + integKindChip(f.kind) + '</td>' +
+              '<td class="col-mono" style="font-size:11.5px;word-break:break-all">' + esc(f.object) + '</td>' +
+              '<td class="col-mono" style="font-size:12px">' + esc(f.component || '—') + (f.version ? '@' + esc(f.version) : '') + '</td>' +
+              '<td style="font-size:12.5px;color:var(--text-muted)">' + esc(f.detail) + '</td></tr>';
+          }).join('') + '</tbody></table></div>';
+        if (rep.truncated) {
+          html += '<div style="font-size:12px;color:var(--text-muted);margin-top:8px">Showing the first ' +
+            (rep.findings || []).length + ' of ' + rep.totalFindings + ' findings.</div>';
+        }
+      } else {
+        html += '<div style="font-size:13px;color:var(--text-muted)">No orphans, missing blobs, or checksum mismatches.</div>';
+      }
+    } else if (inFlight) {
+      html += '<div style="font-size:13px;color:var(--text-muted)">Verification in progress — this page updates automatically.</div>';
+    }
+
+    el.innerHTML = html;
+
+    el.querySelectorAll('[data-integ]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var mode = btn.dataset.integ;
+        btn.disabled = true;
+        fetch('/api/v1/repos/' + encodeURIComponent(REPO) + '/verify?mode=' + mode, { method: 'POST' })
+          .then(function (r) {
+            if (r.status !== 202) throw new Error('HTTP ' + r.status);
+            toast('Verify enqueued (' + mode + ')');
+            setTimeout(function () { loadIntegrity(el, 0); }, 800);
+          })
+          .catch(function (err) { toast('Verify failed: ' + err.message, 'err'); btn.disabled = false; });
+      });
+    });
+
+    // Poll while a run is in flight (bounded at ~2 minutes).
+    if (inFlight && polls < 48) {
+      setTimeout(function () { loadIntegrity(el, polls + 1); }, 2500);
+    }
+  }
+
+  function integReadout(label, value) {
+    return '<div class="inst-readout"><div class="inst-label">' + esc(label) + '</div>' +
+      '<div class="inst-value">' + esc(String(value != null ? value : '—')) + '</div></div>';
+  }
+
   // ── Security tab ───────────────────────────────────────────────────────────
   function modePill(mode) {
     var m = (mode || 'off').toLowerCase();
@@ -555,6 +690,7 @@
     initContentTab();
     initAccessTab();
     initSecurityTab();
+    initIntegrityTab();
     initActivityTab();
   });
 })();

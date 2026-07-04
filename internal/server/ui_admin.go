@@ -128,7 +128,7 @@ type repoConfigPage struct {
 	Kinds          []string
 	PolicyNames    []string
 	Members        []memberOption // candidate repos for a group's member picker
-	ActiveTab      string         // "settings" | "content" | "access" | "activity"
+	ActiveTab      string         // "settings" | "content" | "access" | "security" | "integrity" | "activity"
 	ArtifactCount  int
 	SizeBytes      int64
 	StoragePct     int
@@ -326,6 +326,8 @@ func (s *Server) handleUIAdmin(w http.ResponseWriter, r *http.Request, sub strin
 		s.uiSecurity(w, r)
 	case sub == "/security-policies":
 		s.uiSecurityPolicies(w, r)
+	case sub == "/integrity":
+		s.uiIntegrity(w, r)
 	default:
 		http.NotFound(w, r)
 	}

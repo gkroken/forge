@@ -182,6 +182,7 @@ var (
 	tmplRepoConfig        = parseUITmpl("templates/admin_shell.html", "templates/repo_config.html")
 	tmplSecurity          = parseUITmpl("templates/admin_shell.html", "templates/security.html")
 	tmplSecurityPolicies  = parseUITmpl("templates/admin_shell.html", "templates/security_policies.html")
+	tmplIntegrity         = parseUITmpl("templates/admin_shell.html", "templates/integrity.html")
 )
 
 // ── page data types ───────────────────────────────────────────────────────────

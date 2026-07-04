@@ -20,6 +20,7 @@ import (
 	"forge/internal/format/cran"
 	"forge/internal/format/helm"
 	"forge/internal/format/npm"
+	"forge/internal/integrity"
 	"forge/internal/meta"
 	"forge/internal/repo"
 )
@@ -1304,4 +1305,32 @@ func TestUIObservability_OK(t *testing.T) {
 	body := rw.Body.String()
 	assertContains(t, body, "Observability")
 	assertContains(t, body, "Audit log")
+}
+
+func TestUIIntegrityRollup_OK(t *testing.T) {
+	srv := newUIServer(t)
+	srv.verifyRepoIntegrity("helm-hosted", integrity.ModeQuick)
+	rw := uiGet(t, srv.Routes(), "/ui/admin/integrity")
+	if rw.Code != http.StatusOK {
+		t.Fatalf("/ui/admin/integrity: status %d", rw.Code)
+	}
+	body := rw.Body.String()
+	assertContains(t, body, "Integrity")
+	assertContains(t, body, "integrity-root")
+	assertContains(t, body, "npm-hosted")  // never verified row
+	assertContains(t, body, "helm-hosted") // verified row
+	assertContains(t, body, "never verified")
+	// helm-hosted has a chart record with no blob → 1 finding chip
+	assertContains(t, body, "missing")
+}
+
+func TestUIRepoConfig_IntegrityTab(t *testing.T) {
+	srv := newUIServer(t)
+	rw := uiGet(t, srv.Routes(), "/ui/admin/repos/npm-hosted/edit?tab=integrity")
+	if rw.Code != http.StatusOK {
+		t.Fatalf("integrity tab: status %d", rw.Code)
+	}
+	body := rw.Body.String()
+	assertContains(t, body, "integrity-content")
+	assertContains(t, body, `?tab=integrity" class="admin-tab active"`)
 }
