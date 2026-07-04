@@ -328,6 +328,8 @@ func (s *Server) handleUIAdmin(w http.ResponseWriter, r *http.Request, sub strin
 		s.uiSecurityPolicies(w, r)
 	case sub == "/integrity":
 		s.uiIntegrity(w, r)
+	case sub == "/migration":
+		s.uiMigration(w, r)
 	default:
 		http.NotFound(w, r)
 	}

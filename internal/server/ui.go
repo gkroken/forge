@@ -183,6 +183,7 @@ var (
 	tmplSecurity          = parseUITmpl("templates/admin_shell.html", "templates/security.html")
 	tmplSecurityPolicies  = parseUITmpl("templates/admin_shell.html", "templates/security_policies.html")
 	tmplIntegrity         = parseUITmpl("templates/admin_shell.html", "templates/integrity.html")
+	tmplMigration         = parseUITmpl("templates/admin_shell.html", "templates/migration.html")
 )
 
 // ── page data types ───────────────────────────────────────────────────────────

@@ -639,3 +639,21 @@ func TestMigrationAPI_GuardsAndReset(t *testing.T) {
 		t.Fatal("spec survived reset")
 	}
 }
+
+func TestUIMigrationPage(t *testing.T) {
+	s := newMigrationServer(t)
+	rw := httptest.NewRecorder()
+	s.uiMigration(rw, httptest.NewRequest(http.MethodGet, "/ui/admin/migration", nil))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status = %d", rw.Code)
+	}
+	body := rw.Body.String()
+	for _, want := range []string{"migration-root", "mig-plan-form", "migration.js", "admin-sidebar"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q", want)
+		}
+	}
+	if !strings.Contains(body, `data-can-apply="1"`) {
+		t.Error("CanApply not reflected (queue is wired in this fixture)")
+	}
+}
