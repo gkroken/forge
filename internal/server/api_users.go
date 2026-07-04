@@ -85,6 +85,7 @@ func (s *Server) apiCreateUser(w http.ResponseWriter, r *http.Request) {
 type updateUserRequest struct {
 	Role     *string `json:"role,omitempty"`
 	Disabled *bool   `json:"disabled,omitempty"`
+	Password *string `json:"password,omitempty"`
 }
 
 func (s *Server) apiUpdateUser(w http.ResponseWriter, r *http.Request, username string) {
@@ -102,6 +103,12 @@ func (s *Server) apiUpdateUser(w http.ResponseWriter, r *http.Request, username 
 	if req.Disabled != nil {
 		if err := s.Users.SetDisabled(username, *req.Disabled); err != nil {
 			jsonError(w, err.Error(), http.StatusNotFound)
+			return
+		}
+	}
+	if req.Password != nil {
+		if err := s.Users.SetPassword(username, *req.Password); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 	}

@@ -37,6 +37,10 @@ type UserStore interface {
 	Delete(username string) error
 	SetRole(username, role string) error
 	SetDisabled(username string, disabled bool) error
+	// SetPassword replaces the user's password. Used by admins to hand
+	// credentials to accounts created without one (SSO upserts, migration
+	// imports).
+	SetPassword(username, password string) error
 	// Authenticate checks credentials and updates LastLogin on success.
 	// Returns nil, nil when credentials are wrong or the user is disabled.
 	Authenticate(username, password string) (*User, error)
@@ -135,6 +139,26 @@ func (s *userMetaStore) SetDisabled(username string, disabled bool) error {
 		return fmt.Errorf("user %q not found", username)
 	}
 	su.Disabled = disabled
+	return s.m.PutJSON(nsUsers, username, su)
+}
+
+func (s *userMetaStore) SetPassword(username, password string) error {
+	if password == "" {
+		return fmt.Errorf("password required")
+	}
+	var su storedUser
+	ok, err := s.m.GetJSON(nsUsers, username, &su)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("user %q not found", username)
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	su.PasswordHash = string(hash)
 	return s.m.PutJSON(nsUsers, username, su)
 }
 

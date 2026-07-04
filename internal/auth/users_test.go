@@ -132,3 +132,31 @@ func TestUserStore_List(t *testing.T) {
 		t.Fatalf("expected 3 users, got %d", len(users))
 	}
 }
+
+func TestUserStore_SetPassword(t *testing.T) {
+	us := newUserStore(t)
+	// SSO-style user created without a password cannot log in…
+	if err := us.Upsert(auth.User{Username: "mig", Role: "Reader", Disabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if u, _ := us.Authenticate("mig", "s3cret"); u != nil {
+		t.Fatal("login must fail before password set / while disabled")
+	}
+	// …until an admin sets one and enables the account.
+	if err := us.SetPassword("mig", "s3cret"); err != nil {
+		t.Fatal(err)
+	}
+	if err := us.SetDisabled("mig", false); err != nil {
+		t.Fatal(err)
+	}
+	u, err := us.Authenticate("mig", "s3cret")
+	if err != nil || u == nil {
+		t.Fatalf("login after SetPassword: %v %v", u, err)
+	}
+	if err := us.SetPassword("mig", ""); err == nil {
+		t.Fatal("empty password must be rejected")
+	}
+	if err := us.SetPassword("ghost", "x"); err == nil {
+		t.Fatal("unknown user must error")
+	}
+}
