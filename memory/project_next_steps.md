@@ -157,8 +157,15 @@ Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses du
      `integrity.verify` job on the shared worker, `POST/GET /repos/{name}/verify` (repo-admin),
      `GET /api/v1/integrity` rollup, Integrity tab + /ui/admin/integrity page. The reindex stub is
      now honest: `format.Reindexer` (npm packument regen = the drift repair; others noop).
-  4. **Migration from Nexus** — first real user need ("migrate everything from Nexus"); CONSUMES the
-     permission model so it follows #2. Split content+repos (early) vs permissions (needs #2 schema).
+  4. **Migration from Nexus** — ✅ DONE 2026-07-04. Live-API importer (`internal/nexus` client +
+     mapping), plan/apply/reset + status on `/api/v1/migration` (global admin), `migration.run` job
+     on the shared worker, `/ui/admin/migration` console. Content for all 5 formats lands through
+     forge's own format handlers in-process; proxies = config-only; groups last. Permissions consume
+     the #2 grant schema: privileges→grants, simple CSEL→selectors (complex refused, reported),
+     roles→grant-carrying CustomRoles (new `CustomRole.Grants`, minted at login), users disabled
+     w/o passwords (+ new `SetPassword`). Acceptance loop = counts match + auto-enqueued FULL
+     integrity verify per repo. Live-validated 25/25 vs sonatype/nexus3
+     (`scripts/nexus-migrate-validate.sh`); runbook `docs/runbooks/nexus-migration.md`.
   5. **Dependency-confusion protection** — reuses the selector grammar; block proxy fall-through for
      names owned by a hosted member.
   6. **Quota enforcement + soft-delete** — small. `QuotaGB` exists on the repo model but is NEVER

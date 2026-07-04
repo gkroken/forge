@@ -459,6 +459,25 @@ their members.
 
 ---
 
+## Migrating from Nexus
+
+forge imports repositories, content, and permissions from a live Nexus 3
+server: `POST /api/v1/migration/plan` produces a persisted dry-run (every
+source repo with a create/reuse/skip decision and reason, per-role grant
+translation, and what will *not* migrate, stated plainly), `apply` runs the
+import as a job on the shared worker, and the **Migration** admin page drives
+the whole flow with live per-repo progress. All five formats transfer through
+forge's own format handlers (maven asset paths + checksum sidecars, npm
+per-version publishes rebuilt from the source packument, helm charts, CRAN
+tarballs, docker via a registry-protocol copy that preserves digests); proxy
+repos migrate configuration only, and Nexus roles/privileges/content
+selectors become grant-carrying forge roles. After each repo the importer
+records source-vs-target counts and enqueues a **full integrity verify** —
+migration is done when counts match and verify says intact. Re-applying
+resumes idempotently. Details: [docs/runbooks/nexus-migration.md](docs/runbooks/nexus-migration.md).
+
+---
+
 ## Post-GA roadmap
 
 - **OIDC SSO** — shipped: login against Keycloak/Entra/Okta/ADFS with group→role
