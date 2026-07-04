@@ -543,7 +543,7 @@ func (s *Server) tryLocalLogin(w http.ResponseWriter, r *http.Request, username,
 		return true
 	}
 	exp := time.Now().UTC().Add(24 * time.Hour)
-	_, secret, err := s.Auth.Create("session:"+username, []auth.Grant{{Repo: "*", Role: role}}, &exp, username)
+	_, secret, err := s.Auth.Create("session:"+username, []auth.Grant{auth.GrantForRole("*", role)}, &exp, username)
 	if err != nil {
 		fail("Failed to create session.")
 		return true
@@ -584,7 +584,7 @@ func (s *Server) verifyAdminSecret(secret string) bool {
 		return true
 	}
 	tok, err := s.Auth.Verify(secret)
-	return err == nil && tok != nil && tok.RoleFor("*") >= auth.RoleAdmin
+	return err == nil && tok != nil && tok.GlobalAdmin()
 }
 
 // sanitizeNext ensures the redirect target is a safe forge UI path,

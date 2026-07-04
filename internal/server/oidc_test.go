@@ -182,14 +182,14 @@ func TestHandleOIDCCallback_TokenDescriptionFallsBackToSubject(t *testing.T) {
 
 func TestHandleOIDCCallback_MintedTokenHasDefaultGrants(t *testing.T) {
 	srv, authStore, fake := newOIDCServer(t)
-	fake.defaultGrants = []auth.Grant{{Repo: "npm-hosted", Role: auth.RoleWrite}}
+	fake.defaultGrants = []auth.Grant{auth.GrantForRole("npm-hosted", auth.RoleWrite)}
 	fake.exchangeInfo = forgeoidc.UserInfo{Subject: "u1"}
 
 	rw := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(rw, callbackReq(t, srv, "s", "n", "code", ""))
 	tokenSecret := sessionCookieValue(rw)
 	tok, _ := authStore.Verify(tokenSecret)
-	if len(tok.Grants) != 1 || tok.Grants[0].Repo != "npm-hosted" || tok.Grants[0].Role != auth.RoleWrite {
+	if len(tok.Grants) != 1 || tok.Grants[0].Repo != "npm-hosted" || tok.Grants[0].Tier() != auth.RoleWrite {
 		t.Errorf("grants: got %+v", tok.Grants)
 	}
 }
@@ -200,13 +200,13 @@ func TestHandleOIDCCallback_GroupMapsToAdmin(t *testing.T) {
 		{Group: "forge-admins", Role: auth.RoleAdmin},
 		{Group: "devs", Role: auth.RoleWrite},
 	})
-	fake.defaultGrants = []auth.Grant{{Repo: "*", Role: auth.RoleRead}}
+	fake.defaultGrants = []auth.Grant{auth.GrantForRole("*", auth.RoleRead)}
 	fake.exchangeInfo = forgeoidc.UserInfo{Subject: "u1", Email: "a@x.com", Groups: []string{"devs", "forge-admins"}}
 
 	rw := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(rw, callbackReq(t, srv, "s", "n", "code", ""))
 	tok, _ := authStore.Verify(sessionCookieValue(rw))
-	if tok == nil || len(tok.Grants) != 1 || tok.Grants[0].Repo != "*" || tok.Grants[0].Role != auth.RoleAdmin {
+	if tok == nil || len(tok.Grants) != 1 || tok.Grants[0].Repo != "*" || tok.Grants[0].Tier() != auth.RoleAdmin {
 		t.Fatalf("expected admin grant on *, got %+v", tok)
 	}
 }
@@ -214,13 +214,13 @@ func TestHandleOIDCCallback_GroupMapsToAdmin(t *testing.T) {
 func TestHandleOIDCCallback_NoGroupMatchUsesFallback(t *testing.T) {
 	srv, authStore, fake := newOIDCServer(t)
 	srv.GroupMapper = auth.NewGroupRoleMapper([]auth.GroupRule{{Group: "forge-admins", Role: auth.RoleAdmin}})
-	fake.defaultGrants = []auth.Grant{{Repo: "npm-hosted", Role: auth.RoleRead}}
+	fake.defaultGrants = []auth.Grant{auth.GrantForRole("npm-hosted", auth.RoleRead)}
 	fake.exchangeInfo = forgeoidc.UserInfo{Subject: "u1", Groups: []string{"contractors"}}
 
 	rw := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(rw, callbackReq(t, srv, "s", "n", "code", ""))
 	tok, _ := authStore.Verify(sessionCookieValue(rw))
-	if tok == nil || len(tok.Grants) != 1 || tok.Grants[0].Repo != "npm-hosted" || tok.Grants[0].Role != auth.RoleRead {
+	if tok == nil || len(tok.Grants) != 1 || tok.Grants[0].Repo != "npm-hosted" || tok.Grants[0].Tier() != auth.RoleRead {
 		t.Fatalf("expected fallback grant, got %+v", tok)
 	}
 }
@@ -388,7 +388,7 @@ func (f *fakeOIDCProvider) DefaultGrants() []auth.Grant {
 	if f.defaultGrants != nil {
 		return f.defaultGrants
 	}
-	return []auth.Grant{{Repo: "*", Role: auth.RoleRead}}
+	return []auth.Grant{auth.GrantForRole("*", auth.RoleRead)}
 }
 
 func (f *fakeOIDCProvider) TokenTTL() time.Duration {

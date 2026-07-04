@@ -114,7 +114,7 @@ func TestFromEnv_Defaults(t *testing.T) {
 	if cfg == nil {
 		t.Fatal("expected non-nil config")
 	}
-	if len(cfg.DefaultGrants) != 1 || cfg.DefaultGrants[0].Role != auth.RoleRead || cfg.DefaultGrants[0].Repo != "*" {
+	if len(cfg.DefaultGrants) != 1 || cfg.DefaultGrants[0].Tier() != auth.RoleRead || cfg.DefaultGrants[0].Repo != "*" {
 		t.Fatalf("default grants: got %+v", cfg.DefaultGrants)
 	}
 	if cfg.TokenTTL != 8*time.Hour {
@@ -132,7 +132,7 @@ func TestFromEnv_CustomGrants(t *testing.T) {
 	}
 	if len(cfg.DefaultGrants) != 1 ||
 		cfg.DefaultGrants[0].Repo != "npm-hosted" ||
-		cfg.DefaultGrants[0].Role != auth.RoleWrite {
+		cfg.DefaultGrants[0].Tier() != auth.RoleWrite {
 		t.Fatalf("custom grants: got %+v", cfg.DefaultGrants)
 	}
 }
@@ -380,7 +380,7 @@ func (f *fakeOIDC) config(clientID string) oidc.Config {
 		ClientID:      clientID,
 		ClientSecret:  "test-secret",
 		RedirectURL:   "http://forge.example.com/auth/oidc/callback",
-		DefaultGrants: []auth.Grant{{Repo: "*", Role: auth.RoleRead}},
+		DefaultGrants: []auth.Grant{auth.GrantForRole("*", auth.RoleRead)},
 		TokenTTL:      8 * time.Hour,
 	}
 }

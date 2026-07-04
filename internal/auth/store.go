@@ -9,6 +9,9 @@ import (
 type metaStore struct{ meta meta.Store }
 
 func (s *metaStore) Create(desc string, grants []Grant, expiresAt *time.Time, owner ...string) (Token, string, error) {
+	if err := ValidateGrants(grants); err != nil {
+		return Token{}, "", err
+	}
 	raw, display := generate()
 	hash := hashRaw(raw)
 	id := generateID()

@@ -150,7 +150,7 @@ func (s *Server) establishSSOSession(w http.ResponseWriter, r *http.Request,
 	role, matched := mapper.Resolve(groups)
 	var grants []auth.Grant
 	if matched {
-		grants = []auth.Grant{{Repo: "*", Role: role}}
+		grants = []auth.Grant{auth.GrantForRole("*", role)}
 	} else {
 		grants = fallback
 		role = bestGrantRole(fallback)
@@ -202,8 +202,8 @@ func (s *Server) establishSSOSession(w http.ResponseWriter, r *http.Request,
 func bestGrantRole(grants []auth.Grant) auth.Role {
 	best := auth.RoleNone
 	for _, g := range grants {
-		if g.Role > best {
-			best = g.Role
+		if t := g.Tier(); t > best {
+			best = t
 		}
 	}
 	return best

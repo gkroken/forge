@@ -155,7 +155,7 @@ func main() {
 		must(err)
 		if n == 0 {
 			tok, secret, err := authStore.Create("bootstrap admin", []auth.Grant{
-				{Repo: "*", Role: auth.RoleAdmin},
+				auth.GrantForRole("*", auth.RoleAdmin),
 			}, nil)
 			must(err)
 			slog.Info("auth enabled: bootstrap admin token created", "id", tok.ID, "secret", secret)
@@ -398,7 +398,7 @@ func main() {
 	cleanupScheduler.Start(workerCtx)
 
 	if *oidcIssuer != "" {
-		grants := []auth.Grant{{Repo: "*", Role: auth.RoleRead}}
+		grants := []auth.Grant{auth.GrantForRole("*", auth.RoleRead)}
 		if raw := os.Getenv("OIDC_DEFAULT_GRANTS"); raw != "" {
 			if err := json.Unmarshal([]byte(raw), &grants); err != nil {
 				slog.Error("oidc: invalid OIDC_DEFAULT_GRANTS", "err", err)
@@ -448,7 +448,7 @@ func main() {
 	case ldapFromConfig != nil:
 		ldapCfg = ldapFromConfig
 	case *ldapURL != "":
-		grants := []auth.Grant{{Repo: "*", Role: auth.RoleRead}}
+		grants := []auth.Grant{auth.GrantForRole("*", auth.RoleRead)}
 		if raw := os.Getenv("LDAP_DEFAULT_GRANTS"); raw != "" {
 			if err := json.Unmarshal([]byte(raw), &grants); err != nil {
 				slog.Error("ldap: invalid LDAP_DEFAULT_GRANTS", "err", err)

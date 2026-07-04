@@ -76,7 +76,7 @@ func (c Config) MarshalJSON() ([]byte, error) {
 	}
 	grants := make([]grantJSON, len(c.DefaultGrants))
 	for i, g := range c.DefaultGrants {
-		grants[i] = grantJSON{Repo: g.Repo, Role: g.Role.String()}
+		grants[i] = grantJSON{Repo: g.Repo, Role: g.Tier().String()}
 	}
 	return json.Marshal(&struct {
 		alias
@@ -131,7 +131,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 		if role == auth.RoleNone {
 			return fmt.Errorf("ldap: default grant on %q: unknown role %q (want read|write|admin)", g.Repo, g.Role)
 		}
-		c.DefaultGrants = append(c.DefaultGrants, auth.Grant{Repo: g.Repo, Role: role})
+		c.DefaultGrants = append(c.DefaultGrants, auth.GrantForRole(g.Repo, role))
 	}
 	return nil
 }

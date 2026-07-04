@@ -13,14 +13,21 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"forge/internal/meta"
+	"forge/internal/selector"
 )
 
-// Role is the permission level granted within a repository.
+// Role is an identity tier: it describes what kind of principal a user or
+// IdP group maps to (Reader / Publisher / Administrator). Grants no longer
+// carry a Role — they carry explicit Actions — but the tier survives as the
+// vocabulary of the user store, OIDC/LDAP group mapping, and custom roles.
+// GrantForRole expands a tier into its action bundle.
 type Role int
 
 const (
@@ -57,19 +64,138 @@ func ParseRole(s string) (Role, error) {
 	}
 }
 
-// Action is the class of HTTP operation.
-type Action int
+// Action is a permission verb that a Grant can carry.
+type Action string
 
 const (
-	ActionRead  Action = iota // GET, HEAD
-	ActionWrite               // PUT, POST, DELETE, PATCH
+	ActionRead   Action = "read"   // GET/HEAD: download, resolve, browse
+	ActionWrite  Action = "write"  // PUT/POST: publish content
+	ActionDelete Action = "delete" // DELETE: remove content
+	ActionAdmin  Action = "admin"  // manage the repository: settings, cleanup, cache, policies
 )
 
-// Grant gives a Role on a specific repository.
-// Repo == "*" matches any repository.
+// AllActions lists every valid Action in display order.
+var AllActions = []Action{ActionRead, ActionWrite, ActionDelete, ActionAdmin}
+
+// ParseAction converts a string to an Action.
+func ParseAction(s string) (Action, error) {
+	a := Action(strings.ToLower(strings.TrimSpace(s)))
+	if slices.Contains(AllActions, a) {
+		return a, nil
+	}
+	return "", fmt.Errorf("unknown action %q (want read|write|delete|admin)", s)
+}
+
+// Grant gives a set of Actions on a repository. Repo == "*" matches any
+// repository. An empty Selectors list covers the whole repository; otherwise
+// the content actions (read/write/delete) apply only to request paths that
+// match at least one selector pattern (grammar in internal/selector).
+// ActionAdmin cannot be selector-scoped: repository administration is not a
+// path-level operation (ValidateGrants rejects the combination).
 type Grant struct {
-	Repo string `json:"repo"`
-	Role Role   `json:"role"`
+	Repo      string   `json:"repo"`
+	Actions   []Action `json:"actions"`
+	Selectors []string `json:"selectors,omitempty"`
+}
+
+// UnmarshalJSON accepts both the current shape and the legacy pre-actions
+// shape {"repo":"x","role":2}, expanding the role tier into its action
+// bundle. Tokens persisted before the schema change keep working; they are
+// rewritten in the new shape on their next use (Verify updates LastUsed).
+func (g *Grant) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Repo      string   `json:"repo"`
+		Actions   []Action `json:"actions"`
+		Selectors []string `json:"selectors"`
+		Role      Role     `json:"role"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	g.Repo, g.Actions, g.Selectors = aux.Repo, aux.Actions, aux.Selectors
+	if len(g.Actions) == 0 && aux.Role != RoleNone {
+		g.Actions = actionsForRole(aux.Role)
+	}
+	return nil
+}
+
+// allows reports whether this grant permits action a on path within repoName.
+func (g Grant) allows(repoName, path string, a Action) bool {
+	if g.Repo != repoName && g.Repo != "*" {
+		return false
+	}
+	if !slices.Contains(g.Actions, a) {
+		return false
+	}
+	if a == ActionAdmin || len(g.Selectors) == 0 {
+		return true
+	}
+	return selector.MatchAny(g.Selectors, path)
+}
+
+// Tier returns the highest identity tier this grant implies: admin ⊃ write ⊃
+// read. It is the lossy inverse of GrantForRole, used where a grant must be
+// summarised as a role name (LDAP config rendering, UI badges).
+func (g Grant) Tier() Role {
+	switch {
+	case slices.Contains(g.Actions, ActionAdmin):
+		return RoleAdmin
+	case slices.Contains(g.Actions, ActionWrite):
+		return RoleWrite
+	case slices.Contains(g.Actions, ActionRead):
+		return RoleRead
+	}
+	return RoleNone
+}
+
+// actionsForRole expands an identity tier into its action bundle. The write
+// tier includes delete because the pre-actions RoleWrite covered the DELETE
+// method; behaviour of existing write tokens and Publisher users must not
+// silently narrow.
+func actionsForRole(r Role) []Action {
+	switch {
+	case r >= RoleAdmin:
+		return []Action{ActionRead, ActionWrite, ActionDelete, ActionAdmin}
+	case r >= RoleWrite:
+		return []Action{ActionRead, ActionWrite, ActionDelete}
+	case r >= RoleRead:
+		return []Action{ActionRead}
+	}
+	return nil
+}
+
+// GrantForRole expands an identity-tier Role into a whole-repo Grant.
+func GrantForRole(repoName string, r Role) Grant {
+	return Grant{Repo: repoName, Actions: actionsForRole(r)}
+}
+
+// ValidateGrants checks that a grant list is well-formed for a new token.
+func ValidateGrants(grants []Grant) error {
+	if len(grants) == 0 {
+		return fmt.Errorf("at least one grant is required")
+	}
+	for i, g := range grants {
+		if g.Repo == "" {
+			return fmt.Errorf("grant %d: repository is required", i+1)
+		}
+		if len(g.Actions) == 0 {
+			return fmt.Errorf("grant %d (%s): at least one action is required", i+1, g.Repo)
+		}
+		for _, a := range g.Actions {
+			if !slices.Contains(AllActions, a) {
+				return fmt.Errorf("grant %d (%s): unknown action %q", i+1, g.Repo, a)
+			}
+		}
+		if len(g.Selectors) > 0 && slices.Contains(g.Actions, ActionAdmin) {
+			return fmt.Errorf("grant %d (%s): admin cannot be selector-scoped", i+1, g.Repo)
+		}
+		for _, sel := range g.Selectors {
+			if err := selector.Validate(sel); err != nil {
+				return fmt.Errorf("grant %d (%s): %w", i+1, g.Repo, err)
+			}
+		}
+	}
+	return nil
 }
 
 // Token is a long-lived API credential. The raw secret is never stored;
@@ -84,18 +210,29 @@ type Token struct {
 	LastUsed    *time.Time `json:"last_used,omitempty"`
 }
 
-// RoleFor returns the highest Role this token grants on repo.
-// A grant with Repo=="*" acts as a wildcard.
-func (t *Token) RoleFor(repo string) Role {
-	best := RoleNone
+// Allows reports whether this token permits action a on path within repo.
+// A grant with Repo=="*" acts as a wildcard. path is the repo-relative
+// request path; it is only consulted for selector-scoped grants (pass ""
+// for repo-level checks such as admin).
+func (t *Token) Allows(repo, path string, a Action) bool {
 	for _, g := range t.Grants {
-		if g.Repo == repo || g.Repo == "*" {
-			if g.Role > best {
-				best = g.Role
-			}
+		if g.allows(repo, path, a) {
+			return true
 		}
 	}
-	return best
+	return false
+}
+
+// GlobalAdmin reports whether this token carries admin on every repository
+// (an admin grant on the "*" wildcard). System-level surfaces — user, token,
+// webhook, and global-policy management — require this, not just repo admin.
+func (t *Token) GlobalAdmin() bool {
+	for _, g := range t.Grants {
+		if g.Repo == "*" && slices.Contains(g.Actions, ActionAdmin) {
+			return true
+		}
+	}
+	return false
 }
 
 // Store manages token lifecycle.

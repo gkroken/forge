@@ -30,7 +30,7 @@ func (f *fakeLDAP) Authenticate(_ context.Context, _, _ string) (forgeldap.UserI
 }
 func (f *fakeLDAP) DefaultGrants() []auth.Grant {
 	if f.defaultGrants == nil {
-		return []auth.Grant{{Repo: "*", Role: auth.RoleRead}}
+		return []auth.Grant{auth.GrantForRole("*", auth.RoleRead)}
 	}
 	return f.defaultGrants
 }
@@ -77,7 +77,7 @@ func TestLDAPLogin_Success_MintsSessionWithGroupRole(t *testing.T) {
 	if tok == nil {
 		t.Fatal("no session token minted")
 	}
-	if len(tok.Grants) != 1 || tok.Grants[0].Repo != "*" || tok.Grants[0].Role != auth.RoleAdmin {
+	if len(tok.Grants) != 1 || tok.Grants[0].Repo != "*" || tok.Grants[0].Tier() != auth.RoleAdmin {
 		t.Fatalf("expected admin grant on *, got %+v", tok.Grants)
 	}
 	if tok.Description != "ldap:alice@example.com" {
@@ -88,7 +88,7 @@ func TestLDAPLogin_Success_MintsSessionWithGroupRole(t *testing.T) {
 func TestLDAPLogin_NoGroupMatch_UsesFallback(t *testing.T) {
 	fake := &fakeLDAP{
 		info:          forgeldap.UserInfo{Username: "carol", Groups: []string{"nobody"}},
-		defaultGrants: []auth.Grant{{Repo: "*", Role: auth.RoleRead}},
+		defaultGrants: []auth.Grant{auth.GrantForRole("*", auth.RoleRead)},
 	}
 	srv, authStore := newLDAPServer(t, fake)
 	srv.ldapMapper = auth.NewGroupRoleMapper([]auth.GroupRule{{Group: "forge-admins", Role: auth.RoleAdmin}})
@@ -97,7 +97,7 @@ func TestLDAPLogin_NoGroupMatch_UsesFallback(t *testing.T) {
 	srv.Routes().ServeHTTP(rw, loginPost("carol", "pw"))
 
 	tok, _ := authStore.Verify(sessionCookieValue(rw))
-	if tok == nil || len(tok.Grants) != 1 || tok.Grants[0].Role != auth.RoleRead {
+	if tok == nil || len(tok.Grants) != 1 || tok.Grants[0].Tier() != auth.RoleRead {
 		t.Fatalf("expected fallback read grant, got %+v", tok)
 	}
 }

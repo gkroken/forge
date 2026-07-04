@@ -75,7 +75,7 @@ func TestTokens_ListAndRevoke(t *testing.T) {
 	srv, authStore := newAuthServer(t)
 
 	// Seed a bootstrap admin token directly so we have credentials.
-	_, secret, err := authStore.Create("admin", []auth.Grant{{Repo: "*", Role: auth.RoleAdmin}}, nil)
+	_, secret, err := authStore.Create("admin", []auth.Grant{auth.GrantForRole("*", auth.RoleAdmin)}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestTokens_ListAndRevoke(t *testing.T) {
 func TestTokens_RouteNotFound(t *testing.T) {
 	srv, _ := newAuthServer(t)
 	// Seed a token so we're past bootstrap.
-	_, secret, _ := srv.Auth.Create("admin", []auth.Grant{{Repo: "*", Role: auth.RoleAdmin}}, nil)
+	_, secret, _ := srv.Auth.Create("admin", []auth.Grant{auth.GrantForRole("*", auth.RoleAdmin)}, nil)
 
 	rw := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(rw, tokenReq(t, http.MethodPatch, "/api/v1/tokens/someid", secret, ""))
@@ -138,9 +138,9 @@ func TestTokens_BadBody(t *testing.T) {
 // TestTokens_ListRequiresAdmin verifies that a non-admin token gets 403 on list.
 func TestTokens_ListRequiresAdmin(t *testing.T) {
 	srv, authStore := newAuthServer(t)
-	_, adminSecret, _ := authStore.Create("admin", []auth.Grant{{Repo: "*", Role: auth.RoleAdmin}}, nil)
+	_, adminSecret, _ := authStore.Create("admin", []auth.Grant{auth.GrantForRole("*", auth.RoleAdmin)}, nil)
 	_ = adminSecret // needed to move past bootstrap so the next create requires admin
-	_, readSecret, _ := authStore.Create("reader", []auth.Grant{{Repo: "x", Role: auth.RoleRead}}, nil)
+	_, readSecret, _ := authStore.Create("reader", []auth.Grant{auth.GrantForRole("x", auth.RoleRead)}, nil)
 
 	rw := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(rw, tokenReq(t, http.MethodGet, "/api/v1/tokens", readSecret, ""))
@@ -152,9 +152,9 @@ func TestTokens_ListRequiresAdmin(t *testing.T) {
 // TestTokens_RevokeRequiresAdmin verifies that a non-admin token gets 403 on revoke.
 func TestTokens_RevokeRequiresAdmin(t *testing.T) {
 	srv, authStore := newAuthServer(t)
-	tok, adminSecret, _ := authStore.Create("admin", []auth.Grant{{Repo: "*", Role: auth.RoleAdmin}}, nil)
+	tok, adminSecret, _ := authStore.Create("admin", []auth.Grant{auth.GrantForRole("*", auth.RoleAdmin)}, nil)
 	_ = adminSecret
-	_, readSecret, _ := authStore.Create("reader", []auth.Grant{{Repo: "x", Role: auth.RoleRead}}, nil)
+	_, readSecret, _ := authStore.Create("reader", []auth.Grant{auth.GrantForRole("x", auth.RoleRead)}, nil)
 
 	rw := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(rw, tokenReq(t, http.MethodDelete, "/api/v1/tokens/"+tok.ID, readSecret, ""))

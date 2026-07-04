@@ -750,12 +750,15 @@ func (s *Server) handleReindex(w http.ResponseWriter, r *http.Request, name stri
 	writeJSON(w, map[string]string{"status": "queued"})
 }
 
-// repoAccessGrant is one principal→role binding returned by /access.
+// repoAccessGrant is one principal→actions binding returned by /access.
+// The "role" field carries the comma-joined action list (field name kept for
+// API compatibility with pre-actions clients).
 type repoAccessGrant struct {
-	TokenID     string `json:"token_id"`
-	Description string `json:"description"`
-	Role        string `json:"role"`
-	Type        string `json:"type"` // always "token" for now
+	TokenID     string   `json:"token_id"`
+	Description string   `json:"description"`
+	Role        string   `json:"role"`
+	Selectors   []string `json:"selectors,omitempty"`
+	Type        string   `json:"type"` // always "token" for now
 }
 
 // handleRepoAccess serves GET /api/v1/repos/{name}/access.
@@ -777,7 +780,8 @@ func (s *Server) handleRepoAccess(w http.ResponseWriter, r *http.Request, name s
 					grants = append(grants, repoAccessGrant{
 						TokenID:     t.ID,
 						Description: t.Description,
-						Role:        g.Role.String(),
+						Role:        formatActions(g.Actions),
+						Selectors:   g.Selectors,
 						Type:        "token",
 					})
 					break

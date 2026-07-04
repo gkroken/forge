@@ -927,7 +927,7 @@ func TestUITokens_Revoke(t *testing.T) {
 	h := srv.Routes()
 
 	// Create a token to revoke.
-	tok, _, _ := srv.Auth.Create("to-revoke", []auth.Grant{{Repo: "*", Role: auth.RoleRead}}, nil)
+	tok, _, _ := srv.Auth.Create("to-revoke", []auth.Grant{auth.GrantForRole("*", auth.RoleRead)}, nil)
 
 	r := httptest.NewRequest(http.MethodDelete, "/ui/admin/tokens/"+tok.ID, nil)
 	r.AddCookie(&http.Cookie{Name: auth.UISessionCookie, Value: secret})
@@ -966,7 +966,7 @@ func newUIServerWithAuth(t *testing.T) (*Server, string) {
 	reg.Register(npm.New())
 	mgr.Add(repo.Repository{Name: "npm-hosted", Format: "npm", Kind: repo.Hosted, AnonymousRead: true}) //nolint:errcheck
 
-	_, secret, _ := authStore.Create("test-admin", []auth.Grant{{Repo: "*", Role: auth.RoleAdmin}}, nil)
+	_, secret, _ := authStore.Create("test-admin", []auth.Grant{auth.GrantForRole("*", auth.RoleAdmin)}, nil)
 	return New(mgr, reg, b, m, authStore), secret
 }
 

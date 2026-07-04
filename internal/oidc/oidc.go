@@ -74,7 +74,7 @@ func FromEnv() (*Config, error) {
 		return nil, fmt.Errorf("OIDC_GROUP_MAPPINGS: %w", err)
 	}
 
-	grants := []auth.Grant{{Repo: "*", Role: auth.RoleRead}}
+	grants := []auth.Grant{auth.GrantForRole("*", auth.RoleRead)}
 	if raw := os.Getenv("OIDC_DEFAULT_GRANTS"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &grants); err != nil {
 			return nil, fmt.Errorf("OIDC_DEFAULT_GRANTS: %w", err)

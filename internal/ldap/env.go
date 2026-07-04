@@ -24,7 +24,7 @@ func FromEnv() (*Config, error) {
 		return nil, fmt.Errorf("LDAP_GROUP_MAPPINGS: %w", err)
 	}
 
-	grants := []auth.Grant{{Repo: "*", Role: auth.RoleRead}}
+	grants := []auth.Grant{auth.GrantForRole("*", auth.RoleRead)}
 	if g := os.Getenv("LDAP_DEFAULT_GRANTS"); g != "" {
 		if err := json.Unmarshal([]byte(g), &grants); err != nil {
 			return nil, fmt.Errorf("LDAP_DEFAULT_GRANTS: %w", err)

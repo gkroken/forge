@@ -38,7 +38,8 @@ const (
 // are handled separately.
 func (e *Enforcer) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch e.decide(r, repoFromPath(r.URL.Path), actionFor(r.Method)) {
+		repoName, sub := repoFromPath(r.URL.Path)
+		switch e.decide(r, repoName, sub, actionFor(r.Method)) {
 		case decisionNeedAuth:
 			http.Error(w, "authentication required", http.StatusUnauthorized)
 		case decisionForbidden:
@@ -49,8 +50,9 @@ func (e *Enforcer) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// decide returns the policy decision for this request.
-func (e *Enforcer) decide(r *http.Request, repoName string, action Action) decision {
+// decide returns the policy decision for this request. sub is the
+// repo-relative request path, consulted only by selector-scoped grants.
+func (e *Enforcer) decide(r *http.Request, repoName, sub string, action Action) decision {
 	if e.store == nil {
 		return decisionAllow // eval mode: AllowAll
 	}
@@ -73,16 +75,8 @@ func (e *Enforcer) decide(r *http.Request, repoName string, action Action) decis
 		return decisionNeedAuth // invalid or expired token → re-authenticate
 	}
 
-	role := tok.RoleFor(repoName)
-	switch action {
-	case ActionRead:
-		if role >= RoleRead {
-			return decisionAllow
-		}
-	case ActionWrite:
-		if role >= RoleWrite {
-			return decisionAllow
-		}
+	if tok.Allows(repoName, sub, action) {
+		return decisionAllow
 	}
 	return decisionForbidden
 }
@@ -92,8 +86,8 @@ func (e *Enforcer) decide(r *http.Request, repoName string, action Action) decis
 // WWW-Authenticate header that OCI clients need for auth discovery.
 func (e *Enforcer) MiddlewareOCI(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		repoName := ociRepoFromPath(r.URL.Path)
-		switch e.decide(r, repoName, actionFor(r.Method)) {
+		repoName, sub := ociRepoFromPath(r.URL.Path)
+		switch e.decide(r, repoName, sub, actionFor(r.Method)) {
 		case decisionNeedAuth:
 			w.Header().Set("WWW-Authenticate", `Bearer realm="forge"`)
 			w.Header().Set("Content-Type", "application/json")
@@ -113,12 +107,46 @@ func (e *Enforcer) MiddlewareOCI(next http.Handler) http.Handler {
 	})
 }
 
-// RequireAdmin checks for an admin token on token-management routes.
+// RequireAdmin checks for a global-admin token on system-level API routes
+// (tokens, users, webhooks, global policies, repo creation).
 // Returns false and writes an HTTP error if the check fails.
 func (e *Enforcer) RequireAdmin(w http.ResponseWriter, r *http.Request) bool {
 	if e.store == nil {
 		return true // eval mode
 	}
+	tok := e.apiToken(w, r)
+	if tok == nil {
+		return false
+	}
+	if !tok.GlobalAdmin() {
+		http.Error(w, "admin role required", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+// RequireRepoAdmin checks for a token carrying the admin action on the named
+// repository (a repo-scoped admin grant, or global admin via "*"). Used by
+// per-repository admin API routes: settings, cleanup, cache, scan, policy
+// assignment. Returns false and writes an HTTP error if the check fails.
+func (e *Enforcer) RequireRepoAdmin(w http.ResponseWriter, r *http.Request, repoName string) bool {
+	if e.store == nil {
+		return true // eval mode
+	}
+	tok := e.apiToken(w, r)
+	if tok == nil {
+		return false
+	}
+	if !tok.Allows(repoName, "", ActionAdmin) {
+		http.Error(w, "admin role on repository "+repoName+" required", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+// apiToken resolves and verifies the request's token for API routes, writing
+// a 401 and returning nil when absent or invalid.
+func (e *Enforcer) apiToken(w http.ResponseWriter, r *http.Request) *Token {
 	secret := bearerToken(r)
 	if secret == "" {
 		// The admin UI's own fetch/htmx calls hit these API routes with only
@@ -132,18 +160,14 @@ func (e *Enforcer) RequireAdmin(w http.ResponseWriter, r *http.Request) bool {
 	}
 	if secret == "" {
 		http.Error(w, "authentication required", http.StatusUnauthorized)
-		return false
+		return nil
 	}
 	tok, err := e.store.Verify(secret)
 	if err != nil || tok == nil {
 		http.Error(w, "invalid token", http.StatusUnauthorized)
-		return false
+		return nil
 	}
-	if tok.RoleFor("*") < RoleAdmin {
-		http.Error(w, "admin role required", http.StatusForbidden)
-		return false
-	}
-	return true
+	return tok
 }
 
 // RequireAdminUI is like RequireAdmin but intended for browser UI handlers.
@@ -171,7 +195,7 @@ func (e *Enforcer) RequireAdminUI(w http.ResponseWriter, r *http.Request) bool {
 		http.Redirect(w, r, "/ui/login?error=invalid&next="+next, http.StatusSeeOther)
 		return false
 	}
-	if tok.RoleFor("*") < RoleAdmin {
+	if !tok.GlobalAdmin() {
 		http.Error(w, "admin role required", http.StatusForbidden)
 		return false
 	}
@@ -180,24 +204,26 @@ func (e *Enforcer) RequireAdminUI(w http.ResponseWriter, r *http.Request) bool {
 
 // --- helpers -----------------------------------------------------------------
 
-func repoFromPath(path string) string {
-	// /repository/{name}/...
+func repoFromPath(path string) (name, sub string) {
+	// /repository/{name}/{sub...}
 	rest := strings.TrimPrefix(path, "/repository/")
-	name, _, _ := strings.Cut(rest, "/")
-	return name
+	name, sub, _ = strings.Cut(rest, "/")
+	return name, sub
 }
 
-func ociRepoFromPath(path string) string {
-	// /v2/{name}/...
+func ociRepoFromPath(path string) (name, sub string) {
+	// /v2/{name}/{sub...}
 	rest := strings.TrimPrefix(path, "/v2/")
-	name, _, _ := strings.Cut(rest, "/")
-	return name
+	name, sub, _ = strings.Cut(rest, "/")
+	return name, sub
 }
 
 func actionFor(method string) Action {
 	switch method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return ActionRead
+	case http.MethodDelete:
+		return ActionDelete
 	default:
 		return ActionWrite
 	}

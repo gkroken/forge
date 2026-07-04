@@ -30,7 +30,7 @@ func TestTokenStore_CreateAndVerify(t *testing.T) {
 	s := newStore(t)
 
 	tok, secret, err := s.Create("ci token", []auth.Grant{
-		{Repo: "npm-hosted", Role: auth.RoleWrite},
+		auth.GrantForRole("npm-hosted", auth.RoleWrite),
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -46,14 +46,20 @@ func TestTokenStore_CreateAndVerify(t *testing.T) {
 	if got.ID != tok.ID {
 		t.Fatalf("id mismatch: %q != %q", got.ID, tok.ID)
 	}
-	if got.RoleFor("npm-hosted") != auth.RoleWrite {
-		t.Fatalf("role: got %v want write", got.RoleFor("npm-hosted"))
+	if !got.Allows("npm-hosted", "", auth.ActionWrite) {
+		t.Fatal("token should allow write on npm-hosted")
+	}
+	if got.Allows("npm-hosted", "", auth.ActionAdmin) {
+		t.Fatal("write-tier token should not allow admin")
+	}
+	if got.Allows("other-repo", "", auth.ActionRead) {
+		t.Fatal("token should not allow read on another repo")
 	}
 }
 
 func TestTokenStore_VerifyWrongSecret(t *testing.T) {
 	s := newStore(t)
-	s.Create("t", nil, nil)
+	s.Create("t", readGrant(), nil)
 
 	got, err := s.Verify("forge_" + "00" + nHex(62))
 	if err != nil || got != nil {
@@ -73,7 +79,7 @@ func TestTokenStore_VerifyMalformed(t *testing.T) {
 
 func TestTokenStore_Revoke(t *testing.T) {
 	s := newStore(t)
-	tok, secret, _ := s.Create("temp", nil, nil)
+	tok, secret, _ := s.Create("temp", readGrant(), nil)
 
 	if err := s.Revoke(tok.ID); err != nil {
 		t.Fatal(err)
@@ -91,7 +97,7 @@ func TestTokenStore_Revoke(t *testing.T) {
 func TestTokenStore_Expired(t *testing.T) {
 	s := newStore(t)
 	past := time.Now().Add(-time.Minute)
-	_, secret, _ := s.Create("expired", nil, &past)
+	_, secret, _ := s.Create("expired", readGrant(), &past)
 
 	got, _ := s.Verify(secret)
 	if got != nil {
@@ -101,8 +107,8 @@ func TestTokenStore_Expired(t *testing.T) {
 
 func TestTokenStore_List(t *testing.T) {
 	s := newStore(t)
-	s.Create("a", nil, nil)
-	s.Create("b", nil, nil)
+	s.Create("a", readGrant(), nil)
+	s.Create("b", readGrant(), nil)
 	tokens, err := s.List()
 	if err != nil || len(tokens) != 2 {
 		t.Fatalf("list: len=%d err=%v", len(tokens), err)
@@ -110,11 +116,14 @@ func TestTokenStore_List(t *testing.T) {
 }
 
 func TestToken_WildcardGrant(t *testing.T) {
-	tok := &auth.Token{Grants: []auth.Grant{{Repo: "*", Role: auth.RoleAdmin}}}
+	tok := &auth.Token{Grants: []auth.Grant{auth.GrantForRole("*", auth.RoleAdmin)}}
 	for _, repo := range []string{"npm-hosted", "maven-hosted", "helm-hosted"} {
-		if tok.RoleFor(repo) != auth.RoleAdmin {
-			t.Errorf("wildcard: %s got %v want admin", repo, tok.RoleFor(repo))
+		if !tok.Allows(repo, "", auth.ActionAdmin) {
+			t.Errorf("wildcard: admin should be allowed on %s", repo)
 		}
+	}
+	if !tok.GlobalAdmin() {
+		t.Error("wildcard admin grant should report GlobalAdmin")
 	}
 }
 
@@ -161,10 +170,10 @@ func TestAuthzMatrix(t *testing.T) {
 	store, req := setupMatrix(t)
 
 	// Mint tokens for each role on "private".
-	_, readSecret, _ := store.Create("read", []auth.Grant{{Repo: "private", Role: auth.RoleRead}}, nil)
-	_, writeSecret, _ := store.Create("write", []auth.Grant{{Repo: "private", Role: auth.RoleWrite}}, nil)
-	_, adminSecret, _ := store.Create("admin", []auth.Grant{{Repo: "*", Role: auth.RoleAdmin}}, nil)
-	_, otherSecret, _ := store.Create("other", []auth.Grant{{Repo: "public", Role: auth.RoleWrite}}, nil)
+	_, readSecret, _ := store.Create("read", []auth.Grant{auth.GrantForRole("private", auth.RoleRead)}, nil)
+	_, writeSecret, _ := store.Create("write", []auth.Grant{auth.GrantForRole("private", auth.RoleWrite)}, nil)
+	_, adminSecret, _ := store.Create("admin", []auth.Grant{auth.GrantForRole("*", auth.RoleAdmin)}, nil)
+	_, otherSecret, _ := store.Create("other", []auth.Grant{auth.GrantForRole("public", auth.RoleWrite)}, nil)
 
 	cases := []struct {
 		name   string
@@ -228,8 +237,8 @@ func TestAuthzMatrix_OCI(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	_, writeSecret, _ := s.Create("write", []auth.Grant{{Repo: "oci-private", Role: auth.RoleWrite}}, nil)
-	_, readSecret, _ := s.Create("read", []auth.Grant{{Repo: "oci-private", Role: auth.RoleRead}}, nil)
+	_, writeSecret, _ := s.Create("write", []auth.Grant{auth.GrantForRole("oci-private", auth.RoleWrite)}, nil)
+	_, readSecret, _ := s.Create("read", []auth.Grant{auth.GrantForRole("oci-private", auth.RoleRead)}, nil)
 
 	doOCI := func(method, repo, secret string) (int, http.Header, map[string]any) {
 		req, _ := http.NewRequest(method, srv.URL+"/v2/"+repo+"/manifests/latest", nil)
@@ -282,12 +291,13 @@ func TestAuthzMatrix_OCI(t *testing.T) {
 	}
 }
 
-// TestAuthzMatrix_Methods verifies HEAD maps to read and DELETE/POST/PATCH
-// map to write, consistent with actionFor() in enforce.go.
+// TestAuthzMatrix_Methods verifies HEAD maps to read, POST/PATCH map to
+// write, and DELETE maps to the delete action (which the write tier
+// includes), consistent with actionFor() in enforce.go.
 func TestAuthzMatrix_Methods(t *testing.T) {
 	store, req := setupMatrix(t)
-	_, readSecret, _ := store.Create("read", []auth.Grant{{Repo: "private", Role: auth.RoleRead}}, nil)
-	_, writeSecret, _ := store.Create("write", []auth.Grant{{Repo: "private", Role: auth.RoleWrite}}, nil)
+	_, readSecret, _ := store.Create("read", []auth.Grant{auth.GrantForRole("private", auth.RoleRead)}, nil)
+	_, writeSecret, _ := store.Create("write", []auth.Grant{auth.GrantForRole("private", auth.RoleWrite)}, nil)
 
 	cases := []struct {
 		name   string
@@ -298,7 +308,7 @@ func TestAuthzMatrix_Methods(t *testing.T) {
 		// HEAD is a read — read token allows, anon denied.
 		{"HEAD anon",        "HEAD",   "",          http.StatusUnauthorized},
 		{"HEAD read-token",  "HEAD",   readSecret,  http.StatusOK},
-		// DELETE, POST, PATCH are writes.
+		// DELETE needs the delete action; the write tier carries it.
 		{"DELETE read-token",  "DELETE", readSecret,  http.StatusForbidden},
 		{"DELETE write-token", "DELETE", writeSecret, http.StatusOK},
 		{"POST read-token",    "POST",   readSecret,  http.StatusForbidden},
@@ -321,7 +331,7 @@ func TestAuthzMatrix_Methods(t *testing.T) {
 func TestAuthzMatrix_BearerFormats(t *testing.T) {
 	m, _ := meta.NewFS(filepath.Join(t.TempDir(), "meta"))
 	s := auth.NewMetaStore(m)
-	_, secret, _ := s.Create("rw", []auth.Grant{{Repo: "private", Role: auth.RoleWrite}}, nil)
+	_, secret, _ := s.Create("rw", []auth.Grant{auth.GrantForRole("private", auth.RoleWrite)}, nil)
 
 	mgr := repo.NewManager()
 	mgr.Add(repo.Repository{Name: "private", Format: "maven", Kind: repo.Hosted, AnonymousRead: false})
@@ -367,8 +377,8 @@ func TestAuthzMatrix_RequireAdmin(t *testing.T) {
 	mgr := repo.NewManager()
 	enforcer := auth.NewEnforcer(s, mgr)
 
-	_, nonAdminSecret, _ := s.Create("user", []auth.Grant{{Repo: "npm-hosted", Role: auth.RoleWrite}}, nil)
-	_, adminSecret, _ := s.Create("admin", []auth.Grant{{Repo: "*", Role: auth.RoleAdmin}}, nil)
+	_, nonAdminSecret, _ := s.Create("user", []auth.Grant{auth.GrantForRole("npm-hosted", auth.RoleWrite)}, nil)
+	_, adminSecret, _ := s.Create("admin", []auth.Grant{auth.GrantForRole("*", auth.RoleAdmin)}, nil)
 
 	adminHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !enforcer.RequireAdmin(w, r) {
@@ -417,7 +427,7 @@ func TestAuthzMatrix_ExpiredToken(t *testing.T) {
 	// Create a second store to issue an already-expired token.
 	s2 := newStore(t)
 	past := time.Now().Add(-time.Second)
-	_, expiredSecret, _ := s2.Create("expired", []auth.Grant{{Repo: "private", Role: auth.RoleWrite}}, &past)
+	_, expiredSecret, _ := s2.Create("expired", []auth.Grant{auth.GrantForRole("private", auth.RoleWrite)}, &past)
 
 	// The matrix server uses its own store, so this token is unknown → 401,
 	// same as an expired token from the correct store.
@@ -433,7 +443,7 @@ func TestAuthzMatrix_ExpiredToken(t *testing.T) {
 	enforcer3 := auth.NewEnforcer(s3, mgr3)
 
 	pastTime := time.Now().Add(-time.Second)
-	_, expSecret, _ := s3.Create("exp", []auth.Grant{{Repo: "private", Role: auth.RoleRead}}, &pastTime)
+	_, expSecret, _ := s3.Create("exp", []auth.Grant{auth.GrantForRole("private", auth.RoleRead)}, &pastTime)
 
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux := http.NewServeMux()
@@ -497,8 +507,8 @@ func TestTokenStore_Count(t *testing.T) {
 	if err != nil || n != 0 {
 		t.Fatalf("empty store: Count()=%d err=%v", n, err)
 	}
-	s.Create("t1", nil, nil)
-	s.Create("t2", nil, nil)
+	s.Create("t1", readGrant(), nil)
+	s.Create("t2", readGrant(), nil)
 	n, err = s.Count()
 	if err != nil || n != 2 {
 		t.Fatalf("after 2 creates: Count()=%d err=%v", n, err)
@@ -513,8 +523,8 @@ func TestRequireAdmin_AcceptsSessionCookie(t *testing.T) {
 	store := newStore(t)
 	enforcer := auth.NewEnforcer(store, repo.NewManager())
 
-	_, adminSecret, _ := store.Create("admin", []auth.Grant{{Repo: "*", Role: auth.RoleAdmin}}, nil)
-	_, readSecret, _ := store.Create("reader", []auth.Grant{{Repo: "*", Role: auth.RoleRead}}, nil)
+	_, adminSecret, _ := store.Create("admin", []auth.Grant{auth.GrantForRole("*", auth.RoleAdmin)}, nil)
+	_, readSecret, _ := store.Create("reader", []auth.Grant{auth.GrantForRole("*", auth.RoleRead)}, nil)
 
 	cases := []struct {
 		name string
@@ -555,6 +565,12 @@ func TestRequireAdmin_AcceptsSessionCookie(t *testing.T) {
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+
+// readGrant returns a minimal valid grant list for tests that only exercise
+// token lifecycle (Create now rejects empty grant lists).
+func readGrant() []auth.Grant {
+	return []auth.Grant{auth.GrantForRole("*", auth.RoleRead)}
+}
 
 func isForgeToken(s string) bool {
 	return len(s) == 70 && s[:6] == "forge_" // "forge_" + 64 hex chars

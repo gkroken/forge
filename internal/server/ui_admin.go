@@ -827,7 +827,7 @@ func (s *Server) processTokenForm(w http.ResponseWriter, r *http.Request) {
 		expiresAt = &t
 	}
 
-	_, secret, err := s.Auth.Create(form.Description, []auth.Grant{{Repo: repoName, Role: role}}, expiresAt)
+	_, secret, err := s.Auth.Create(form.Description, []auth.Grant{auth.GrantForRole(repoName, role)}, expiresAt)
 	if err != nil {
 		render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("failed to create token: "+err.Error(), "", form))
 		return
@@ -1019,7 +1019,7 @@ func (s *Server) processTokenFormV2(w http.ResponseWriter, r *http.Request) {
 		expiresAt = &t
 	}
 
-	_, secret, err := s.Auth.Create(form.Description, []auth.Grant{{Repo: repoName, Role: role}}, expiresAt)
+	_, secret, err := s.Auth.Create(form.Description, []auth.Grant{auth.GrantForRole(repoName, role)}, expiresAt)
 	if err != nil {
 		render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("failed to create token: "+err.Error(), "", form))
 		return
@@ -1031,9 +1031,21 @@ func (s *Server) processTokenFormV2(w http.ResponseWriter, r *http.Request) {
 func formatGrants(grants []auth.Grant) string {
 	parts := make([]string, 0, len(grants))
 	for _, g := range grants {
-		parts = append(parts, g.Role.String()+" on "+g.Repo)
+		s := formatActions(g.Actions) + " on " + g.Repo
+		if len(g.Selectors) > 0 {
+			s += " (" + strings.Join(g.Selectors, ", ") + ")"
+		}
+		parts = append(parts, s)
 	}
-	return strings.Join(parts, ", ")
+	return strings.Join(parts, "; ")
+}
+
+func formatActions(actions []auth.Action) string {
+	parts := make([]string, 0, len(actions))
+	for _, a := range actions {
+		parts = append(parts, string(a))
+	}
+	return strings.Join(parts, ",")
 }
 
 func formatExpiry(t *time.Time) string {
@@ -1102,7 +1114,7 @@ func (s *Server) uiAdminAccess(w http.ResponseWriter, r *http.Request) {
 				for _, g := range tok.Grants {
 					if g.Repo == rp.Name || g.Repo == "*" {
 						row.Grants = append(row.Grants, repoGrant{
-							Role:        g.Role.String(),
+							Role:        formatActions(g.Actions),
 							Description: tok.Description,
 						})
 						break
