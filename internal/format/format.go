@@ -5,12 +5,14 @@
 package format
 
 import (
+	"context"
 	"net/http"
 	"sort"
 	"sync/atomic"
 	"time"
 
 	"forge/internal/blob"
+	"forge/internal/integrity"
 	"forge/internal/meta"
 	"forge/internal/obs"
 	"forge/internal/proxy"
@@ -217,6 +219,30 @@ type ReferencedImages interface {
 // directly without re-deriving OSV coordinates.
 type VulnGate interface {
 	VulnGateTarget(sub string) (component, version string, ok bool)
+}
+
+// IntegrityChecker is an optional Handler extension that powers the read-only
+// integrity verify job. The format knows what "consistent" means for its own
+// storage shape (which meta records must be backed by blobs, where a checksum
+// expectation is recorded), so that knowledge stays in the plugin and the
+// verify spine stays format-agnostic — the Inspectable/VulnCoordinates idiom.
+//
+// Implementations must be strictly read-only: report findings, never repair.
+// In integrity.ModeQuick no artifact bytes are hashed (small metadata
+// documents may still be read); integrity.ModeFull re-verifies every stored
+// checksum expectation against the bytes on disk.
+type IntegrityChecker interface {
+	VerifyIntegrity(c *Context, mode integrity.Mode) (integrity.Result, error)
+}
+
+// Reindexer is an optional Handler extension for formats that keep a
+// materialized index which can be rebuilt from source records (npm's
+// packument). Reindex rebuilds every such index in the repo and returns how
+// many were rebuilt/enqueued. Formats that generate their indexes on demand
+// (maven-metadata.xml, Helm index.yaml, CRAN PACKAGES) have nothing to
+// rebuild and simply don't implement it.
+type Reindexer interface {
+	Reindex(ctx context.Context, c *Context) (int, error)
 }
 
 // GroupBrowse merges BrowseRepo results from every member of a group context.
