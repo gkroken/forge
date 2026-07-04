@@ -4,7 +4,7 @@
   <div class="admin-subheader-row">
     <div>
       <div class="admin-subheader-title">Tokens &amp; Access</div>
-      <div class="admin-subheader-sub">Personal &amp; CI tokens, scoped by role and repository</div>
+      <div class="admin-subheader-sub">Personal &amp; CI tokens — per-repository grants with read / write / delete / admin actions and content selectors</div>
     </div>
     <div style="margin-left:auto;display:flex;align-items:center;gap:9px;">
       {{if and .AuthEnabled (eq .ActiveTab "tokens")}}
@@ -78,7 +78,15 @@
             </div>
           </td>
           <td style="font-size:12.5px;color:{{if .Owner}}var(--text){{else}}var(--text-muted){{end}};">{{if .Owner}}{{.Owner}}{{else}}—{{end}}</td>
-          <td class="col-mono" style="font-size:12px;">{{.GrantSummary}}</td>
+          <td>
+            {{range .Grants}}
+            <div class="grant-line">
+              <span class="grant-repo">{{.Repo}}</span>
+              {{range .Actions}}<span class="scope-badge scope-{{.}}">{{.}}</span>{{end}}
+              {{if .Selectors}}<span class="grant-sel" title="Only content matching these selectors">{{.Selectors}}</span>{{end}}
+            </div>
+            {{end}}
+          </td>
           <td class="col-mono" style="font-size:12px;color:var(--text-muted);">{{.LastUsedStr}}</td>
           <td class="col-mono" style="font-size:12px;">{{.ExpiresStr}}</td>
           <td>
@@ -105,35 +113,36 @@
   <div class="empty">No tokens yet. <a href="#create-token">Create one below.</a></div>
   {{end}}
 
-  <!-- role summary cards -->
+  <!-- permission vocabulary -->
   <div class="role-grid-3">
     <div class="role-card">
       <div class="role-card-hdr">
         <span class="scope-badge scope-read" style="font-size:12px;padding:3px 10px;">read</span>
-        <span class="role-card-name">Reader</span>
-      </div>
-      <div class="role-card-desc">Pull and resolve artifacts from any repository. No publish rights.</div>
-    </div>
-    <div class="role-card">
-      <div class="role-card-hdr">
         <span class="scope-badge scope-write" style="font-size:12px;padding:3px 10px;">write</span>
-        <span class="role-card-name">Publisher</span>
+        <span class="scope-badge scope-delete" style="font-size:12px;padding:3px 10px;">delete</span>
       </div>
-      <div class="role-card-desc">Deploy to hosted repositories and trigger proxy prefetch. No config access.</div>
+      <div class="role-card-desc"><strong>Content actions.</strong> read = download &amp; resolve; write = publish; delete = remove versions. Can be narrowed to content selectors.</div>
     </div>
     <div class="role-card">
       <div class="role-card-hdr">
         <span class="scope-badge scope-admin" style="font-size:12px;padding:3px 10px;">admin</span>
-        <span class="role-card-name">Administrator</span>
+        <span class="role-card-name">on one repository</span>
       </div>
-      <div class="role-card-desc">Full control — repositories, tokens, cleanup, and system settings.</div>
+      <div class="role-card-desc">Manage that repository — settings, cleanup, cache, policy assignment. Always repo-wide (no selectors).</div>
+    </div>
+    <div class="role-card">
+      <div class="role-card-hdr">
+        <span class="scope-badge scope-admin" style="font-size:12px;padding:3px 10px;">admin</span>
+        <span class="role-card-name">on *</span>
+      </div>
+      <div class="role-card-desc">Global administrator — repositories, tokens, users, webhooks, and system settings.</div>
     </div>
   </div>
 
   <!-- create token form -->
   <div id="create-token">
     <div class="section-title">New token</div>
-    <div class="panel-card" style="max-width:640px;">
+    <div class="panel-card" style="max-width:720px;">
       <form method="POST" class="repo-form" style="max-width:none;">
         <input type="hidden" name="tab" value="tokens">
         <div class="form-group">
@@ -141,25 +150,38 @@
           <input id="t-desc" type="text" name="description" required
                  value="{{.Form.Description}}" placeholder="e.g. CI publish token">
         </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label for="t-repo">Repository</label>
-            <select id="t-repo" name="repo">
-              <option value="*"{{if eq .Form.Repo "*"}} selected{{end}}>All repositories (*)</option>
-              {{range .AllRepos}}
-              <option value="{{.}}"{{if eq . $.Form.Repo}} selected{{end}}>{{.}}</option>
-              {{end}}
-            </select>
+
+        <div class="form-group">
+          <label>Grants</label>
+          <div id="grant-rows">
+            {{range $i, $row := .Form.Rows}}
+            <div class="grant-row" data-grant-row>
+              <div class="grant-row-main">
+                <select name="g{{$i}}_repo" aria-label="Repository">
+                  <option value="*"{{if eq $row.Repo "*"}} selected{{end}}>All repositories (*)</option>
+                  {{range $.AllRepos}}
+                  <option value="{{.}}"{{if eq . $row.Repo}} selected{{end}}>{{.}}</option>
+                  {{end}}
+                </select>
+                <div class="grant-actions">
+                  <label class="grant-action"><input type="checkbox" name="g{{$i}}_actions" value="read"{{if index $row.Actions "read"}} checked{{end}}> read</label>
+                  <label class="grant-action"><input type="checkbox" name="g{{$i}}_actions" value="write"{{if index $row.Actions "write"}} checked{{end}}> write</label>
+                  <label class="grant-action"><input type="checkbox" name="g{{$i}}_actions" value="delete"{{if index $row.Actions "delete"}} checked{{end}}> delete</label>
+                  <label class="grant-action"><input type="checkbox" name="g{{$i}}_actions" value="admin"{{if index $row.Actions "admin"}} checked{{end}}> admin</label>
+                </div>
+                <button type="button" class="btn btn-sm grant-remove" data-action="remove-grant" title="Remove this grant">Remove</button>
+              </div>
+              <input type="text" name="g{{$i}}_selectors" class="grant-selectors" value="{{$row.Selectors}}"
+                     placeholder="Optional content selectors, e.g. com/acme/**, @acme/**">
+            </div>
+            {{end}}
           </div>
-          <div class="form-group">
-            <label for="t-role">Role</label>
-            <select id="t-role" name="role">
-              <option value="read"{{if eq .Form.Role "read"}} selected{{end}}>read</option>
-              <option value="write"{{if eq .Form.Role "write"}} selected{{end}}>write</option>
-              <option value="admin"{{if eq .Form.Role "admin"}} selected{{end}}>admin</option>
-            </select>
-          </div>
+          <button type="button" class="btn btn-sm" data-action="add-grant">+ Add grant</button>
+          <p class="form-hint">Selectors narrow read/write/delete to matching content paths within the repository
+            (<code>*</code> matches within a path segment, <code>**</code> across segments — e.g. <code>com/acme/**</code> for
+            a Maven group, <code>@acme/**</code> for an npm scope). Leave empty to cover the whole repository.</p>
         </div>
+
         <div class="form-group">
           <label for="t-exp">Expires</label>
           <input id="t-exp" type="date" name="expires" value="{{.Form.Expires}}">
@@ -171,6 +193,29 @@
       </form>
     </div>
   </div>
+
+  <!-- template for grant rows added client-side; __I__ is replaced with the next free index -->
+  <template id="grant-row-tpl">
+    <div class="grant-row" data-grant-row>
+      <div class="grant-row-main">
+        <select name="g__I___repo" aria-label="Repository">
+          <option value="*">All repositories (*)</option>
+          {{range .AllRepos}}
+          <option value="{{.}}">{{.}}</option>
+          {{end}}
+        </select>
+        <div class="grant-actions">
+          <label class="grant-action"><input type="checkbox" name="g__I___actions" value="read" checked> read</label>
+          <label class="grant-action"><input type="checkbox" name="g__I___actions" value="write"> write</label>
+          <label class="grant-action"><input type="checkbox" name="g__I___actions" value="delete"> delete</label>
+          <label class="grant-action"><input type="checkbox" name="g__I___actions" value="admin"> admin</label>
+        </div>
+        <button type="button" class="btn btn-sm grant-remove" data-action="remove-grant" title="Remove this grant">Remove</button>
+      </div>
+      <input type="text" name="g__I___selectors" class="grant-selectors"
+             placeholder="Optional content selectors, e.g. com/acme/**, @acme/**">
+    </div>
+  </template>
 
   {{end}}{{/* end tokens tab */}}
 
@@ -355,4 +400,5 @@
   {{end}}{{/* end AuthEnabled */}}
 </div>
 <script src="/ui/static/copy.js" defer></script>
+<script src="/ui/static/tokens.js" defer></script>
 {{end}}

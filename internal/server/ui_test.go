@@ -873,7 +873,11 @@ func TestUITokens_AuthEnabled_ShowsForm(t *testing.T) {
 	body := rw.Body.String()
 	assertContains(t, body, "New token")
 	assertContains(t, body, `name="description"`)
-	assertContains(t, body, `name="role"`)
+	// grant builder: first row + client-side row template
+	assertContains(t, body, `name="g0_repo"`)
+	assertContains(t, body, `name="g0_actions"`)
+	assertContains(t, body, `name="g0_selectors"`)
+	assertContains(t, body, `id="grant-row-tpl"`)
 }
 
 func TestUITokens_UnauthenticatedRedirectsToLogin(t *testing.T) {
@@ -890,7 +894,9 @@ func TestUITokens_Create_Success(t *testing.T) {
 	srv, secret := newUIServerWithAuth(t)
 	h := srv.Routes()
 	rw := uiPostWithCookie(t, h, "/ui/admin/tokens", auth.UISessionCookie, secret, url.Values{
-		"description": {"ci-token"}, "repo": {"*"}, "role": {"write"},
+		"description": {"ci-token"},
+		"g0_repo":     {"*"},
+		"g0_actions":  {"read", "write"},
 	})
 	if rw.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rw.Code)
@@ -901,11 +907,63 @@ func TestUITokens_Create_Success(t *testing.T) {
 	assertContains(t, body, "ci-token") // appears in token list
 }
 
+func TestUITokens_Create_MultiGrantWithSelectors(t *testing.T) {
+	srv, secret := newUIServerWithAuth(t)
+	h := srv.Routes()
+	rw := uiPostWithCookie(t, h, "/ui/admin/tokens", auth.UISessionCookie, secret, url.Values{
+		"description":  {"scoped ci"},
+		"g0_repo":      {"maven-hosted"},
+		"g0_actions":   {"read"},
+		"g2_repo":      {"maven-hosted"}, // sparse index, as after a row removal
+		"g2_actions":   {"write"},
+		"g2_selectors": {"com/acme/**, org/acme/**"},
+	})
+	if rw.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rw.Code)
+	}
+	assertContains(t, rw.Body.String(), "Token created")
+
+	tokens, _ := srv.Auth.List()
+	var found *auth.Token
+	for i := range tokens {
+		if tokens[i].Description == "scoped ci" {
+			found = &tokens[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("scoped ci token not created")
+	}
+	if len(found.Grants) != 2 {
+		t.Fatalf("grants: got %d want 2 (%+v)", len(found.Grants), found.Grants)
+	}
+	sel := found.Grants[1].Selectors
+	if len(sel) != 2 || sel[0] != "com/acme/**" || sel[1] != "org/acme/**" {
+		t.Fatalf("selectors not parsed: %v", sel)
+	}
+}
+
+func TestUITokens_Create_AdminWithSelectorRejected(t *testing.T) {
+	srv, secret := newUIServerWithAuth(t)
+	h := srv.Routes()
+	rw := uiPostWithCookie(t, h, "/ui/admin/tokens", auth.UISessionCookie, secret, url.Values{
+		"description":  {"bad"},
+		"g0_repo":      {"maven-hosted"},
+		"g0_actions":   {"admin"},
+		"g0_selectors": {"com/acme/**"},
+	})
+	if rw.Code != http.StatusOK {
+		t.Fatalf("expected 200 re-render, got %d", rw.Code)
+	}
+	assertContains(t, rw.Body.String(), "admin cannot be selector-scoped")
+	// The submitted row round-trips into the re-rendered form.
+	assertContains(t, rw.Body.String(), `value="com/acme/**"`)
+}
+
 func TestUITokens_Create_MissingDescription(t *testing.T) {
 	srv, secret := newUIServerWithAuth(t)
 	h := srv.Routes()
 	rw := uiPostWithCookie(t, h, "/ui/admin/tokens", auth.UISessionCookie, secret, url.Values{
-		"description": {""}, "repo": {"*"}, "role": {"read"},
+		"description": {""}, "g0_repo": {"*"}, "g0_actions": {"read"},
 	})
 	if rw.Code != http.StatusOK {
 		t.Fatalf("expected 200 re-render, got %d", rw.Code)
@@ -917,7 +975,7 @@ func TestUITokens_Create_InvalidExpiry(t *testing.T) {
 	srv, secret := newUIServerWithAuth(t)
 	h := srv.Routes()
 	rw := uiPostWithCookie(t, h, "/ui/admin/tokens", auth.UISessionCookie, secret, url.Values{
-		"description": {"x"}, "repo": {"*"}, "role": {"read"}, "expires": {"not-a-date"},
+		"description": {"x"}, "g0_repo": {"*"}, "g0_actions": {"read"}, "expires": {"not-a-date"},
 	})
 	assertContains(t, rw.Body.String(), "invalid expiry")
 }

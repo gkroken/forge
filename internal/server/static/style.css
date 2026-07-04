@@ -1150,8 +1150,24 @@ thead th { font-size: var(--fs-eyebrow); letter-spacing: .1em; }
 .scope-badge  { display: inline-flex; font-size: 10.5px; font-weight: 500; padding: 2px 7px; border-radius: 5px; font-family: 'IBM Plex Mono', ui-monospace, monospace; }
 .scope-read   { background: var(--badge-read-bg);   color: var(--badge-read-fg); }
 .scope-write  { background: var(--badge-write-bg);  color: var(--badge-write-fg); }
+.scope-delete { background: var(--sev-mod-bg);      color: var(--sev-mod-fg); }
 .scope-admin  { background: var(--badge-admin-bg);  color: var(--badge-admin-fg); }
 .scope-deploy { background: var(--badge-deploy-bg); color: var(--badge-deploy-fg); }
+
+/* ── grant display (token table) + grant builder (create form) ───────────── */
+.grant-line   { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; padding: 2px 0; }
+.grant-repo   { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 12px; color: var(--text); }
+.grant-sel    { flex-basis: 100%; font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 10.5px; color: var(--text-muted); }
+
+.grant-row       { border: 1px solid var(--border); border-radius: 8px; background: var(--bg-alt); padding: 10px 12px; margin-bottom: 8px; }
+.grant-row-main  { display: flex; align-items: center; gap: 12px; }
+.grant-row-main select { flex: 0 1 220px; min-width: 130px; }
+.grant-actions   { display: flex; gap: 14px; flex-wrap: wrap; }
+label.grant-action { display: inline-flex; align-items: center; gap: 5px; margin: 0; font-size: 12.5px; font-weight: 400; font-family: 'IBM Plex Mono', ui-monospace, monospace; cursor: pointer; }
+label.grant-action input { margin: 0; }
+.grant-remove    { margin-left: auto; }
+.grant-selectors { margin-top: 8px; width: 100%; font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 12px; }
+.grant-selectors:disabled { background: var(--bg-hover); color: var(--text-muted); cursor: not-allowed; }
 
 /* ── status pills ────────────────────────────────────────────────────────── */
 .status-pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 5px; font-size: 11px; font-weight: 600; }

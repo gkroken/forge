@@ -187,24 +187,45 @@ type adminAccessPage struct {
 
 // tokenRow is a display-ready snapshot of one token for the template.
 type tokenRow struct {
-	ID           string
-	Description  string
-	GrantSummary string
-	CreatedStr   string
-	ExpiresStr   string
-	Owner        string // from auth.Token.Owner (empty if not set)
-	LastUsedStr  string // formatted auth.Token.LastUsed; "never" if nil
-	StatusClass  string // CSS dot class: dot-ok / dot-err / dot-neutral
-	StatusLabel  string // "Active" | "Expired" | "Never used"
+	ID          string
+	Description string
+	Grants      []tokenGrantView
+	CreatedStr  string
+	ExpiresStr  string
+	Owner       string // from auth.Token.Owner (empty if not set)
+	LastUsedStr string // formatted auth.Token.LastUsed; "never" if nil
+	StatusClass string // CSS dot class: dot-ok / dot-err / dot-neutral
+	StatusLabel string // "Active" | "Expired" | "Never used"
+}
+
+// tokenGrantView is one grant rendered in the token table: repo, action
+// badges, and the joined selector list (empty = whole repo).
+type tokenGrantView struct {
+	Repo      string
+	Actions   []string
+	Selectors string
+}
+
+// grantRow is one row of the grant builder, round-tripped on validation
+// errors. Actions is keyed by verb so the template can restore checkboxes.
+type grantRow struct {
+	Repo      string
+	Actions   map[string]bool
+	Selectors string
 }
 
 // tokenForm holds the last-submitted (or default) create-token form values
 // so the template can round-trip them on validation errors.
 type tokenForm struct {
 	Description string
-	Repo        string
-	Role        string
 	Expires     string
+	Rows        []grantRow
+}
+
+// defaultTokenForm returns the empty grant builder: one read-only row on all
+// repositories.
+func defaultTokenForm() tokenForm {
+	return tokenForm{Rows: []grantRow{{Repo: "*", Actions: map[string]bool{"read": true}}}}
 }
 
 type adminTokensPage struct {
@@ -669,7 +690,7 @@ func (s *Server) uiAdminTokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	page := s.buildTokensPageV2("", "", tokenForm{Repo: "*", Role: "read"})
+	page := s.buildTokensPageV2("", "", defaultTokenForm())
 	page.ActiveTab = tab
 	if tab == "users" || tab == "roles" {
 		page.Users = s.buildUsersTabData()
@@ -730,7 +751,7 @@ func (s *Server) processRoleCreateForm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) renderTokensTab(w http.ResponseWriter, tab, errMsg, flash string) {
-	page := s.buildTokensPageV2("", "", tokenForm{Repo: "*", Role: "read"})
+	page := s.buildTokensPageV2("", "", defaultTokenForm())
 	page.ActiveTab = tab
 	page.Error = errMsg
 	page.Flash = flash
@@ -782,59 +803,55 @@ func (s *Server) uiAdminToggleUser(w http.ResponseWriter, r *http.Request, usern
 	http.Redirect(w, r, "/ui/admin/tokens?tab=users", http.StatusSeeOther) // #nosec G710
 }
 
-func (s *Server) processTokenForm(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad form", http.StatusBadRequest)
-		return
-	}
-
-	form := tokenForm{
-		Description: strings.TrimSpace(r.FormValue("description")),
-		Repo:        r.FormValue("repo"),
-		Role:        r.FormValue("role"),
-		Expires:     r.FormValue("expires"),
-	}
-
-	if form.Description == "" {
-		render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("description is required", "", form))
-		return
-	}
-	if s.Auth == nil {
-		render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("auth not enabled", "", form))
-		return
-	}
-
-	role, err := auth.ParseRole(form.Role)
-	if err != nil {
-		render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("invalid role: "+form.Role, "", form))
-		return
-	}
-
-	repoName := form.Repo
-	if repoName == "" {
-		repoName = "*"
-	}
-
-	var expiresAt *time.Time
-	if form.Expires != "" {
-		t, err := time.ParseInLocation("2006-01-02", form.Expires, time.UTC)
-		if err != nil {
-			render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("invalid expiry date (use YYYY-MM-DD)", "", form))
-			return
+// parseGrantRows reads the grant-builder fields g{N}_repo / g{N}_actions /
+// g{N}_selectors. Row indices may be sparse (the builder does not re-index
+// when a middle row is removed), so it scans the form keys.
+func parseGrantRows(r *http.Request) []grantRow {
+	var idxs []int
+	for key := range r.Form {
+		if !strings.HasPrefix(key, "g") || !strings.HasSuffix(key, "_repo") {
+			continue
 		}
-		// Expire at end of the chosen day.
-		t = t.Add(24*time.Hour - time.Second)
-		expiresAt = &t
+		if n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(key, "g"), "_repo")); err == nil {
+			idxs = append(idxs, n)
+		}
 	}
-
-	_, secret, err := s.Auth.Create(form.Description, []auth.Grant{auth.GrantForRole(repoName, role)}, expiresAt)
-	if err != nil {
-		render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("failed to create token: "+err.Error(), "", form))
-		return
+	sort.Ints(idxs)
+	rows := make([]grantRow, 0, len(idxs))
+	for _, i := range idxs {
+		prefix := "g" + strconv.Itoa(i) + "_"
+		row := grantRow{
+			Repo:      r.FormValue(prefix + "repo"),
+			Actions:   map[string]bool{},
+			Selectors: strings.TrimSpace(r.FormValue(prefix + "selectors")),
+		}
+		for _, a := range r.Form[prefix+"actions"] {
+			row.Actions[a] = true
+		}
+		rows = append(rows, row)
 	}
+	return rows
+}
 
-	// Re-render with the secret displayed once and form reset to defaults.
-	render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("", secret, tokenForm{Repo: "*", Role: "read"}))
+// toGrants converts builder rows into auth grants. Selector lists are
+// comma- or whitespace-separated.
+func toGrants(rows []grantRow) []auth.Grant {
+	grants := make([]auth.Grant, 0, len(rows))
+	for _, row := range rows {
+		g := auth.Grant{Repo: row.Repo}
+		for _, a := range auth.AllActions { // stable verb order
+			if row.Actions[string(a)] {
+				g.Actions = append(g.Actions, a)
+			}
+		}
+		for _, sel := range strings.FieldsFunc(row.Selectors, func(c rune) bool {
+			return c == ',' || c == ' ' || c == '\t' || c == '\n'
+		}) {
+			g.Selectors = append(g.Selectors, sel)
+		}
+		grants = append(grants, g)
+	}
+	return grants
 }
 
 // buildTokensPage assembles the adminTokensPage data, loading the live token
@@ -865,15 +882,15 @@ func (s *Server) buildTokensPage(errMsg, newSecret string, form tokenForm) admin
 			statusClass, statusLabel = "dot-neutral", "Never used"
 		}
 		page.Tokens = append(page.Tokens, tokenRow{
-			ID:           t.ID,
-			Description:  t.Description,
-			GrantSummary: formatGrants(t.Grants),
-			CreatedStr:   t.CreatedAt.UTC().Format("2006-01-02"),
-			ExpiresStr:   formatExpiry(t.ExpiresAt),
-			Owner:        t.Owner,
-			LastUsedStr:  lastUsed,
-			StatusClass:  statusClass,
-			StatusLabel:  statusLabel,
+			ID:          t.ID,
+			Description: t.Description,
+			Grants:      grantViews(t.Grants),
+			CreatedStr:  t.CreatedAt.UTC().Format("2006-01-02"),
+			ExpiresStr:  formatExpiry(t.ExpiresAt),
+			Owner:       t.Owner,
+			LastUsedStr: lastUsed,
+			StatusClass: statusClass,
+			StatusLabel: statusLabel,
 		})
 	}
 
@@ -974,7 +991,8 @@ func roleClass(name string) string {
 	return "scope-read"
 }
 
-// processTokenFormV2 handles POST for the sidebar tokens page.
+// processTokenFormV2 handles POST for the sidebar tokens page: the grant
+// builder submits one g{N}_repo/actions/selectors group per grant row.
 func (s *Server) processTokenFormV2(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad form", http.StatusBadRequest)
@@ -983,61 +1001,65 @@ func (s *Server) processTokenFormV2(w http.ResponseWriter, r *http.Request) {
 
 	form := tokenForm{
 		Description: strings.TrimSpace(r.FormValue("description")),
-		Repo:        r.FormValue("repo"),
-		Role:        r.FormValue("role"),
 		Expires:     r.FormValue("expires"),
+		Rows:        parseGrantRows(r),
+	}
+	if len(form.Rows) == 0 {
+		form.Rows = defaultTokenForm().Rows
+	}
+
+	fail := func(msg string) {
+		render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2(msg, "", form))
 	}
 
 	if form.Description == "" {
-		render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("description is required", "", form))
+		fail("description is required")
 		return
 	}
 	if s.Auth == nil {
-		render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("auth not enabled", "", form))
+		fail("auth not enabled")
 		return
 	}
 
-	role, err := auth.ParseRole(form.Role)
-	if err != nil {
-		render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("invalid role: "+form.Role, "", form))
+	grants := toGrants(form.Rows)
+	if err := auth.ValidateGrants(grants); err != nil {
+		fail(err.Error())
 		return
-	}
-
-	repoName := form.Repo
-	if repoName == "" {
-		repoName = "*"
 	}
 
 	var expiresAt *time.Time
 	if form.Expires != "" {
 		t, err := time.ParseInLocation("2006-01-02", form.Expires, time.UTC)
 		if err != nil {
-			render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("invalid expiry date (use YYYY-MM-DD)", "", form))
+			fail("invalid expiry date (use YYYY-MM-DD)")
 			return
 		}
+		// Expire at end of the chosen day.
 		t = t.Add(24*time.Hour - time.Second)
 		expiresAt = &t
 	}
 
-	_, secret, err := s.Auth.Create(form.Description, []auth.Grant{auth.GrantForRole(repoName, role)}, expiresAt)
+	_, secret, err := s.Auth.Create(form.Description, grants, expiresAt)
 	if err != nil {
-		render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("failed to create token: "+err.Error(), "", form))
+		fail("failed to create token: " + err.Error())
 		return
 	}
 
-	render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("", secret, tokenForm{Repo: "*", Role: "read"}))
+	// Re-render with the secret displayed once and the form reset.
+	render(w, tmplAdminTokens, "admin_shell.html", s.buildTokensPageV2("", secret, defaultTokenForm()))
 }
 
-func formatGrants(grants []auth.Grant) string {
-	parts := make([]string, 0, len(grants))
+// grantViews converts grants into their table representation.
+func grantViews(grants []auth.Grant) []tokenGrantView {
+	views := make([]tokenGrantView, 0, len(grants))
 	for _, g := range grants {
-		s := formatActions(g.Actions) + " on " + g.Repo
-		if len(g.Selectors) > 0 {
-			s += " (" + strings.Join(g.Selectors, ", ") + ")"
+		v := tokenGrantView{Repo: g.Repo, Selectors: strings.Join(g.Selectors, ", ")}
+		for _, a := range g.Actions {
+			v.Actions = append(v.Actions, string(a))
 		}
-		parts = append(parts, s)
+		views = append(views, v)
 	}
-	return strings.Join(parts, "; ")
+	return views
 }
 
 func formatActions(actions []auth.Action) string {
