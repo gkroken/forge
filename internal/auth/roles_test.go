@@ -106,3 +106,68 @@ func TestBaseRoleFor(t *testing.T) {
 		}
 	}
 }
+
+func TestRoleStore_GrantsValidatedOnCreate(t *testing.T) {
+	rs := newRoleStore(t)
+	bad := auth.CustomRole{Name: "bad", BaseRole: "read", Grants: []auth.Grant{
+		{Repo: "libs", Actions: []auth.Action{auth.ActionAdmin}, Selectors: []string{"com/**"}},
+	}}
+	if err := rs.Create(bad); err == nil {
+		t.Fatal("admin+selector grant must be rejected on role create")
+	}
+	good := auth.CustomRole{Name: "good", BaseRole: "read", Grants: []auth.Grant{
+		{Repo: "libs", Actions: []auth.Action{auth.ActionRead}, Selectors: []string{"com/acme/**"}},
+	}}
+	if err := rs.Create(good); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, _ := rs.Get("good")
+	if !ok || len(got.Grants) != 1 {
+		t.Fatalf("grants not persisted: %+v ok=%v", got, ok)
+	}
+}
+
+func TestGrantsForRoleName(t *testing.T) {
+	rs := newRoleStore(t)
+	granted := []auth.Grant{
+		{Repo: "libs", Actions: []auth.Action{auth.ActionRead, auth.ActionWrite}},
+		{Repo: "docs", Actions: []auth.Action{auth.ActionRead}},
+	}
+	if err := rs.Create(auth.CustomRole{Name: "nexus-devs", BaseRole: "write", Grants: granted}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rs.Create(auth.CustomRole{Name: "tier-only", BaseRole: "write"}); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("custom role with grants uses them verbatim", func(t *testing.T) {
+		got := auth.GrantsForRoleName(rs, "nexus-devs")
+		if len(got) != 2 || got[0].Repo != "libs" || len(got[0].Actions) != 2 {
+			t.Fatalf("got %+v", got)
+		}
+	})
+	t.Run("custom role without grants expands its tier", func(t *testing.T) {
+		got := auth.GrantsForRoleName(rs, "tier-only")
+		if len(got) != 1 || got[0].Repo != "*" {
+			t.Fatalf("got %+v", got)
+		}
+		tok := auth.Token{Grants: got}
+		if !tok.Allows("anything", "", auth.ActionWrite) || tok.GlobalAdmin() {
+			t.Fatalf("tier-only should be instance-wide write, not admin: %+v", got)
+		}
+	})
+	t.Run("predefined names work without a store hit", func(t *testing.T) {
+		got := auth.GrantsForRoleName(rs, "Administrator")
+		if len(got) != 1 || !(&auth.Token{Grants: got}).GlobalAdmin() {
+			t.Fatalf("got %+v", got)
+		}
+		if auth.GrantsForRoleName(nil, "read") == nil {
+			t.Fatal("nil store must still resolve base names")
+		}
+	})
+	t.Run("unknown role resolves to nothing", func(t *testing.T) {
+		if got := auth.GrantsForRoleName(rs, "ghost"); got != nil {
+			t.Fatalf("got %+v", got)
+		}
+	})
+}

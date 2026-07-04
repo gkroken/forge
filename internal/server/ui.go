@@ -538,13 +538,13 @@ func (s *Server) tryLocalLogin(w http.ResponseWriter, r *http.Request, username,
 	if err != nil || u == nil {
 		return false // unknown/wrong-password → let LDAP try
 	}
-	role := auth.BaseRoleFor(u.Role)
-	if role < auth.RoleRead {
+	grants := auth.GrantsForRoleName(s.Roles, u.Role)
+	if len(grants) == 0 {
 		fail("Account has no permissions.")
 		return true
 	}
 	exp := time.Now().UTC().Add(24 * time.Hour)
-	_, secret, err := s.Auth.Create("session:"+username, []auth.Grant{auth.GrantForRole("*", role)}, &exp, username)
+	_, secret, err := s.Auth.Create("session:"+username, grants, &exp, username)
 	if err != nil {
 		fail("Failed to create session.")
 		return true

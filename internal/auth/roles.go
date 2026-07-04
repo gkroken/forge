@@ -2,6 +2,7 @@ package auth
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"forge/internal/meta"
@@ -16,11 +17,16 @@ var PredefinedRoles = []CustomRole{
 	{Name: "Administrator", Description: "Full control — repositories, tokens, cleanup, and system settings.", BaseRole: "admin"},
 }
 
-// CustomRole is a named permission tier.
+// CustomRole is a named permission bundle. BaseRole is the legacy tier;
+// when Grants is non-empty it takes precedence: sessions minted for users
+// holding this role carry exactly these grants instead of a whole-instance
+// tier expansion. Grants-carrying roles are produced by the Nexus permission
+// import and by the API; the role form UI still edits tiers only.
 type CustomRole struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	BaseRole    string `json:"baseRole"` // "read" | "write" | "admin"
+	Name        string  `json:"name"`
+	Description string  `json:"description,omitempty"`
+	BaseRole    string  `json:"baseRole"` // "read" | "write" | "admin"
+	Grants      []Grant `json:"grants,omitempty"`
 }
 
 // BaseRoleFor converts a role name (predefined or base) to a Role int.
@@ -34,6 +40,29 @@ func BaseRoleFor(name string) Role {
 		return RoleAdmin
 	}
 	return RoleNone
+}
+
+// GrantsForRoleName resolves a role name into the grant bundle a session
+// token for that user should carry. Custom roles with explicit Grants use
+// them verbatim; a custom role without grants expands its BaseRole tier to a
+// whole-instance grant; predefined/base names expand directly. Returns nil
+// when the name resolves to no permissions.
+func GrantsForRoleName(store RoleStore, name string) []Grant {
+	if store != nil {
+		if r, ok, _ := store.Get(name); ok {
+			if len(r.Grants) > 0 {
+				return slices.Clone(r.Grants)
+			}
+			if tier := BaseRoleFor(r.BaseRole); tier >= RoleRead {
+				return []Grant{GrantForRole("*", tier)}
+			}
+			return nil
+		}
+	}
+	if tier := BaseRoleFor(name); tier >= RoleRead {
+		return []Grant{GrantForRole("*", tier)}
+	}
+	return nil
 }
 
 // RoleStore manages custom role definitions (predefined roles are hardcoded).
@@ -68,6 +97,11 @@ func (s *roleMetaStore) Create(role CustomRole) error {
 	var existing CustomRole
 	if ok, _ := s.m.GetJSON(nsRoles, role.Name, &existing); ok {
 		return fmt.Errorf("role %q already exists", role.Name)
+	}
+	if len(role.Grants) > 0 {
+		if err := ValidateGrants(role.Grants); err != nil {
+			return fmt.Errorf("role %q: %w", role.Name, err)
+		}
 	}
 	return s.m.PutJSON(nsRoles, role.Name, role)
 }
