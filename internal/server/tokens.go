@@ -72,6 +72,10 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 	if req.Description == "" {
 		req.Description = "unnamed token"
 	}
+	if err := auth.ValidateGrants(req.Grants); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	tok, secret, err := s.Auth.Create(req.Description, req.Grants, req.ExpiresAt)
 	if err != nil {

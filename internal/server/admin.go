@@ -165,7 +165,7 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 
 	// /api/v1/repos/{name}/cleanup — trigger retention policy (admin only).
 	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "cleanup" {
-		if !s.Enforcer.RequireAdmin(w, r) {
+		if !s.Enforcer.RequireRepoAdmin(w, r, repoName) {
 			return
 		}
 		s.handleCleanup(w, r, repoName)
@@ -174,7 +174,7 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 
 	// /api/v1/repos/{name}/scan — enqueue an OSV vulnerability scan (admin only).
 	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "scan" {
-		if !s.Enforcer.RequireAdmin(w, r) {
+		if !s.Enforcer.RequireRepoAdmin(w, r, repoName) {
 			return
 		}
 		s.handleVulnScan(w, r, repoName)
@@ -183,7 +183,7 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 
 	// /api/v1/repos/{name}/security-policy/dry-run — blast-radius preview (admin only).
 	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "security-policy/dry-run" {
-		if !s.Enforcer.RequireAdmin(w, r) {
+		if !s.Enforcer.RequireRepoAdmin(w, r, repoName) {
 			return
 		}
 		s.handleRepoSecurityDryRun(w, r, repoName)
@@ -192,7 +192,7 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 
 	// /api/v1/repos/{name}/security-policy — get resolved / assign named policy (admin only).
 	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "security-policy" {
-		if !s.Enforcer.RequireAdmin(w, r) {
+		if !s.Enforcer.RequireRepoAdmin(w, r, repoName) {
 			return
 		}
 		s.handleRepoSecurityPolicy(w, r, repoName)
@@ -201,7 +201,7 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 
 	// /api/v1/repos/{name}/cache-stats — hourly hit/miss ring buffer (admin only).
 	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "cache-stats" {
-		if !s.Enforcer.RequireAdmin(w, r) {
+		if !s.Enforcer.RequireRepoAdmin(w, r, repoName) {
 			return
 		}
 		s.handleCacheStats(w, r, repoName)
@@ -210,7 +210,7 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 
 	// /api/v1/repos/{name}/invalidate — flush proxy cache for one repo (admin only).
 	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "invalidate" {
-		if !s.Enforcer.RequireAdmin(w, r) {
+		if !s.Enforcer.RequireRepoAdmin(w, r, repoName) {
 			return
 		}
 		s.handleInvalidate(w, r, repoName)
@@ -219,7 +219,7 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 
 	// /api/v1/repos/{name}/health — circuit-breaker state for the repo's upstream.
 	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "health" {
-		if !s.Enforcer.RequireAdmin(w, r) {
+		if !s.Enforcer.RequireRepoAdmin(w, r, repoName) {
 			return
 		}
 		s.handleRepoHealth(w, r, repoName)
@@ -228,7 +228,7 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 
 	// /api/v1/repos/{name}/reindex — queue an index rebuild (stub).
 	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "reindex" {
-		if !s.Enforcer.RequireAdmin(w, r) {
+		if !s.Enforcer.RequireRepoAdmin(w, r, repoName) {
 			return
 		}
 		s.handleReindex(w, r, repoName)
@@ -237,7 +237,7 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 
 	// /api/v1/repos/{name}/access — token grants targeting this repo.
 	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "access" {
-		if !s.Enforcer.RequireAdmin(w, r) {
+		if !s.Enforcer.RequireRepoAdmin(w, r, repoName) {
 			return
 		}
 		s.handleRepoAccess(w, r, repoName)
@@ -248,7 +248,7 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 	// Format-agnostic: takes ?name= & ?version= so it works for every format,
 	// not just the npm tarball path.
 	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "component" {
-		if !s.Enforcer.RequireAdmin(w, r) {
+		if !s.Enforcer.RequireRepoAdmin(w, r, repoName) {
 			return
 		}
 		s.handleDeleteComponent(w, r, repoName)
@@ -257,18 +257,19 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 
 	// /api/v1/repos/{name}/cache/{key...} — expire a single proxy cache entry.
 	if repoName, rest, found := strings.Cut(name, "/"); found && strings.HasPrefix(rest, "cache/") {
-		if !s.Enforcer.RequireAdmin(w, r) {
+		if !s.Enforcer.RequireRepoAdmin(w, r, repoName) {
 			return
 		}
 		s.handleExpireCache(w, r, repoName, strings.TrimPrefix(rest, "cache/"))
 		return
 	}
 
-	if !s.Enforcer.RequireAdmin(w, r) {
-		return
-	}
-
+	// Collection routes (list, create) are system-level; single-repo routes
+	// (get/update/delete settings) accept a repo-scoped admin grant.
 	if name == "" {
+		if !s.Enforcer.RequireAdmin(w, r) {
+			return
+		}
 		switch r.Method {
 		case http.MethodGet:
 			s.listRepos(w)
@@ -277,6 +278,10 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+		return
+	}
+
+	if !s.Enforcer.RequireRepoAdmin(w, r, name) {
 		return
 	}
 
