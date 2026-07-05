@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 )
 
 // FS is a filesystem-backed Store rooted at a directory.
@@ -133,18 +132,10 @@ func (f *FS) Delete(key string) error {
 	return err
 }
 
-// Capacity reports the disk usage of the blob store root via syscall.Statfs.
-// used = total − available (includes reserved blocks); total = full disk size.
-func (f *FS) Capacity() (used, total int64, err error) {
-	var st syscall.Statfs_t
-	if err = syscall.Statfs(f.root, &st); err != nil {
-		return 0, 0, err
-	}
-	total = int64(st.Blocks) * int64(st.Bsize) // #nosec G115 -- disk block count × block size, no realistic int64 overflow
-	avail := int64(st.Bavail) * int64(st.Bsize) // #nosec G115 -- disk block count × block size, no realistic int64 overflow
-	used = total - avail
-	return used, total, nil
-}
+// Capacity reports the disk usage of the blob store root. Its implementation is
+// OS-specific (statfs on Unix, GetDiskFreeSpaceEx on Windows) and lives in
+// fsstore_capacity_{unix,windows}.go so the module builds on every platform —
+// syscall.Statfs is Unix-only and would break the Windows build.
 
 // HashReader is a small helper to checksum an in-memory byte slice.
 func sum(h hash.Hash, b []byte) string {
