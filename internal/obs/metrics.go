@@ -28,6 +28,9 @@ type Metrics struct {
 	// Downloads refused by the vulnerability policy gate, per repo.
 	DownloadsBlocked *prometheus.CounterVec // {repo}
 
+	// Requests refused by the dependency-confusion guard, per repo.
+	DepGuardBlocked *prometheus.CounterVec // {repo}
+
 	// Webhook deliveries by outcome (one per attempt): success | failed | dropped
 	WebhookDeliveries *prometheus.CounterVec // {result}
 
@@ -80,6 +83,11 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help: "Artifact downloads refused by the vulnerability policy gate, per repository.",
 		}, []string{"repo"}),
 
+		DepGuardBlocked: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "forge_depguard_blocked_total",
+			Help: "Requests refused by the dependency-confusion guard, per repository.",
+		}, []string{"repo"}),
+
 		WebhookDeliveries: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "forge_webhook_deliveries_total",
 			Help: "Webhook delivery attempts by outcome (success, failed, dropped).",
@@ -106,6 +114,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.QueueJobsTotal,
 		m.Downloads,
 		m.DownloadsBlocked,
+		m.DepGuardBlocked,
 		m.WebhookDeliveries,
 		m.VulnerableComponents,
 	)

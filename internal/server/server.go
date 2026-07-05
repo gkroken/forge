@@ -420,18 +420,32 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Dependency-confusion guard (group/proxy repos): refuse claimed names no
+	// hosted copy can serve, and keep proxy members out of group fan-outs for
+	// protected components. Nil when inactive.
+	guard := s.newDepGuard(rp, h, sub)
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		if guard.blocks(w, r) {
+			return
+		}
+	}
 	var repoStats *obs.RepoStats
 	if rp.Kind == repo.Proxy {
 		v, _ := s.repoStats.LoadOrStore(rp.Name, &obs.RepoStats{})
 		repoStats = v.(*obs.RepoStats)
 	}
-	h.Serve(w, r, &format.Context{
+	c := &format.Context{
 		Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: s.client, Sub: sub,
 		Repos: s.Repos, Queue: s.Queue, Metrics: s.Metrics,
 		RepoStats: repoStats, RepoStatsFn: s.lookupRepoStats,
 		GlobalStats: s.GlobalStats, RetryGauge: &s.retryGauge,
 		OnCacheFill: s.onProxyCacheFill,
-	})
+	}
+	if guard != nil && rp.Kind == repo.Group {
+		c.MemberFilter = guard.memberFilter
+		c.NameClaimed = guard.claimedName
+	}
+	h.Serve(w, r, c)
 }
 
 // onProxyCacheFill emits an artifact.cached webhook when a proxy repository
