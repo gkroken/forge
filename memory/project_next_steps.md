@@ -179,8 +179,18 @@ Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses du
      `policy.violation` webhook kind=dependency-confusion, `forge_depguard_blocked_total`). UI:
      claims textarea + guard toggle on repo form/Settings tab. Live 20/20 vs registry.npmjs.org +
      Maven Central (`scripts/depguard-validate.sh`) + Playwright UI drive 11/11.
-  6. **Quota enforcement + soft-delete** — small. `QuotaGB` exists on the repo model but is NEVER
-     enforced; storage reporting + async cleanup + cleanup dry-run already DONE.
+  6. **Quota enforcement + soft-delete** — ✅ DONE 2026-07-05. `QuotaGB` now enforced by a `quotaBlocks`
+     gate in the spine (handleRepo/handleOCI, write methods, before Serve): HOSTED repos only (proxy
+     cache-fills never blocked), over-quota → 507 + JSON. Soft-limit accounting = periodic blob walk
+     (re-triggered per write) + in-flight per-repo byte delta reconciled at each walk. Governance:
+     audit `quota: blocked write…`, `policy.violation` webhook kind=quota, `forge_quota_blocked_total`
+     + `forge_repo_quota_used_ratio`. Soft-delete: admin component delete routes through
+     `cleanup.TrashVersion` (blobs moved to reserved `_trash/` outside repo key space → frees quota
+     immediately, never an integrity orphan; meta records captured incl. npm packument entry);
+     Restore/Purge/PurgeExpired + `/repos/{n}/trash[/restore|/purge]` API + scheduler `TrashPurgeTick`
+     (chained w/ VulnRescanTick, `-trash-retention` default 7d). Cleanup runs + format-native deletes
+     still HARD-delete. UI: Storage rail used/quota bar + Content-tab Trash panel (CSP-safe delegation).
+     Live 20/20 (`scripts/quota-validate.sh`) + Playwright UI drive (no console errors).
   7. **Promotion (COPY semantics, not reference) + immutability.** Blob keys are `{repo}/{path}`
      (not CAS), so reference would need cross-repo refcount GC = sprawl/data-loss risk; copy keeps
      repos self-contained and is reversible toward dedup later (keep the logical copy API, swap the
