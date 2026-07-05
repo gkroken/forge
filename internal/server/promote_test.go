@@ -198,6 +198,54 @@ func TestPromote_Errors(t *testing.T) {
 	}
 }
 
+func TestPromoteOCI_CopiesManifestAndBlobs(t *testing.T) {
+	s := newMigrationServer(t)
+	addHosted(t, s, "oci-stage", "oci")
+	addHosted(t, s, "oci-prod", "oci")
+
+	config := []byte(`{"architecture":"amd64","os":"linux"}`)
+	layer := []byte("opaque layer bytes for the image")
+	cfgDgst := "sha256:" + sha256hex(config)
+	layerDgst := "sha256:" + sha256hex(layer)
+	manifest := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json",` +
+		`"config":{"mediaType":"application/vnd.docker.container.image.v1+json","digest":"` + cfgDgst + `"},` +
+		`"layers":[{"mediaType":"application/vnd.docker.image.rootfs.diff.tar.gzip","digest":"` + layerDgst + `"}]}`)
+	manifestDgst := "sha256:" + sha256hex(manifest)
+
+	// Seed the source via the registry protocol: blob uploads carry ?digest=, so
+	// use internalServe directly, then push the manifest under its tag.
+	if rec := s.internalServe(context.Background(), http.MethodPost, "oci-stage", "acme/app/blobs/uploads", "digest="+cfgDgst, bytes.NewReader(config), nil, "http://localhost"); !rec.ok() {
+		t.Fatalf("seed config blob: %d %s", rec.code, rec.body.String())
+	}
+	if rec := s.internalServe(context.Background(), http.MethodPost, "oci-stage", "acme/app/blobs/uploads", "digest="+layerDgst, bytes.NewReader(layer), nil, "http://localhost"); !rec.ok() {
+		t.Fatalf("seed layer blob: %d %s", rec.code, rec.body.String())
+	}
+	hdr := http.Header{"Content-Type": {"application/vnd.docker.distribution.manifest.v2+json"}}
+	if rec := s.internalServe(context.Background(), http.MethodPut, "oci-stage", "acme/app/manifests/v1", "", bytes.NewReader(manifest), hdr, "http://localhost"); !rec.ok() {
+		t.Fatalf("seed manifest: %d %s", rec.code, rec.body.String())
+	}
+
+	src, _ := s.Repos.Get("oci-stage")
+	tgt, _ := s.Repos.Get("oci-prod")
+	rec, _, err := s.promoteComponent(context.Background(), "tester", src, tgt, "acme/app", "v1", "http://localhost")
+	if err != nil {
+		t.Fatalf("promote oci: %v", err)
+	}
+	// Blobs + manifest landed on the target, and the tag resolves to the digest.
+	for _, k := range []string{"oci-prod/blobs/" + cfgDgst, "oci-prod/blobs/" + layerDgst, "oci-prod/manifests/" + manifestDgst} {
+		if _, ok, _ := s.Blob.Stat(k); !ok {
+			t.Fatalf("target missing %s", k)
+		}
+	}
+	var tagDigest string
+	if ok, _ := s.Meta.GetJSON("oci-prod:oci", "tags/acme/app/v1", &tagDigest); !ok || tagDigest != manifestDgst {
+		t.Fatalf("tag pointer wrong: %q (want %s)", tagDigest, manifestDgst)
+	}
+	if rec.SourceDigest != manifestDgst {
+		t.Fatalf("provenance digest = %s, want manifest %s", rec.SourceDigest, manifestDgst)
+	}
+}
+
 func TestPromote_HTTPHandler(t *testing.T) {
 	s := newMigrationServer(t)
 	addHosted(t, s, "helm-stage", "helm")
