@@ -96,6 +96,7 @@ type Server struct {
 	blobMu      sync.RWMutex
 	blobSizes   BlobSizes
 	walkTrigger chan struct{} // non-blocking send kicks off an immediate re-walk
+	quotaDelta  sync.Map      // map[string]*atomic.Int64; bytes written per hosted repo since the last walk
 
 	repoStats  sync.Map // map[string]*obs.RepoStats; lazy-init per proxy repo
 	retryGauge atomic.Int32
@@ -269,6 +270,15 @@ func (s *Server) walkBlobSizes() {
 	byRepo := map[string]int64{}
 	countByRepo := map[string]int{}
 	total := int64(0)
+	// Capture the in-flight quota deltas before the walk reads the store; the
+	// freshly-listed sizes already include those bytes, so we subtract the
+	// captured amount afterward. Writes that land DURING the walk keep their
+	// delta (they may not be reflected in this snapshot yet) — bounded, no loss.
+	captured := map[string]int64{}
+	s.quotaDelta.Range(func(k, v any) bool {
+		captured[k.(string)] = v.(*atomic.Int64).Load()
+		return true
+	})
 	for _, rp := range s.Repos.All() {
 		keys, err := s.Blob.List(rp.Name + "/")
 		if err != nil {
@@ -306,6 +316,23 @@ func (s *Server) walkBlobSizes() {
 		ComputedAt:  time.Now(),
 	}
 	s.blobMu.Unlock()
+
+	// Reconcile the in-flight quota deltas now that their bytes are in byRepo, and
+	// re-publish the per-repo quota-usage gauge from the fresh snapshot.
+	for name, n := range captured {
+		if v, ok := s.quotaDelta.Load(name); ok {
+			v.(*atomic.Int64).Add(-n)
+		}
+	}
+	if s.Metrics != nil && s.Metrics.QuotaUsedRatio != nil {
+		for _, rp := range s.Repos.All() {
+			if rp.Kind != repo.Hosted || rp.QuotaGB == nil || *rp.QuotaGB <= 0 {
+				continue
+			}
+			quotaBytes := *rp.QuotaGB * float64(bytesPerGB)
+			s.Metrics.QuotaUsedRatio.WithLabelValues(rp.Name).Set(float64(byRepo[rp.Name]) / quotaBytes)
+		}
+	}
 }
 
 // GetBlobSizes returns the most recent cached blob size snapshot.
@@ -413,6 +440,12 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no handler for format: "+rp.Format, http.StatusNotImplemented)
 		return
 	}
+	// Storage-quota gate: refuse writes to a hosted repo at or over its quota.
+	if isWriteMethod(r.Method) {
+		if s.quotaBlocks(w, r, rp) {
+			return
+		}
+	}
 	// Vulnerability download policy gate: only reads of primary artifacts. On a
 	// Block this writes a 403 and returns; on Warn it adds a header and proceeds.
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
@@ -510,6 +543,14 @@ func (s *Server) handleOCI(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		ociError(w, "UNSUPPORTED", "OCI handler not registered", http.StatusNotImplemented)
 		return
+	}
+	// Storage-quota gate: refuse writes to a hosted OCI repo at or over its quota.
+	// OCI usage is tracked purely off the periodic walk (the delta accounting is
+	// scoped to /repository/ writes, whose bodies map cleanly to stored bytes).
+	if isWriteMethod(r.Method) {
+		if s.quotaBlocks(w, r, rp) {
+			return
+		}
 	}
 	// Vulnerability download policy gate: tag-addressed manifest GETs only.
 	// Mirrors the same gate in handleRepo; digest pulls and non-manifest paths
@@ -723,6 +764,14 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			}
 			rest := strings.TrimPrefix(r.URL.Path, "/repository/")
 			repoName, subPath, _ := strings.Cut(rest, "/")
+			// In-flight quota accounting: credit the bytes written to a hosted repo
+			// so the soft quota gate reflects this upload before the next blob walk
+			// reconciles it. Skipped for unknown-length bodies (ContentLength < 0).
+			if r.ContentLength > 0 && repoName != "" {
+				if rp, ok := s.Repos.Get(repoName); ok && rp.Kind == repo.Hosted {
+					s.addQuotaDelta(repoName, r.ContentLength)
+				}
+			}
 			if s.Scheduler != nil && repoName != "" {
 				s.Scheduler.Notify(repoName)
 			}

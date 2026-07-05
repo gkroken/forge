@@ -31,6 +31,13 @@ type Metrics struct {
 	// Requests refused by the dependency-confusion guard, per repo.
 	DepGuardBlocked *prometheus.CounterVec // {repo}
 
+	// Writes refused by the storage-quota gate, per repo.
+	QuotaBlocked *prometheus.CounterVec // {repo}
+
+	// Fraction of a hosted repo's quota currently used (0..1+; >1 possible while
+	// a soft-limit overrun is reconciled). Only set for repos with a quota.
+	QuotaUsedRatio *prometheus.GaugeVec // {repo}
+
 	// Webhook deliveries by outcome (one per attempt): success | failed | dropped
 	WebhookDeliveries *prometheus.CounterVec // {result}
 
@@ -88,6 +95,16 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help: "Requests refused by the dependency-confusion guard, per repository.",
 		}, []string{"repo"}),
 
+		QuotaBlocked: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "forge_quota_blocked_total",
+			Help: "Writes refused by the storage-quota gate, per repository.",
+		}, []string{"repo"}),
+
+		QuotaUsedRatio: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "forge_repo_quota_used_ratio",
+			Help: "Fraction of a hosted repository's storage quota currently used.",
+		}, []string{"repo"}),
+
 		WebhookDeliveries: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "forge_webhook_deliveries_total",
 			Help: "Webhook delivery attempts by outcome (success, failed, dropped).",
@@ -115,6 +132,8 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.Downloads,
 		m.DownloadsBlocked,
 		m.DepGuardBlocked,
+		m.QuotaBlocked,
+		m.QuotaUsedRatio,
 		m.WebhookDeliveries,
 		m.VulnerableComponents,
 	)
