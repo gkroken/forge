@@ -166,8 +166,19 @@ Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses du
      w/o passwords (+ new `SetPassword`). Acceptance loop = counts match + auto-enqueued FULL
      integrity verify per repo. Live-validated 25/25 vs sonatype/nexus3
      (`scripts/nexus-migrate-validate.sh`); runbook `docs/runbooks/nexus-migration.md`.
-  5. **Dependency-confusion protection** — reuses the selector grammar; block proxy fall-through for
-     names owned by a hosted member.
+  5. **Dependency-confusion protection** — ✅ DONE 2026-07-05. Two ownership signals, default-ON per
+     group/proxy (`Repository.DepConfusionGuard *bool`, nil=on): auto-derived (name present in a
+     hosted group member → pinned to hosted; upstream-only versions 404, packument/metadata/index
+     merges carry hosted versions only) + explicit `Repository.Claims` selector patterns on hosted
+     repos (`@acme/**`, `com/acme/**`; validated at write time) which 403 claimed-but-unpublished
+     names on groups AND on every same-format proxy, cached or not. Spine: `format.Claimable`
+     (ClaimPath+OwnsComponent, 4 formats; OCI has no groups → out), `Context.MemberFilter` honored
+     by the single `MemberCtx` choke point, `Context.NameClaimed` + hosted-shadowing in helm/cran
+     group index merges (helm's merged index carries upstream URLs verbatim — had to be filtered),
+     `server/dep_guard.go` mirroring the vuln gate (403 w/ claim attribution, audit `dep-guard:`,
+     `policy.violation` webhook kind=dependency-confusion, `forge_depguard_blocked_total`). UI:
+     claims textarea + guard toggle on repo form/Settings tab. Live 20/20 vs registry.npmjs.org +
+     Maven Central (`scripts/depguard-validate.sh`) + Playwright UI drive 11/11.
   6. **Quota enforcement + soft-delete** — small. `QuotaGB` exists on the repo model but is NEVER
      enforced; storage reporting + async cleanup + cleanup dry-run already DONE.
   7. **Promotion (COPY semantics, not reference) + immutability.** Blob keys are `{repo}/{path}`

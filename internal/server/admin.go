@@ -904,6 +904,7 @@ func (s *Server) handleAuditAPI(w http.ResponseWriter, r *http.Request) {
 		Path     string `json:"path"`
 		Status   int    `json:"status"`
 		OK       bool   `json:"ok"`
+		Detail   string `json:"detail,omitempty"`
 	}
 	conv := func(e obs.AuditEntry, id int64) auditEntry {
 		return auditEntry{
@@ -916,6 +917,7 @@ func (s *Server) handleAuditAPI(w http.ResponseWriter, r *http.Request) {
 			Path:     e.Path,
 			Status:   e.Status,
 			OK:       e.Status < 400,
+			Detail:   e.Detail,
 		}
 	}
 

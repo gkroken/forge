@@ -459,6 +459,37 @@ their members.
 
 ---
 
+## Dependency-confusion protection
+
+A build resolving an internal package name through a group (or straight from a
+proxy) must never receive an attacker's same-named package from the public
+registry. forge enforces two ownership signals, **on by default** for every
+group and proxy repository:
+
+- **Auto-derived ownership** — any name actually present in a hosted group
+  member is pinned to hosted members in that group. The group's npm packument /
+  Maven metadata / Helm index / CRAN PACKAGES carry only hosted versions of the
+  name, and a version that exists only upstream is a 404, never an upstream
+  fetch. Zero configuration; the classic Azure-Artifacts-style pinning.
+- **Explicit namespace claims** — hosted repos declare what they own with
+  selector patterns (`@acme/**`, `com/acme/**`, `left-pad`), closing the
+  publish race: a claimed-but-not-yet-published name is refused with
+  `403 {"error":"blocked by dependency-confusion protection", "claim":…,
+  "claimedBy":…}` instead of falling through — on groups containing the
+  claiming repo *and* on every same-format proxy repo, cached or not. Claims
+  are set on the repo form / Settings tab or the `claims` field of the repo
+  API, validated at write time.
+
+Blocked requests land in the audit log (`dep-guard: blocked …`), fire the
+`policy.violation` webhook (`kind=dependency-confusion`), and count in
+`forge_depguard_blocked_total{repo}`. Opt out per group/proxy repo with the
+**Dependency-confusion guard** toggle (`depConfusionGuard: false`) to
+deliberately merge internal and public versions of the same names. OCI has no
+group support yet and is not guarded. `scripts/depguard-validate.sh` proves
+the matrix live against registry.npmjs.org and Maven Central.
+
+---
+
 ## Migrating from Nexus
 
 forge imports repositories, content, and permissions from a live Nexus 3
