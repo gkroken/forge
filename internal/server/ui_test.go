@@ -1286,8 +1286,16 @@ func TestUIAdmin_EvalMode_NoAuthRequired(t *testing.T) {
 
 // ── Foundry admin shell new routes ────────────────────────────────────────────
 
+// noCapacityBlob wraps a blob.Store but does NOT implement blob.Capacitor, so
+// buildHealthRows skips the disk-capacity health row. Without this the dashboard
+// status depends on the host/CI runner's real disk fullness (>75% used → a
+// warning row → DEGRADED), which flaked TestUIDashboard_OK on busy CI runners.
+type noCapacityBlob struct{ blob.Store }
+
 func TestUIDashboard_OK(t *testing.T) {
-	h := newUIServer(t).Routes()
+	srv := newUIServer(t)
+	srv.Blob = noCapacityBlob{srv.Blob} // status must not depend on the runner's disk
+	h := srv.Routes()
 	rw := uiGet(t, h, "/ui/dashboard")
 	if rw.Code != http.StatusOK {
 		t.Fatalf("/ui/dashboard: status %d", rw.Code)
