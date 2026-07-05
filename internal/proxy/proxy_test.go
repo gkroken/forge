@@ -703,6 +703,21 @@ func TestHealthOf_And_AllHealth_ReflectOpenBreaker(t *testing.T) {
 	}
 }
 
+func TestResetHealth(t *testing.T) {
+	up := newFake(t, 503, "overload")
+	b, m := newStores(t)
+	f := New(http.DefaultClient, Config{MaxRetries: 0, DisableStaleOnError: true})
+	driveFailures(t, f, up, b, m, cbFailureThreshold)
+
+	if len(AllHealth()) == 0 {
+		t.Fatal("expected a health entry after driving a breaker open")
+	}
+	ResetHealth()
+	if got := AllHealth(); len(got) != 0 {
+		t.Errorf("ResetHealth left %d entries: %v", len(got), got)
+	}
+}
+
 func TestUpstreamHost(t *testing.T) {
 	cases := map[string]string{
 		"https://charts.bitnami.com/bitnami/index.yaml": "https://charts.bitnami.com",

@@ -22,6 +22,7 @@ import (
 	"forge/internal/format/npm"
 	"forge/internal/integrity"
 	"forge/internal/meta"
+	"forge/internal/proxy"
 	"forge/internal/repo"
 )
 
@@ -29,6 +30,10 @@ import (
 // handlers and seeds both repos with a small amount of data.
 func newUIServer(t *testing.T) *Server {
 	t.Helper()
+	// Isolate the process-global proxy-health map: a breaker opened by an
+	// earlier test would otherwise leak a "down" upstream into the dashboard
+	// this server renders, flipping its status from OPERATIONAL to DEGRADED.
+	proxy.ResetHealth()
 	dir := t.TempDir()
 	b, _ := blob.NewFS(filepath.Join(dir, "b"))
 	m, _ := meta.NewFS(filepath.Join(dir, "m"))

@@ -571,6 +571,17 @@ func AllHealth() map[string]string {
 	return out
 }
 
+// ResetHealth clears the process-global upstream-health map. It exists for test
+// isolation: because globalHealth persists across Fetchers for the life of the
+// process, a breaker opened by one test would otherwise bleed a "down" upstream
+// into another test that renders the health dashboard.
+func ResetHealth() {
+	globalHealth.Range(func(k, _ any) bool {
+		globalHealth.Delete(k)
+		return true
+	})
+}
+
 func (f *Fetcher) doRequest(upURL string, condHeaders map[string]string) (*upstreamResult, error) {
 	ctx := context.Background()
 	if f.cfg.Timeout > 0 {
