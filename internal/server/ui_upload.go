@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"path"
@@ -152,19 +151,11 @@ func (s *Server) callHandler(origR *http.Request, rp repo.Repository, method, su
 }
 
 func (s *Server) uploadHelm(origR *http.Request, rp repo.Repository, _ string, data []byte) error {
-	var buf bytes.Buffer
-	mw := multipart.NewWriter(&buf)
-	fw, err := mw.CreateFormFile("chart", "chart.tgz")
-	if err != nil {
-		return err
-	}
-	if _, err := fw.Write(data); err != nil {
-		return err
-	}
-	if err := mw.Close(); err != nil {
-		return err
-	}
-	return s.callHandler(origR, rp, http.MethodPost, "api/charts", buf.Bytes(), mw.FormDataContentType())
+	// forge's helm handler (ChartMuseum-compatible) reads the raw .tgz from the
+	// request body, exactly like `curl --data-binary @chart.tgz`. Posting a
+	// multipart-wrapped body here made it read the multipart envelope as gzip
+	// ("gzip: invalid header"), so browser helm uploads always failed.
+	return s.callHandler(origR, rp, http.MethodPost, "api/charts", data, "application/gzip")
 }
 
 func (s *Server) uploadCRAN(origR *http.Request, rp repo.Repository, filename string, data []byte) error {
