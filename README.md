@@ -523,6 +523,40 @@ restore → purge, cleanup still frees space).
 
 ---
 
+## Promotion & immutable repositories
+
+Promote a tested artifact from one hosted repository to another — for example
+`staging → release` — with `POST /api/v1/repos/{target}/promote`
+(`{"sourceRepo","component","version"}`), or the **Promote…** button on a
+version in the source repo's **Content** tab. Promotion is a **copy**, not a
+reference: the bytes are copied into the target through the target's own format
+handler, so its indexes, checksums and packuments regenerate correctly and the
+target stays completely self-contained — backup, cleanup, quotas and integrity
+all keep working on it with no cross-repo coupling (a later cleanup of the
+source can never pull bytes out from under a promoted release). All five formats
+promote (maven asset trees, npm tarball + packument, helm charts, CRAN
+tarballs, OCI images via a content-addressed manifest walk).
+
+The copy records **provenance** — *promoted from `{sourceRepo}@sha256:{digest}`
+by `{actor}` at `{time}`* — stored per target and surfaced on the component
+detail pane. This is a historical fact: integrity verify deliberately does
+**not** re-check a promoted copy against its source digest, because the copy is
+independent by design. A promotion is a hosted write, so the target's storage
+quota applies (a promote that won't fit is refused with `507`); it is audited,
+fires the `artifact.promoted` webhook, and counts in
+`forge_promotions_total{repo}`. Admin on **both** source and target is required.
+
+Mark a hosted repo **Immutable (write-once)** on the repo form (or
+`"immutable":true` in the repo API) to make it the natural promotion target: an
+existing component+version can never be overwritten — a re-publish or re-promote
+returns `409`, soft-delete is refused, and automated cleanup does not run (all of
+which would let released bytes change). Publishing a **new** version is still
+allowed. Prove the whole loop live with `scripts/promote-validate.sh` (24 checks:
+byte-identical copy, provenance, immutable 409s, quota 507, npm packument regen,
+clean integrity verify of the target).
+
+---
+
 ## Migrating from Nexus
 
 forge imports repositories, content, and permissions from a live Nexus 3

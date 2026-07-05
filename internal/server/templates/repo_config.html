@@ -230,6 +230,16 @@
             </div>
           </fieldset>
 
+          <div class="form-group" id="g-immutable" data-kind-show="hosted">
+            <label style="font-size:13px;font-weight:500;display:block;margin-bottom:6px">Immutability</label>
+            <label class="toggle-sw">
+              <input type="checkbox" name="immutable"{{if .Repo.Immutable}} checked{{end}}>
+              <span class="toggle-sw-track"></span>
+              <span class="toggle-sw-label">Write-once (existing versions can never change)</span>
+            </label>
+            <p class="form-hint">Re-publishing or re-promoting an existing version returns 409, and versions can't be deleted; cleanup retention won't run. New versions can still be published. The recommended target for a promoted release.</p>
+          </div>
+
           <div class="form-group" id="g-depguard" data-kind-show="proxy group">
             <label style="font-size:13px;font-weight:500;display:block;margin-bottom:6px">Dependency-confusion guard</label>
             <label class="toggle-sw">

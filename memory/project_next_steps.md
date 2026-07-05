@@ -191,11 +191,19 @@ Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses du
      (chained w/ VulnRescanTick, `-trash-retention` default 7d). Cleanup runs + format-native deletes
      still HARD-delete. UI: Storage rail used/quota bar + Content-tab Trash panel (CSP-safe delegation).
      Live 20/20 (`scripts/quota-validate.sh`) + Playwright UI drive (no console errors).
-  7. **Promotion (COPY semantics, not reference) + immutability.** Blob keys are `{repo}/{path}`
-     (not CAS), so reference would need cross-repo refcount GC = sprawl/data-loss risk; copy keeps
-     repos self-contained and is reversible toward dedup later (keep the logical copy API, swap the
-     backing store to content-addressed dedup transparently). Provenance ("promoted from A@sha256")
-     is metadata, identical either way. Target repos should be immutable/write-once.
+  7. **Promotion (COPY semantics, not reference) + immutability** — ✅ DONE 2026-07-05.
+     `POST /api/v1/repos/{target}/promote` copies one `component@version` between hosted repos of the
+     same format through the target's own format handler in-process (`internal/server/promote.go`,
+     local-source analogue of the Nexus migrator; all 5 formats incl. OCI manifest walk). Copy keeps
+     the target self-contained; provenance (`{target}:provenance` meta ns, keyed `component@version`:
+     source repo + sha256 + actor + time) is recorded and shown on the detail pane. Integrity does NOT
+     re-check the copy vs source digest (independent by design). `repo.Repository.Immutable` =
+     write-once hosted: `blob.Immutable` wrapper rejects overwrite → 409 at the 4 file-format Put
+     sites (OCI not wrapped — shared layers re-push legitimately); soft-delete refused + cleanup no-op
+     on immutable. Governance: target quota gate (507), admin-on-both, audit, `artifact.promoted`
+     webhook, `forge_promotions_total`. UI: Promote… button (Content tab, CSP-safe delegation) +
+     immutable toggle (repo form) + provenance block (browse detail). Live 24/24
+     (`scripts/promote-validate.sh`). Full record in `~/.claude` memory `project-promotion`.
   8. **PyPI** — capstone extensibility test, LAST before ship. Success = touches only
      `internal/format/pypi/` + `reg.Register` + main.go repo entries, ZERO routing/blob/meta/repo-
      model/auth/vuln-spine changes; gets OSV scanning free via `VulnCoordinates`.
