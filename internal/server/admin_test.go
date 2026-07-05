@@ -156,6 +156,12 @@ func TestAdminRepos_Validation(t *testing.T) {
 		{"invalid kind", map[string]any{"name": "x", "format": "npm", "kind": "bogus"}, http.StatusBadRequest},
 		{"proxy without upstream", map[string]any{"name": "x", "format": "npm", "kind": "proxy"}, http.StatusBadRequest},
 		{"group without members", map[string]any{"name": "x", "format": "npm", "kind": "group"}, http.StatusBadRequest},
+		{"claims on proxy", map[string]any{"name": "x", "format": "npm", "kind": "proxy",
+			"upstream": "http://up", "claims": []string{"@acme/**"}}, http.StatusBadRequest},
+		{"malformed claim", map[string]any{"name": "x", "format": "npm", "kind": "hosted",
+			"claims": []string{"a**b"}}, http.StatusBadRequest},
+		{"valid claims on hosted", map[string]any{"name": "claimed", "format": "npm", "kind": "hosted",
+			"claims": []string{"@acme/**", "left-pad"}}, http.StatusCreated},
 	}
 	for _, tc := range cases {
 		rw := httptest.NewRecorder()

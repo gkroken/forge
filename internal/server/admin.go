@@ -14,6 +14,7 @@ import (
 	"forge/internal/obs"
 	"forge/internal/proxy"
 	"forge/internal/repo"
+	"forge/internal/selector"
 	"forge/internal/webhook"
 )
 
@@ -37,6 +38,10 @@ type repoRequest struct {
 	TimeoutSecs    *int     `json:"timeoutSecs,omitempty"`
 	Retries        *int     `json:"retries,omitempty"`
 	QuotaGB        *float64 `json:"quotaGB,omitempty"`
+	// Dependency-confusion protection: namespace claims (hosted repos) and
+	// the enforcement toggle (group/proxy repos; nil = enabled).
+	Claims            []string `json:"claims,omitempty"`
+	DepConfusionGuard *bool    `json:"depConfusionGuard,omitempty"`
 }
 
 func (req repoRequest) toRepository() (repo.Repository, error) {
@@ -55,6 +60,9 @@ func (req repoRequest) toRepository() (repo.Repository, error) {
 		Retries:       req.Retries,
 		QuotaGB:       req.QuotaGB,
 		Enabled:       true, // default: new repos are online
+
+		Claims:            req.Claims,
+		DepConfusionGuard: req.DepConfusionGuard,
 	}
 	if req.Enabled != nil {
 		r.Enabled = *req.Enabled
@@ -101,6 +109,14 @@ func validateRepo(r repo.Repository) string {
 	}
 	if r.Kind == repo.Group && len(r.Members) == 0 {
 		return "members is required for group repositories"
+	}
+	if len(r.Claims) > 0 && r.Kind != repo.Hosted {
+		return "claims are only valid on hosted repositories (they declare what this repo owns)"
+	}
+	for _, c := range r.Claims {
+		if err := selector.Validate(c); err != nil {
+			return "invalid claim: " + err.Error()
+		}
 	}
 	return ""
 }

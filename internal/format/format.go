@@ -45,20 +45,41 @@ type Context struct {
 	// stored an artifact from upstream (blobKey = "{repo}/{sub}"). The server
 	// wires it to emit an artifact.cached webhook event. May be nil.
 	OnCacheFill func(blobKey string)
+
+	// MemberFilter, if set, restricts which member repositories a group
+	// fan-out may consult for the current request: MemberCtx returns
+	// (nil, false) for members it rejects. The server's dependency-confusion
+	// guard sets it on group contexts to exclude proxy members when the
+	// requested component is claimed by — or actually present in — a hosted
+	// member. Nil means all members are eligible.
+	MemberFilter func(member repo.Repository) bool
+
+	// NameClaimed, if set, reports whether a component name matches an
+	// explicit ownership claim of this group's hosted members. Group index
+	// merges (helm index.yaml, CRAN PACKAGES) consult it per record to drop
+	// proxy-member entries for claimed names; unlike MemberFilter it is pure
+	// (no storage I/O) so it is safe to call once per index entry. Non-nil
+	// also signals that the dependency-confusion guard is active, which
+	// enables hosted-name shadowing in those merges. Nil = guard inactive.
+	NameClaimed func(name string) bool
 }
 
 // Key namespaces a blob key under the repo so repos never collide in storage.
 func (c *Context) Key(sub string) string { return c.Repo.Name + "/" + sub }
 
 // MemberCtx returns a sub-context for the named member repository.
-// Returns (nil, false) if the member doesn't exist or is itself a group
-// (groups cannot nest).
+// Returns (nil, false) if the member doesn't exist, is itself a group
+// (groups cannot nest), or is rejected by MemberFilter (dependency-confusion
+// guard: proxy members must not serve protected names).
 func (c *Context) MemberCtx(name string) (*Context, bool) {
 	if c.Repos == nil {
 		return nil, false
 	}
 	r, ok := c.Repos.Get(name)
 	if !ok || r.Kind == repo.Group {
+		return nil, false
+	}
+	if c.MemberFilter != nil && !c.MemberFilter(r) {
 		return nil, false
 	}
 	var memberStats *obs.RepoStats
@@ -219,6 +240,26 @@ type ReferencedImages interface {
 // directly without re-deriving OSV coordinates.
 type VulnGate interface {
 	VulnGateTarget(sub string) (component, version string, ok bool)
+}
+
+// Claimable is an optional Handler extension powering dependency-confusion
+// protection. It answers the two format-specific questions the guard needs;
+// the enforcement policy itself lives in the server spine.
+//
+// ClaimPath reverses a request sub-path to the component path matched against
+// ownership claims (internal/selector grammar): npm "@acme/foo/-/foo-1.0.tgz"
+// → "@acme/foo", maven "com/acme/app/1.0/app-1.0.jar" → "com/acme/app", helm
+// "mychart-1.2.3.tgz" → "mychart", cran "src/contrib/pkg_1.0.tar.gz" → "pkg".
+// ok=false marks paths that do not address a single component (indexes,
+// service endpoints) and are therefore never guarded.
+//
+// OwnsComponent reports whether the (hosted) repo in c contains any version
+// of the component — the auto-derived ownership signal that protects a name
+// in a group without an explicit claim. It must be cheap (one lookup, no
+// upstream traffic); the caller memoizes per request.
+type Claimable interface {
+	ClaimPath(sub string) (component string, ok bool)
+	OwnsComponent(c *Context, component string) bool
 }
 
 // IntegrityChecker is an optional Handler extension that powers the read-only

@@ -112,6 +112,21 @@ type Repository struct {
 	// global default vulnerability policy. Admin-set only.
 	SecurityPolicyName string `json:"securityPolicyName,omitempty"`
 
+	// Claims lists namespace patterns (internal/selector grammar, e.g.
+	// "@acme/**", "com/acme/**") that this HOSTED repository owns for
+	// dependency-confusion protection. A claimed name is never served from a
+	// proxy: proxy members of any group containing this repo skip it, and
+	// direct requests to same-format proxy repos are refused (403). Claims
+	// protect names before their first publish; names actually present in a
+	// hosted group member are protected automatically without a claim.
+	// Only meaningful on hosted repos; validated at write time.
+	Claims []string `json:"claims,omitempty"`
+
+	// DepConfusionGuard toggles dependency-confusion enforcement on GROUP and
+	// PROXY repositories. nil means enabled (secure default); set to false to
+	// restore unguarded proxy fall-through / packument merging.
+	DepConfusionGuard *bool `json:"depConfusionGuard,omitempty"`
+
 	// Enabled=false makes the server return 503 for all requests to this repo.
 	// Existing repos without this field serialised default to true (see UnmarshalJSON).
 	Enabled        bool           `json:"enabled"`
@@ -123,6 +138,12 @@ type Repository struct {
 	TimeoutSecs    *int           `json:"timeoutSecs,omitempty"`   // nil = 30s
 	Retries        *int           `json:"retries,omitempty"`       // nil = DefaultMaxRetries (2)
 	QuotaGB        *float64       `json:"quotaGB,omitempty"`       // nil = unlimited
+}
+
+// DepGuardEnabled reports whether dependency-confusion protection is in force
+// for this (group or proxy) repository. Unset means enabled.
+func (r Repository) DepGuardEnabled() bool {
+	return r.DepConfusionGuard == nil || *r.DepConfusionGuard
 }
 
 // metaStore is the minimal interface Manager needs for persistence.
