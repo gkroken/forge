@@ -82,6 +82,7 @@ func main() {
 	ldapGroupMappings := flag.String("ldap-group-mappings", os.Getenv("LDAP_GROUP_MAPPINGS"), "directory group→role map, e.g. forge-admins:admin,devs:write,staff:read (env LDAP_GROUP_MAPPINGS)")
 	ldapTokenTTL := flag.String("ldap-token-ttl", os.Getenv("LDAP_TOKEN_TTL"), "lifetime of an LDAP session (default 8h) (env LDAP_TOKEN_TTL)")
 	auditRetention := flag.String("audit-retention", os.Getenv("AUDIT_RETENTION"), "how long to keep Postgres audit_log entries, e.g. 2160h (default 90d); 0 disables pruning (env AUDIT_RETENTION)")
+	trashRetention := flag.String("trash-retention", envOr("TRASH_RETENTION", "168h"), "how long soft-deleted artifacts stay in trash before purge, e.g. 168h (default 7d); 0 keeps them until manually purged (env TRASH_RETENTION)")
 	// Trivy OCI image scanning. Setting -trivy-addr enables the sidecar scanner;
 	// Trivy must be reachable at -trivy-binary (default: found in PATH).
 	// Each flag defaults to its TRIVY_* env var so either works.
@@ -392,9 +393,20 @@ func main() {
 		WithRoles(roleStore).
 		WithBlobWalker(workerCtx)
 
-	// Register the daily vuln re-scan as a scheduler tick hook (leader-gated,
-	// shared lastRun) and start the scheduler now that the server exists.
-	cleanupScheduler.WithTickHook(forgeSrv.VulnRescanTick)
+	// Soft-delete trash retention (default 7d; 0 keeps trash until manually purged).
+	if d, err := time.ParseDuration(*trashRetention); err != nil {
+		slog.Error("invalid -trash-retention", "value", *trashRetention, "err", err)
+		os.Exit(1)
+	} else {
+		forgeSrv.WithTrashRetention(d)
+	}
+
+	// Register the daily vuln re-scan and the trash retention sweep as scheduler
+	// tick hooks (leader-gated, shared lastRun). Both run inside the single hook.
+	cleanupScheduler.WithTickHook(func(now time.Time, lastRun map[string]time.Time) {
+		forgeSrv.VulnRescanTick(now, lastRun)
+		forgeSrv.TrashPurgeTick(now, lastRun)
+	})
 	cleanupScheduler.Start(workerCtx)
 
 	if *oidcIssuer != "" {

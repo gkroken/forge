@@ -29,9 +29,9 @@ import (
 	"forge/internal/cleanup"
 	"forge/internal/format"
 	"forge/internal/indexer"
+	"forge/internal/ldap"
 	"forge/internal/meta"
 	"forge/internal/obs"
-	"forge/internal/ldap"
 	"forge/internal/oidc"
 	"forge/internal/queue"
 	"forge/internal/repo"
@@ -64,32 +64,33 @@ type BlobSizes struct {
 }
 
 type Server struct {
-	Repos       *repo.Manager
-	Handlers    *format.Registry
-	Blob        blob.Store
-	Meta        meta.Store
-	Auth        auth.Store             // nil = auth not enabled (eval mode)
-	Enforcer    *auth.Enforcer         // always non-nil; uses AllowAll when Auth is nil
-	OIDC        oidcProvider           // nil = OIDC not configured; *oidc.Provider satisfies this
-	GroupMapper *auth.GroupRoleMapper  // nil = no OIDC group→role mapping; SSO logins use fallback grants
-	LDAP        ldapAuthenticator      // nil = LDAP not configured; *ldap.Client satisfies this
-	ldapMapper  *auth.GroupRoleMapper  // nil = no LDAP group→role mapping; LDAP logins use fallback grants
-	Queue       queue.Queue            // nil = no async index regen (eval / tests)
-	Metrics     *obs.Metrics           // nil = no instrumentation (tests)
-	Cleanup     *cleanup.PolicyManager // nil = cleanup-policies API returns 503
-	Scheduler   *cleanup.Scheduler     // nil = no scheduled runs (eval / tests)
-	AuditLog    obs.AuditSink          // nil = no audit log (eval: ring buffer; prod: Postgres)
-	Users       auth.UserStore         // nil = user management not configured
-	Roles       auth.RoleStore         // nil = custom roles not configured
-	Webhooks    *webhook.Engine        // nil = webhooks not configured (no event emission)
-	Vuln        *vuln.Store            // nil = vulnerability scanning not configured
-	OSV         *vuln.Client           // nil = no OSV producer (scans disabled)
-	Trivy       *trivy.Scanner         // nil = OCI image scanning not configured
-	VulnPolicy  *vuln.PolicyManager    // nil = no download-policy gate
-	MaxUpload   int64                  // per-request body limit; 0 = use defaultMaxUpload
-	reg         prometheus.Gatherer
-	client      *http.Client
-	oidcKey     []byte // HMAC key for signing OIDC state cookies; set by WithOIDC
+	Repos          *repo.Manager
+	Handlers       *format.Registry
+	Blob           blob.Store
+	Meta           meta.Store
+	Auth           auth.Store             // nil = auth not enabled (eval mode)
+	Enforcer       *auth.Enforcer         // always non-nil; uses AllowAll when Auth is nil
+	OIDC           oidcProvider           // nil = OIDC not configured; *oidc.Provider satisfies this
+	GroupMapper    *auth.GroupRoleMapper  // nil = no OIDC group→role mapping; SSO logins use fallback grants
+	LDAP           ldapAuthenticator      // nil = LDAP not configured; *ldap.Client satisfies this
+	ldapMapper     *auth.GroupRoleMapper  // nil = no LDAP group→role mapping; LDAP logins use fallback grants
+	Queue          queue.Queue            // nil = no async index regen (eval / tests)
+	Metrics        *obs.Metrics           // nil = no instrumentation (tests)
+	Cleanup        *cleanup.PolicyManager // nil = cleanup-policies API returns 503
+	Scheduler      *cleanup.Scheduler     // nil = no scheduled runs (eval / tests)
+	AuditLog       obs.AuditSink          // nil = no audit log (eval: ring buffer; prod: Postgres)
+	Users          auth.UserStore         // nil = user management not configured
+	Roles          auth.RoleStore         // nil = custom roles not configured
+	Webhooks       *webhook.Engine        // nil = webhooks not configured (no event emission)
+	Vuln           *vuln.Store            // nil = vulnerability scanning not configured
+	OSV            *vuln.Client           // nil = no OSV producer (scans disabled)
+	Trivy          *trivy.Scanner         // nil = OCI image scanning not configured
+	VulnPolicy     *vuln.PolicyManager    // nil = no download-policy gate
+	MaxUpload      int64                  // per-request body limit; 0 = use defaultMaxUpload
+	TrashRetention time.Duration          // soft-delete trash purged after this age; <=0 = keep forever
+	reg            prometheus.Gatherer
+	client         *http.Client
+	oidcKey        []byte // HMAC key for signing OIDC state cookies; set by WithOIDC
 
 	started time.Time // process start; powers the dashboard uptime readout
 
@@ -144,6 +145,14 @@ func (s *Server) WithOIDC(p *oidc.Provider, mapper *auth.GroupRoleMapper) *Serve
 func (s *Server) WithLDAP(c *ldap.Client, mapper *auth.GroupRoleMapper) *Server {
 	s.LDAP = c
 	s.ldapMapper = mapper
+	return s
+}
+
+// WithTrashRetention sets how long soft-deleted artifacts are kept in trash
+// before the scheduler's purge sweep hard-deletes them. A non-positive duration
+// keeps trash indefinitely (manual purge only). Call before Routes().
+func (s *Server) WithTrashRetention(d time.Duration) *Server {
+	s.TrashRetention = d
 	return s
 }
 
