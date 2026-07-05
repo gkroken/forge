@@ -203,6 +203,98 @@
       .catch(function () {
         listEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted)">Failed to load content.</div>';
       });
+    initTrash();
+  }
+
+  // ── Trash (soft-delete) ──────────────────────────────────────────────────────
+  function humanKB(n) {
+    n = n || 0;
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+    if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
+    return (n / 1073741824).toFixed(2) + ' GB';
+  }
+
+  function initTrash() {
+    var card = document.getElementById('trash-card');
+    var listEl = document.getElementById('trash-list');
+    if (!card || !listEl) return;
+    fetch('/api/v1/repos/' + encodeURIComponent(REPO) + '/trash')
+      .then(function (r) { return r.json(); })
+      .then(function (d) { renderTrash(card, listEl, d.trash || []); })
+      .catch(function () { card.style.display = 'none'; });
+  }
+
+  function renderTrash(card, listEl, items) {
+    if (!items.length) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    listEl.innerHTML = '';
+    items.forEach(function (t) {
+      var when = t.deletedAt ? new Date(t.deletedAt).toLocaleString() : '';
+      var row = document.createElement('div');
+      row.className = 'content-ver-row';
+      row.innerHTML =
+        '<span class="content-ver-tag">' + esc(t.component) + ' ' + esc(t.version) + '</span>' +
+        '<span class="content-pkg-meta" style="flex:1">' + humanKB(t.bytes) +
+          (t.deletedBy ? ' · by ' + esc(t.deletedBy) : '') +
+          (when ? ' · ' + esc(when) : '') + '</span>' +
+        '<span class="content-ver-actions">' +
+          '<button class="btn btn-sm" data-trash-restore="' + escAttr(t.id) + '">Restore</button>' +
+          '<button class="btn btn-sm btn-danger" data-trash-purge="' + escAttr(t.id) + '">Purge</button>' +
+        '</span>';
+      listEl.appendChild(row);
+    });
+  }
+
+  function initTrashActions() {
+    var listEl = document.getElementById('trash-list');
+    if (listEl && !listEl.dataset.wired) {
+      listEl.dataset.wired = '1';
+      listEl.addEventListener('click', function (e) {
+        var rb = e.target.closest('[data-trash-restore]');
+        var pb = e.target.closest('[data-trash-purge]');
+        if (rb) { trashRestore(rb.getAttribute('data-trash-restore'), rb); }
+        else if (pb) { trashPurge(pb.getAttribute('data-trash-purge'), pb); }
+      });
+    }
+    var purgeAll = document.getElementById('trash-purge-all');
+    if (purgeAll && !purgeAll.dataset.wired) {
+      purgeAll.dataset.wired = '1';
+      purgeAll.addEventListener('click', function () {
+        confirmModal('Purge all trash',
+          'Permanently delete every trashed artifact in "' + REPO + '"? This cannot be undone.',
+          function () {
+            fetch('/api/v1/repos/' + encodeURIComponent(REPO) + '/trash/purge?id=all', { method: 'POST' })
+              .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+              .then(function (d) { toast('Purged ' + (d.purged || 0) + ' item(s)', 'ok'); initTrash(); })
+              .catch(function () { toast('Purge failed', 'err'); });
+          });
+      });
+    }
+  }
+
+  function trashRestore(id, btn) {
+    btn.disabled = true;
+    fetch('/api/v1/repos/' + encodeURIComponent(REPO) + '/trash/restore?id=' + encodeURIComponent(id), { method: 'POST' })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+      .then(function (d) {
+        toast('Restored ' + d.component + ' ' + d.version, 'ok');
+        initTrash();
+        initContentTab();
+      })
+      .catch(function () { toast('Restore failed', 'err'); btn.disabled = false; });
+  }
+
+  function trashPurge(id, btn) {
+    confirmModal('Purge from trash',
+      'Permanently delete this artifact? This cannot be undone.',
+      function () {
+        btn.disabled = true;
+        fetch('/api/v1/repos/' + encodeURIComponent(REPO) + '/trash/purge?id=' + encodeURIComponent(id), { method: 'POST' })
+          .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+          .then(function () { toast('Purged', 'ok'); initTrash(); })
+          .catch(function () { toast('Purge failed', 'err'); btn.disabled = false; });
+      });
   }
 
   function renderContentList(listEl, components) {
@@ -690,6 +782,7 @@
     initCircuitBreaker();
     initActionButtons();
     initContentTab();
+    initTrashActions();
     initAccessTab();
     initSecurityTab();
     initIntegrityTab();

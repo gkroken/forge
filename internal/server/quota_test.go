@@ -40,7 +40,7 @@ func writeReq(t *testing.T, body string) (*httptest.ResponseRecorder, *http.Requ
 func TestQuotaBlocks_UnderQuota_Allows(t *testing.T) {
 	srv, b, mgr := newQuotaServer(t)
 	rp := repo.Repository{Name: "maven-hosted", Format: "maven", Kind: repo.Hosted, QuotaGB: quotaGBFor(1000)}
-	mgr.Add(rp) //nolint:errcheck
+	mgr.Add(rp)                                             //nolint:errcheck
 	b.Put("maven-hosted/a.jar", strings.NewReader("hello")) //nolint:errcheck
 	srv.walkBlobSizes()
 
@@ -53,7 +53,7 @@ func TestQuotaBlocks_UnderQuota_Allows(t *testing.T) {
 func TestQuotaBlocks_OverQuota_Refuses507(t *testing.T) {
 	srv, b, mgr := newQuotaServer(t)
 	rp := repo.Repository{Name: "maven-hosted", Format: "maven", Kind: repo.Hosted, QuotaGB: quotaGBFor(4)}
-	mgr.Add(rp) //nolint:errcheck
+	mgr.Add(rp)                                             //nolint:errcheck
 	b.Put("maven-hosted/a.jar", strings.NewReader("hello")) //nolint:errcheck  (5 bytes > 4)
 	srv.walkBlobSizes()
 
@@ -80,7 +80,7 @@ func TestQuotaBlocks_IncomingBodyPushesOver(t *testing.T) {
 	srv, b, mgr := newQuotaServer(t)
 	// Usage 5 bytes, quota 10; a 6-byte upload crosses the line.
 	rp := repo.Repository{Name: "maven-hosted", Format: "maven", Kind: repo.Hosted, QuotaGB: quotaGBFor(10)}
-	mgr.Add(rp) //nolint:errcheck
+	mgr.Add(rp)                                             //nolint:errcheck
 	b.Put("maven-hosted/a.jar", strings.NewReader("hello")) //nolint:errcheck
 	srv.walkBlobSizes()
 
@@ -98,7 +98,7 @@ func TestQuotaBlocks_IncomingBodyPushesOver(t *testing.T) {
 func TestQuotaBlocks_ProxyNeverGated(t *testing.T) {
 	srv, b, mgr := newQuotaServer(t)
 	rp := repo.Repository{Name: "npm-proxy", Format: "npm", Kind: repo.Proxy, QuotaGB: quotaGBFor(1)}
-	mgr.Add(rp) //nolint:errcheck
+	mgr.Add(rp)                                                              //nolint:errcheck
 	b.Put("npm-proxy/big.tgz", strings.NewReader("way over the tiny quota")) //nolint:errcheck
 	srv.walkBlobSizes()
 
@@ -111,8 +111,8 @@ func TestQuotaBlocks_ProxyNeverGated(t *testing.T) {
 func TestQuotaBlocks_NoQuota_Allows(t *testing.T) {
 	srv, b, mgr := newQuotaServer(t)
 	rp := repo.Repository{Name: "maven-hosted", Format: "maven", Kind: repo.Hosted} // QuotaGB nil
-	mgr.Add(rp) //nolint:errcheck
-	b.Put("maven-hosted/a.jar", strings.NewReader(strings.Repeat("x", 4096))) //nolint:errcheck
+	mgr.Add(rp)                                                                     //nolint:errcheck
+	b.Put("maven-hosted/a.jar", strings.NewReader(strings.Repeat("x", 4096)))       //nolint:errcheck
 	srv.walkBlobSizes()
 
 	w, r := writeReq(t, "x")
@@ -124,7 +124,7 @@ func TestQuotaBlocks_NoQuota_Allows(t *testing.T) {
 func TestQuotaDelta_TightensBeforeWalk_AndReconciles(t *testing.T) {
 	srv, b, mgr := newQuotaServer(t)
 	rp := repo.Repository{Name: "maven-hosted", Format: "maven", Kind: repo.Hosted, QuotaGB: quotaGBFor(10)}
-	mgr.Add(rp) //nolint:errcheck
+	mgr.Add(rp)                                             //nolint:errcheck
 	b.Put("maven-hosted/a.jar", strings.NewReader("hello")) //nolint:errcheck  (5 bytes)
 	srv.walkBlobSizes()
 

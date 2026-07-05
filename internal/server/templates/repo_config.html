@@ -266,6 +266,14 @@
         </div>
       </div>
 
+      <div class="card" id="trash-card" style="overflow:hidden;margin-top:16px;display:none">
+        <div class="content-search-wrap" style="display:flex;justify-content:space-between;align-items:center">
+          <span class="rail-card-title" style="margin:0"><span class="ms" style="font-size:15px;vertical-align:middle;margin-right:5px">delete_sweep</span>Trash</span>
+          <button class="btn btn-sm btn-danger" id="trash-purge-all" type="button">Purge all</button>
+        </div>
+        <div id="trash-list"></div>
+      </div>
+
       {{else if eq .ActiveTab "access"}}
       <div class="card" style="overflow:hidden">
         <div id="access-content">
@@ -328,10 +336,17 @@
         </div>
         <div class="rail-progress-bar"><div class="rail-progress-fill" style="width:{{.StoragePct}}%"></div></div>
         {{end}}
-        {{if .Repo.QuotaGB}}
+        {{if gt .QuotaBytes 0}}
         <div class="rail-stat-row" style="margin-top:6px">
           <span class="rail-stat-label">Quota</span>
-          <span class="rail-stat-val">{{floatPtr2 .Repo.QuotaGB}} GB</span>
+          <span class="rail-stat-val">{{fmtBytes .SizeBytes}} / {{fmtBytes .QuotaBytes}}</span>
+        </div>
+        <div class="rail-progress-bar">
+          <div class="rail-progress-fill" style="width:{{if gt .QuotaPct 100}}100{{else}}{{.QuotaPct}}{{end}}%{{if .QuotaOver}};background:var(--sev-crit-fg,#c0392b){{else if .QuotaNear}};background:var(--sev-mod-fg,#d68000){{end}}"></div>
+        </div>
+        <div class="rail-stat-row" style="margin-top:2px">
+          <span class="rail-stat-label">{{if .QuotaOver}}Over quota{{else if .QuotaNear}}Near quota{{else}}Used{{end}}</span>
+          <span class="rail-stat-val">{{.QuotaPct}}%</span>
         </div>
         {{end}}
       </div>

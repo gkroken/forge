@@ -154,6 +154,10 @@ type repoConfigPage struct {
 	ArtifactCount  int
 	SizeBytes      int64
 	StoragePct     int
+	QuotaBytes     int64 // 0 = unlimited
+	QuotaPct       int   // used/quota, 0..100+ (clamped for the bar width in the template)
+	QuotaNear      bool  // >=80% used — warn styling
+	QuotaOver      bool  // >=100% used — over-quota styling
 	RecentActivity []auditRow
 }
 
@@ -441,6 +445,14 @@ func (s *Server) renderRepoConfig(w http.ResponseWriter, rp repo.Repository, tab
 	if bsizes.TotalBytes > 0 {
 		storagePct = int(float64(sizeBytes) / float64(bsizes.TotalBytes) * 100)
 	}
+	var quotaBytes int64
+	quotaPct := 0
+	if rp.QuotaGB != nil && *rp.QuotaGB > 0 {
+		quotaBytes = int64(*rp.QuotaGB * float64(bytesPerGB))
+		if quotaBytes > 0 {
+			quotaPct = int(float64(sizeBytes) / float64(quotaBytes) * 100)
+		}
+	}
 
 	var activity []auditRow
 	if s.AuditLog != nil {
@@ -488,6 +500,10 @@ func (s *Server) renderRepoConfig(w http.ResponseWriter, rp repo.Repository, tab
 		ArtifactCount:  bsizes.CountByRepo[rp.Name],
 		SizeBytes:      sizeBytes,
 		StoragePct:     storagePct,
+		QuotaBytes:     quotaBytes,
+		QuotaPct:       quotaPct,
+		QuotaNear:      quotaBytes > 0 && quotaPct >= 80,
+		QuotaOver:      quotaBytes > 0 && quotaPct >= 100,
 		RecentActivity: activity,
 	})
 }
