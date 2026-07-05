@@ -203,7 +203,86 @@
       .catch(function () {
         listEl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted)">Failed to load content.</div>';
       });
+    // CSP-safe event delegation for the per-version Promote button (the version
+    // rows are rendered lazily as packages expand).
+    listEl.addEventListener('click', function (e) {
+      var pb = e.target.closest('[data-promote-pkg]');
+      if (pb) openPromoteModal(pb.getAttribute('data-promote-pkg'), pb.getAttribute('data-promote-ver'));
+    });
     initTrash();
+  }
+
+  // ── Promote (copy to another hosted repo of the same format) ────────────────
+  function openPromoteModal(pkg, ver) {
+    fetch('/api/v1/repos')
+      .then(function (r) { return r.json(); })
+      .then(function (repos) {
+        var targets = (repos || []).filter(function (rp) {
+          return rp.kind === 'hosted' && rp.format === FORMAT && rp.name !== REPO;
+        });
+        if (!targets.length) {
+          toast('No eligible target: need another hosted ' + FORMAT + ' repository', 'err');
+          return;
+        }
+        promoteModal(pkg, ver, targets);
+      })
+      .catch(function () { toast('Could not load target repositories', 'err'); });
+  }
+
+  var promoteEl;
+  function promoteModal(pkg, ver, targets) {
+    if (!promoteEl) {
+      promoteEl = document.createElement('div');
+      promoteEl.className = 'modal-overlay hidden';
+      promoteEl.innerHTML =
+        '<div class="modal-box">' +
+          '<div class="modal-title">Promote artifact</div>' +
+          '<div class="modal-body">' +
+            '<p style="margin:0 0 12px;font-size:13px;color:var(--text-muted)">' +
+              'Copy <strong id="pr-label"></strong> into another hosted ' + esc(FORMAT) +
+              ' repository. The bytes are copied through the target’s format handler and provenance is recorded; the source is unchanged.</p>' +
+            '<label style="display:block;font-size:12px;margin-bottom:6px" for="pr-target">Target repository</label>' +
+            '<select id="pr-target" style="width:100%"></select>' +
+          '</div>' +
+          '<div class="modal-footer">' +
+            '<button class="btn" id="pr-cancel">Cancel</button>' +
+            '<button class="btn btn-primary" id="pr-confirm">Promote</button>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(promoteEl);
+      document.getElementById('pr-cancel').addEventListener('click', function () { promoteEl.classList.add('hidden'); });
+      promoteEl.addEventListener('click', function (e) { if (e.target === promoteEl) promoteEl.classList.add('hidden'); });
+    }
+    document.getElementById('pr-label').textContent = pkg + ' @ ' + ver;
+    var sel = document.getElementById('pr-target');
+    sel.innerHTML = targets.map(function (t) {
+      var imm = t.immutable ? ' — immutable' : '';
+      return '<option value="' + escAttr(t.name) + '">' + esc(t.name) + esc(imm) + '</option>';
+    }).join('');
+    promoteEl.classList.remove('hidden');
+    document.getElementById('pr-confirm').onclick = function () {
+      doPromote(sel.value, pkg, ver, this);
+    };
+  }
+
+  function doPromote(target, pkg, ver, btn) {
+    btn.disabled = true;
+    fetch('/api/v1/repos/' + encodeURIComponent(target) + '/promote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sourceRepo: REPO, component: pkg, version: ver }),
+    })
+      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+      .then(function (res) {
+        btn.disabled = false;
+        if (!res.ok) {
+          toast('Promote failed: ' + (res.d.error || 'error'), 'err');
+          return;
+        }
+        promoteEl.classList.add('hidden');
+        toast('Promoted ' + pkg + '@' + ver + ' → ' + target, 'ok');
+      })
+      .catch(function () { btn.disabled = false; toast('Promote request failed', 'err'); });
   }
 
   // ── Trash (soft-delete) ──────────────────────────────────────────────────────
@@ -379,6 +458,9 @@
         sevBadge(vsev) +
         '<span class="content-ver-actions">' +
           '<button class="btn btn-sm" onclick="rcCopyURL(\'' + escAttr(copyURL) + '\')">Copy URL</button>' +
+          (KIND === 'hosted'
+            ? '<button class="btn btn-sm" data-promote-pkg="' + escAttr(pkg) + '" data-promote-ver="' + escAttr(ver) + '">Promote…</button>'
+            : '') +
           (KIND === 'proxy'
             ? '<button class="btn btn-sm" onclick="rcExpireCache(\'' + escAttr(pkg) + '\',\'' + escAttr(ver) + '\',this)">Expire</button>'
             : '') +

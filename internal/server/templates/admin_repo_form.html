@@ -99,6 +99,14 @@
     </div>
   </fieldset>
 
+  <div class="form-group" id="g-immutable" data-kind-show="hosted">
+    <label class="checkbox-label">
+      <input type="checkbox" name="immutable"{{if .Repo.Immutable}} checked{{end}}>
+      Immutable (write-once)
+    </label>
+    <p class="form-hint">Existing artifacts can never be overwritten (re-publishing a version returns 409) and cannot be deleted; cleanup retention does not run. New versions may still be published. This is the recommended target for a promoted release — once promoted, it cannot be mutated.</p>
+  </div>
+
   <fieldset id="g-claims" data-kind-show="hosted">
     <legend>Namespace claims <span class="form-hint-inline">(dependency-confusion protection)</span></legend>
     <div class="form-group">

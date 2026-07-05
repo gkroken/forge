@@ -333,11 +333,34 @@ function renderDetail(d) {
   // Security (vulnerability findings). Omitted entirely when scanning is off.
   h += renderSecurity(d.vuln);
 
+  // Provenance — present only when this version was promoted (copied) here.
+  h += renderProvenance(d.provenance);
+
   h += '</div>';
   document.getElementById('detail-pane').innerHTML = h;
 
   const copyBtn = document.getElementById('copy-url-btn');
   if (copyBtn) copyBtn.addEventListener('click', () => navigator.clipboard.writeText(d.download_url));
+}
+
+// renderProvenance renders the "promoted from" block for a copied artifact.
+// The digest is the source's sha256 recorded at promotion time (a historical
+// fact — the copy is independent and is not re-checked against it).
+function renderProvenance(p) {
+  if (!p) return '';
+  let h = '<div class="browse-detail-asset-label" style="margin-top:16px;">Provenance</div>';
+  h += '<dl class="browse-meta">';
+  h += '<dt>Promoted from</dt><dd>' + esc(p.sourceRepo) + '</dd>';
+  if (p.promotedBy) h += '<dt>By</dt><dd>' + esc(p.promotedBy) + '</dd>';
+  if (p.promotedAt) h += '<dt>At</dt><dd>' + esc(String(p.promotedAt).replace('T', ' ').replace(/\..*$/, ' UTC')) + '</dd>';
+  h += '</dl>';
+  if (p.sourceDigest) {
+    h += '<div class="browse-checksum">' +
+         '<div class="browse-cksum-label">SOURCE SHA-256</div>' +
+         '<div class="browse-cksum-val">' + esc(p.sourceDigest) + '</div>' +
+         '</div>';
+  }
+  return h;
 }
 
 // renderSecurity renders the Security block from the detail response's `vuln`

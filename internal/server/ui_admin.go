@@ -585,6 +585,7 @@ func (s *Server) processRepoForm(w http.ResponseWriter, r *http.Request, existin
 		rp.ContentMaxAge = &ttl
 	}
 	rp.CleanupPolicyName = strings.TrimSpace(r.FormValue("cleanupPolicyName"))
+	rp.Immutable = r.FormValue("immutable") == "on" // hosted write-once (IsImmutable gates on kind)
 	overlayDepGuardFields(r, &rp)
 
 	// BE-D fields — only overlay when the form field was actually submitted.
@@ -672,6 +673,7 @@ func (s *Server) reRenderForm(w http.ResponseWriter, r *http.Request, name strin
 	rp.ProxyAuth = r.FormValue("proxyAuth")
 	rp.AnonymousRead = r.FormValue("anonymousRead") == "on"
 	rp.CleanupPolicyName = strings.TrimSpace(r.FormValue("cleanupPolicyName"))
+	rp.Immutable = r.FormValue("immutable") == "on" // hosted write-once (IsImmutable gates on kind)
 	overlayDepGuardFields(r, &rp)
 	if v := r.FormValue("enabled"); v != "" {
 		rp.Enabled = v == "true"

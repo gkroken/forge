@@ -414,6 +414,9 @@ func (s *Server) uiBrowseDetail(w http.ResponseWriter, r *http.Request, repoName
 		resp.DownloadURL = publicBase(r) + "/repository/" + repoName + "/" + pkg
 	}
 	resp.Vuln = s.vulnInfoFor(rp, h, pkg, ver)
+	if prov, ok := s.GetProvenance(repoName, pkg, ver); ok {
+		resp.Provenance = &prov
+	}
 	writeJSON(w, resp)
 }
 
@@ -503,6 +506,9 @@ type browseDetailResponse struct {
 	ContentType string    `json:"content_type,omitempty"`
 	FileName    string    `json:"file_name,omitempty"`
 	Vuln        *vulnInfo `json:"vuln,omitempty"`
+	// Provenance is set when this component+version was promoted (copied) into
+	// this repo from another; it records where it came from.
+	Provenance *ProvenanceRecord `json:"provenance,omitempty"`
 }
 
 // vulnInfo is the security panel payload for a component version.

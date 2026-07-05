@@ -38,6 +38,7 @@ type repoRequest struct {
 	TimeoutSecs    *int     `json:"timeoutSecs,omitempty"`
 	Retries        *int     `json:"retries,omitempty"`
 	QuotaGB        *float64 `json:"quotaGB,omitempty"`
+	Immutable      bool     `json:"immutable,omitempty"` // write-once hosted repo
 	// Dependency-confusion protection: namespace claims (hosted repos) and
 	// the enforcement toggle (group/proxy repos; nil = enabled).
 	Claims            []string `json:"claims,omitempty"`
@@ -59,6 +60,7 @@ func (req repoRequest) toRepository() (repo.Repository, error) {
 		TimeoutSecs:   req.TimeoutSecs,
 		Retries:       req.Retries,
 		QuotaGB:       req.QuotaGB,
+		Immutable:     req.Immutable,
 		Enabled:       true, // default: new repos are online
 
 		Claims:            req.Claims,
