@@ -34,6 +34,9 @@ type Metrics struct {
 	// Writes refused by the storage-quota gate, per repo.
 	QuotaBlocked *prometheus.CounterVec // {repo}
 
+	// Successful component+version promotions (copies) into a repo, per target.
+	Promotions *prometheus.CounterVec // {repo}
+
 	// Fraction of a hosted repo's quota currently used (0..1+; >1 possible while
 	// a soft-limit overrun is reconciled). Only set for repos with a quota.
 	QuotaUsedRatio *prometheus.GaugeVec // {repo}
@@ -105,6 +108,11 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help: "Fraction of a hosted repository's storage quota currently used.",
 		}, []string{"repo"}),
 
+		Promotions: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "forge_promotions_total",
+			Help: "Successful component+version promotions (copies) into a repository, per target.",
+		}, []string{"repo"}),
+
 		WebhookDeliveries: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "forge_webhook_deliveries_total",
 			Help: "Webhook delivery attempts by outcome (success, failed, dropped).",
@@ -134,6 +142,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.DepGuardBlocked,
 		m.QuotaBlocked,
 		m.QuotaUsedRatio,
+		m.Promotions,
 		m.WebhookDeliveries,
 		m.VulnerableComponents,
 	)

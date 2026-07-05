@@ -39,6 +39,10 @@ const (
 	// a download. Data carries action ("warn"|"block"), severity, component,
 	// version. Path is "{component}@{version}".
 	EventPolicyViolation = "policy.violation"
+	// EventArtifactPromoted — a component+version was promoted (copied) into this
+	// repository from another. Repo is the target; Data carries sourceRepo,
+	// component, version, sourceDigest, bytes. Path is "{component}@{version}".
+	EventArtifactPromoted = "artifact.promoted"
 )
 
 // AllEventTypes lists every emittable event type, for the admin UI.
@@ -48,6 +52,7 @@ var AllEventTypes = []string{
 	EventArtifactCached,
 	EventCleanupCompleted,
 	EventPolicyViolation,
+	EventArtifactPromoted,
 }
 
 // Subscription is one registered endpoint and its delivery filters.

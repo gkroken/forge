@@ -270,6 +270,16 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// /api/v1/repos/{name}/promote — copy a component+version into this repo
+	// from another hosted repo of the same format (admin on both required).
+	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "promote" {
+		if !s.Enforcer.RequireRepoAdmin(w, r, repoName) {
+			return
+		}
+		s.handlePromote(w, r, repoName)
+		return
+	}
+
 	// /api/v1/repos/{name}/component — delete one component+version (admin only).
 	// Format-agnostic: takes ?name= & ?version= so it works for every format,
 	// not just the npm tarball path.
