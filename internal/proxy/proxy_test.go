@@ -13,6 +13,7 @@ import (
 
 	"forge/internal/blob"
 	"forge/internal/meta"
+	"forge/internal/repo"
 )
 
 // ── test helpers ─────────────────────────────────────────────────────────────
@@ -590,5 +591,127 @@ func TestCircuitBreaker_ReopensAfterFailedProbe(t *testing.T) {
 	}
 	if up.calls != before {
 		t.Errorf("expected no upstream call (re-opened), got %d extra", up.calls-before)
+	}
+}
+
+// ── ConfigForRepo: repo settings → proxy Config wiring ─────────────────────────
+
+func TestConfigForRepo(t *testing.T) {
+	dur := func(d time.Duration) *time.Duration { return &d }
+	iptr := func(i int) *int { return &i }
+	bptr := func(b bool) *bool { return &b }
+
+	t.Run("defaults when nothing set", func(t *testing.T) {
+		cfg := ConfigForRepo(repo.Repository{})
+		if cfg.TTL != DefaultTTL {
+			t.Errorf("TTL = %v, want default %v", cfg.TTL, DefaultTTL)
+		}
+		if cfg.DisableNegativeCache {
+			t.Error("negative cache should be enabled by default")
+		}
+		if cfg.MaxRetries != 0 || cfg.Timeout != 0 || cfg.Auth != "" {
+			t.Errorf("unexpected non-zero defaults: %+v", cfg)
+		}
+	})
+
+	t.Run("ContentMaxAge wins over ProxyTTL", func(t *testing.T) {
+		cfg := ConfigForRepo(repo.Repository{
+			ContentMaxAge: dur(2 * time.Hour),
+			ProxyTTL:      5 * time.Minute,
+		})
+		if cfg.TTL != 2*time.Hour {
+			t.Errorf("TTL = %v, want 2h (ContentMaxAge)", cfg.TTL)
+		}
+	})
+
+	t.Run("legacy ProxyTTL used when no ContentMaxAge", func(t *testing.T) {
+		cfg := ConfigForRepo(repo.Repository{ProxyTTL: 90 * time.Second})
+		if cfg.TTL != 90*time.Second {
+			t.Errorf("TTL = %v, want 90s (ProxyTTL)", cfg.TTL)
+		}
+	})
+
+	t.Run("negative cache disabled, retries, timeout, auth", func(t *testing.T) {
+		cfg := ConfigForRepo(repo.Repository{
+			ProxyAuth:     "Bearer xyz",
+			NegativeCache: bptr(false),
+			Retries:       iptr(4),
+			TimeoutSecs:   iptr(12),
+		})
+		if !cfg.DisableNegativeCache {
+			t.Error("NegativeCache=false should set DisableNegativeCache")
+		}
+		if cfg.MaxRetries != 4 {
+			t.Errorf("MaxRetries = %d, want 4", cfg.MaxRetries)
+		}
+		if cfg.Timeout != 12*time.Second {
+			t.Errorf("Timeout = %v, want 12s", cfg.Timeout)
+		}
+		if cfg.Auth != "Bearer xyz" {
+			t.Errorf("Auth = %q, want carried through", cfg.Auth)
+		}
+	})
+
+	t.Run("NegativeCache=true leaves default enabled; zero TimeoutSecs ignored", func(t *testing.T) {
+		cfg := ConfigForRepo(repo.Repository{
+			NegativeCache: bptr(true),
+			TimeoutSecs:   iptr(0),
+		})
+		if cfg.DisableNegativeCache {
+			t.Error("NegativeCache=true must not disable negative cache")
+		}
+		if cfg.Timeout != 0 {
+			t.Errorf("TimeoutSecs=0 should be ignored, got %v", cfg.Timeout)
+		}
+	})
+}
+
+// ── Health registry: HealthOf / AllHealth reflect breaker state ────────────────
+
+func TestHealthOf_UnknownHostIsOK(t *testing.T) {
+	if got := HealthOf("https://never-contacted.example.invalid"); got != "ok" {
+		t.Errorf("HealthOf(unknown) = %q, want ok", got)
+	}
+}
+
+func TestHealthOf_And_AllHealth_ReflectOpenBreaker(t *testing.T) {
+	up := newFake(t, 503, "overload")
+	b, m := newStores(t)
+	f := New(http.DefaultClient, Config{MaxRetries: 0, DisableStaleOnError: true})
+
+	// Drive the breaker for this upstream host open.
+	driveFailures(t, f, up, b, m, cbFailureThreshold)
+
+	host := upstreamHost(up.srv.URL)
+	if got := HealthOf(up.srv.URL); got != "down" {
+		t.Errorf("HealthOf(%s) = %q, want down after breaker opened", up.srv.URL, got)
+	}
+
+	all := AllHealth()
+	if all[host] != "down" {
+		t.Errorf("AllHealth()[%s] = %q, want down; full map: %v", host, all[host], all)
+	}
+
+	// A successful fetch to the same host should flip health back to ok.
+	up.code = 200
+	up.body = "recovered"
+	probe := time.Now().Add(cbOpenTimeout + time.Second)
+	f.now = func() time.Time { return probe }
+	fetchOnce(t, f, up, b, m) //nolint:errcheck
+	if got := HealthOf(up.srv.URL); got != "ok" {
+		t.Errorf("HealthOf after recovery = %q, want ok", got)
+	}
+}
+
+func TestUpstreamHost(t *testing.T) {
+	cases := map[string]string{
+		"https://charts.bitnami.com/bitnami/index.yaml": "https://charts.bitnami.com",
+		"http://localhost:8080/v2/foo":                  "http://localhost:8080",
+		"::not a url":                                   "::not a url", // parse failure → raw
+	}
+	for in, want := range cases {
+		if got := upstreamHost(in); got != want {
+			t.Errorf("upstreamHost(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

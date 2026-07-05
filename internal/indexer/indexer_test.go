@@ -165,3 +165,78 @@ func TestWorker_WithMetrics(t *testing.T) {
 	_ = payload
 	q.Drain()
 }
+
+// TestRegister_CustomHandlerDispatched verifies a non-index job family attaches
+// via Register and is drained by this one worker alongside npm.regen — the seam
+// that lets webhook delivery share the queue instead of racing a 2nd worker.
+func TestRegister_CustomHandlerDispatched(t *testing.T) {
+	m := newMetaStore(t)
+	q := queue.NewMem(4)
+
+	var got queue.Job
+	done := make(chan struct{})
+	w := New(m).Register("webhook.deliver", func(_ context.Context, j queue.Job) error {
+		got = j
+		close(done)
+		return nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go w.Work(ctx, q) //nolint:errcheck
+
+	q.Enqueue(ctx, "webhook.deliver", map[string]string{"subID": "s1"}) //nolint:errcheck
+	q.Drain()
+	<-done
+
+	if got.Type != "webhook.deliver" {
+		t.Errorf("registered handler got job type %q, want webhook.deliver", got.Type)
+	}
+}
+
+// TestDispatch_RegisteredHandlerWins verifies a registered type is routed to its
+// handler (not the built-in switch) and its error propagates, while an unknown
+// type is silently discarded (returns nil) rather than erroring the queue.
+func TestDispatch_RegisteredHandlerWins(t *testing.T) {
+	m := newMetaStore(t)
+	wantErr := fmt.Errorf("boom")
+	w := New(m).Register("custom.job", func(_ context.Context, _ queue.Job) error {
+		return wantErr
+	})
+
+	if err := w.dispatch(context.Background(), queue.Job{Type: "custom.job"}); err != wantErr {
+		t.Errorf("dispatch(custom.job) err = %v, want %v", err, wantErr)
+	}
+	if err := w.dispatch(context.Background(), queue.Job{Type: "totally.unknown"}); err != nil {
+		t.Errorf("dispatch(unknown) err = %v, want nil (discarded)", err)
+	}
+}
+
+// TestWithTaskRing_RecordsCompletion verifies WithTaskRing wires the ring so a
+// drained job surfaces as a completed task in the system tasks API.
+func TestWithTaskRing_RecordsCompletion(t *testing.T) {
+	m := newMetaStore(t)
+	m.PutJSON("repo1:npm:v", "pkg:1.0.0", map[string]any{"name": "pkg", "version": "1.0.0"})
+	m.PutJSON("repo1:npm:dt", "pkg", map[string]any{"latest": "1.0.0"})
+
+	ring := queue.NewTaskRing(8)
+	q := queue.NewMem(4)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go New(m).WithTaskRing(ring).Work(ctx, q) //nolint:errcheck
+
+	q.Enqueue(ctx, "npm.regen", RegenPayload{RepoName: "repo1", Pkg: "pkg"}) //nolint:errcheck
+	q.Drain()
+
+	recent := ring.Recent(4)
+	var found bool
+	for _, ti := range recent {
+		if ti.Name == "npm.regen" && ti.Status == "done" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("task ring did not record a done npm.regen task; got %+v", recent)
+	}
+}
