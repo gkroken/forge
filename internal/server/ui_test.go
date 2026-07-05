@@ -354,6 +354,66 @@ func TestUIAdminNewRepo_Create_ProxyMissingUpstream(t *testing.T) {
 	assertContains(t, rw.Body.String(), "upstream")
 }
 
+func TestUIAdminNewRepo_Create_WithClaims(t *testing.T) {
+	srv := newUIServer(t)
+	h := srv.Routes()
+	rw := uiPost(t, h, "/ui/admin/repos/new", url.Values{
+		"name": {"claimed-hosted"}, "format": {"npm"}, "kind": {"hosted"},
+		"claims": {"@acme/**\n  left-pad  \n\n"},
+	})
+	if rw.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d: %s", rw.Code, rw.Body.String())
+	}
+	rp, _ := srv.Repos.Get("claimed-hosted")
+	if len(rp.Claims) != 2 || rp.Claims[0] != "@acme/**" || rp.Claims[1] != "left-pad" {
+		t.Errorf("claims = %v, want [@acme/** left-pad]", rp.Claims)
+	}
+}
+
+func TestUIAdminNewRepo_Create_MalformedClaim_ReRenders(t *testing.T) {
+	h := newUIServer(t).Routes()
+	rw := uiPost(t, h, "/ui/admin/repos/new", url.Values{
+		"name": {"x"}, "format": {"npm"}, "kind": {"hosted"},
+		"claims": {"a**b"},
+	})
+	if rw.Code != http.StatusOK {
+		t.Fatalf("expected 200 re-render, got %d", rw.Code)
+	}
+	body := rw.Body.String()
+	assertContains(t, body, "invalid claim")
+	assertContains(t, body, "a**b") // user input survives the re-render
+}
+
+func TestUIAdminNewRepo_Create_GuardOptOut(t *testing.T) {
+	srv := newUIServer(t)
+	h := srv.Routes()
+	// Unchecked toggle submits only the hidden "false".
+	rw := uiPost(t, h, "/ui/admin/repos/new", url.Values{
+		"name": {"lax-proxy"}, "format": {"npm"}, "kind": {"proxy"},
+		"upstream": {"https://registry.npmjs.org"}, "depConfusionGuard": {"false"},
+	})
+	if rw.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d: %s", rw.Code, rw.Body.String())
+	}
+	rp, _ := srv.Repos.Get("lax-proxy")
+	if rp.DepGuardEnabled() {
+		t.Error("guard opt-out not persisted")
+	}
+
+	// Checked toggle submits ["true","false"] → stored as nil (default on).
+	rw = uiPost(t, h, "/ui/admin/repos/new", url.Values{
+		"name": {"strict-proxy"}, "format": {"npm"}, "kind": {"proxy"},
+		"upstream": {"https://registry.npmjs.org"}, "depConfusionGuard": {"true", "false"},
+	})
+	if rw.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d", rw.Code)
+	}
+	rp, _ = srv.Repos.Get("strict-proxy")
+	if rp.DepConfusionGuard != nil {
+		t.Errorf("enabled guard should persist as nil (default), got %v", *rp.DepConfusionGuard)
+	}
+}
+
 // ── /ui/admin/repos/{name}/edit ───────────────────────────────────────────────
 
 func TestUIAdminEditRepo_Form(t *testing.T) {

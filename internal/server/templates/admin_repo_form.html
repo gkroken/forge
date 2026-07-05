@@ -99,6 +99,24 @@
     </div>
   </fieldset>
 
+  <fieldset id="g-claims" data-kind-show="hosted">
+    <legend>Namespace claims <span class="form-hint-inline">(dependency-confusion protection)</span></legend>
+    <div class="form-group">
+      <label for="f-claims">Owned name patterns <span class="form-hint-inline">one per line</span></label>
+      <textarea id="f-claims" name="claims" rows="3" placeholder="@acme/**&#10;com/acme/**">{{join .Repo.Claims "\n"}}</textarea>
+      <p class="form-hint">Names matching a claim are never fetched from an upstream registry: proxy members of any group containing this repo skip them, and same-format proxy repos refuse them with 403. Use this to protect names before their first publish — names already published here are protected in groups automatically.</p>
+    </div>
+  </fieldset>
+
+  <div class="form-group" id="g-depguard" data-kind-show="proxy group">
+    <label class="checkbox-label">
+      <input type="checkbox" name="depConfusionGuard" value="true"{{if .Repo.DepGuardEnabled}} checked{{end}}>
+      <input type="hidden" name="depConfusionGuard" value="false">
+      Dependency-confusion guard
+    </label>
+    <p class="form-hint">Never serve names owned by a hosted repository from upstream. Disable only to deliberately merge internal and public versions of the same package names.</p>
+  </div>
+
   <div class="form-actions">
     <button type="submit" class="btn btn-primary">
       {{if .IsEdit}}Save changes{{else}}Create repository{{end}}

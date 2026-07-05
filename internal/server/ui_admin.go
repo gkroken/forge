@@ -14,6 +14,28 @@ import (
 
 // parseBoolField reads a hidden+checkbox pair where the checkbox has the same
 // name but comes first; returns nil if the field is absent from the form.
+// overlayDepGuardFields applies the dependency-confusion form fields. The
+// kind-scoped sections are only hidden client-side, so hidden inputs still
+// submit: claims apply to hosted repos only (cleared otherwise) and the guard
+// toggle to group/proxy only. An enabled guard is stored as nil (the default)
+// so only explicit opt-outs persist.
+func overlayDepGuardFields(r *http.Request, rp *repo.Repository) {
+	rp.Claims = nil
+	if rp.Kind == repo.Hosted {
+		for _, line := range strings.Split(r.FormValue("claims"), "\n") {
+			if t := strings.TrimSpace(line); t != "" {
+				rp.Claims = append(rp.Claims, t)
+			}
+		}
+	}
+	rp.DepConfusionGuard = nil
+	if rp.Kind == repo.Group || rp.Kind == repo.Proxy {
+		if v := parseBoolField(r, "depConfusionGuard"); v != nil && !*v {
+			rp.DepConfusionGuard = v
+		}
+	}
+}
+
 func parseBoolField(r *http.Request, name string) *bool {
 	vals, ok := r.Form[name]
 	if !ok || len(vals) == 0 {
@@ -547,6 +569,7 @@ func (s *Server) processRepoForm(w http.ResponseWriter, r *http.Request, existin
 		rp.ContentMaxAge = &ttl
 	}
 	rp.CleanupPolicyName = strings.TrimSpace(r.FormValue("cleanupPolicyName"))
+	overlayDepGuardFields(r, &rp)
 
 	// BE-D fields — only overlay when the form field was actually submitted.
 	if v := r.FormValue("enabled"); v != "" {
@@ -633,6 +656,7 @@ func (s *Server) reRenderForm(w http.ResponseWriter, r *http.Request, name strin
 	rp.ProxyAuth = r.FormValue("proxyAuth")
 	rp.AnonymousRead = r.FormValue("anonymousRead") == "on"
 	rp.CleanupPolicyName = strings.TrimSpace(r.FormValue("cleanupPolicyName"))
+	overlayDepGuardFields(r, &rp)
 	if v := r.FormValue("enabled"); v != "" {
 		rp.Enabled = v == "true"
 	}
