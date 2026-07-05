@@ -42,11 +42,13 @@ func TestRepoAdmin_Scoping(t *testing.T) {
 		{"update own repo", "PUT", "/api/v1/repos/npm-hosted", repoAdmin, repoBody, http.StatusOK},
 		{"access of own repo", "GET", "/api/v1/repos/npm-hosted/access", repoAdmin, "", http.StatusOK},
 		{"verify report of own repo", "GET", "/api/v1/repos/npm-hosted/verify", repoAdmin, "", http.StatusOK},
+		{"trash list of own repo", "GET", "/api/v1/repos/npm-hosted/trash", repoAdmin, "", http.StatusOK},
 
 		// Another repo: denied.
 		{"get other repo", "GET", "/api/v1/repos/maven-hosted", repoAdmin, "", http.StatusForbidden},
 		{"cleanup other repo", "POST", "/api/v1/repos/maven-hosted/cleanup", repoAdmin, "", http.StatusForbidden},
 		{"verify other repo", "POST", "/api/v1/repos/maven-hosted/verify", repoAdmin, "", http.StatusForbidden},
+		{"trash of other repo", "GET", "/api/v1/repos/maven-hosted/trash", repoAdmin, "", http.StatusForbidden},
 
 		// System-level routes: repo admin is not enough.
 		{"list repos", "GET", "/api/v1/repos", repoAdmin, "", http.StatusForbidden},

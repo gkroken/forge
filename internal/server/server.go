@@ -335,6 +335,20 @@ func (s *Server) walkBlobSizes() {
 	}
 }
 
+// triggerWalk kicks off an immediate, non-blocking blob re-walk so storage- and
+// quota-dependent surfaces reflect a change (e.g. a trash/restore/purge that
+// moved bytes in or out of a repo's key space) without waiting for the 5-minute
+// tick. No-op when the walker isn't running (eval / tests).
+func (s *Server) triggerWalk() {
+	if s.walkTrigger == nil {
+		return
+	}
+	select {
+	case s.walkTrigger <- struct{}{}:
+	default: // a walk is already queued
+	}
+}
+
 // GetBlobSizes returns the most recent cached blob size snapshot.
 func (s *Server) GetBlobSizes() BlobSizes {
 	s.blobMu.RLock()

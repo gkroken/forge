@@ -281,6 +281,15 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// /api/v1/repos/{name}/trash[/restore|/purge] — soft-delete trash management.
+	if repoName, rest, found := strings.Cut(name, "/"); found && (rest == "trash" || strings.HasPrefix(rest, "trash/")) {
+		if !s.Enforcer.RequireRepoAdmin(w, r, repoName) {
+			return
+		}
+		s.handleTrash(w, r, repoName, strings.TrimPrefix(strings.TrimPrefix(rest, "trash"), "/"))
+		return
+	}
+
 	// /api/v1/repos/{name}/cache/{key...} — expire a single proxy cache entry.
 	if repoName, rest, found := strings.Cut(name, "/"); found && strings.HasPrefix(rest, "cache/") {
 		if !s.Enforcer.RequireRepoAdmin(w, r, repoName) {
@@ -495,21 +504,105 @@ func (s *Server) handleDeleteComponent(w http.ResponseWriter, r *http.Request, n
 		http.Error(w, "name and version are required", http.StatusBadRequest)
 		return
 	}
-	res, err := cleanup.DeleteVersion(rp.Name, rp.Format, component, version, s.Blob, s.Meta)
+	// Soft-delete: move the component's blobs to trash and capture the meta
+	// records for a faithful restore. Trash frees quota immediately (it lives
+	// outside the repo's key space); disk is reclaimed on purge or retention.
+	ts, err := cleanup.TrashVersion(rp.Name, rp.Format, component, version, actorLabel(r, s.Auth), s.Blob, s.Meta)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
+	s.triggerWalk() // reflect the freed quota promptly
 	if s.Webhooks != nil {
 		ev := webhook.Event{
 			Type: webhook.EventArtifactDeleted, Repo: rp.Name, Format: rp.Format,
 			Path: component, Actor: actorLabel(r, s.Auth), Timestamp: time.Now().UTC(),
-			Data: map[string]any{"version": version},
+			Data: map[string]any{"version": version, "trashId": ts.ID},
 		}
 		go s.Webhooks.Dispatch(context.Background(), ev)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(res)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"deleted": 1, "trashId": ts.ID, "bytes": ts.Bytes, "restorable": true,
+	})
+}
+
+// handleTrash serves the soft-delete trash sub-routes for a repository:
+//
+//	GET  /api/v1/repos/{name}/trash          — list tombstones (newest first)
+//	POST /api/v1/repos/{name}/trash/restore?id=  — restore a trashed version
+//	POST /api/v1/repos/{name}/trash/purge?id=    — hard-delete one (or ?id=all)
+func (s *Server) handleTrash(w http.ResponseWriter, r *http.Request, repoName, action string) {
+	if _, ok := s.Repos.Get(repoName); !ok {
+		http.Error(w, "repository not found: "+repoName, http.StatusNotFound)
+		return
+	}
+	switch action {
+	case "":
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		list, err := cleanup.ListTrash(s.Meta, repoName)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if list == nil {
+			list = []cleanup.Tombstone{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"trash": list})
+
+	case "restore":
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		id := r.URL.Query().Get("id")
+		ts, err := cleanup.RestoreVersion(s.Meta, s.Blob, id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		s.triggerWalk() // restored bytes re-enter the quota
+		s.enqueueVulnScan(repoName) // rescan the re-added version
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"restored": true, "component": ts.Component, "version": ts.Version,
+		})
+
+	case "purge":
+		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		id := r.URL.Query().Get("id")
+		if id == "" || id == "all" {
+			list, _ := cleanup.ListTrash(s.Meta, repoName)
+			var freed int64
+			var n int
+			for _, ts := range list {
+				if f, err := cleanup.PurgeTombstone(s.Meta, s.Blob, ts.ID); err == nil {
+					freed += f
+					n++
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"purged": n, "freedBytes": freed})
+			return
+		}
+		freed, err := cleanup.PurgeTombstone(s.Meta, s.Blob, id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"purged": 1, "freedBytes": freed})
+
+	default:
+		http.NotFound(w, r)
+	}
 }
 
 // handleCleanupPolicies dispatches /api/v1/cleanup-policies and
