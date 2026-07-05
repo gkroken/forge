@@ -204,9 +204,23 @@ Rejected pure single-pane (PG metrics = anti-pattern) and pure per-pod (loses du
      webhook, `forge_promotions_total`. UI: Promote… button (Content tab, CSP-safe delegation) +
      immutable toggle (repo form) + provenance block (browse detail). Live 24/24
      (`scripts/promote-validate.sh`). Full record in `~/.claude` memory `project-promotion`.
+  **7.5 CI HEALTH — DO BEFORE #8.** GitHub Actions CI has been red for weeks (every push). Six
+     failing jobs as of 2026-07-05 (b5096be): coverage gate (68.7% < 75% total; per-pkg proxy 71.7 /
+     indexer 61.1 / server 60.8 all < 85%), gosec (12 findings), go mod tidy (go.sum drift), Trivy
+     (4 HIGH in golang.org/x/net v0.54.0 → bump 0.55.0), npm-conformance (TestHelm_Group_Resolve —
+     invalid index.yaml at scale, likely a REAL helm-group escaping bug), kind HPA/PDB dry-run
+     (helm template needs storage.type=external). Coverage must be filled with SIGNIFICANT tests of
+     valuable behaviour (server handlers, proxy CB/singleflight, indexer worker), NOT vapor-tests.
+     Full grounded breakdown in `~/.claude` memory `project-ci`.
   8. **PyPI** — capstone extensibility test, LAST before ship. Success = touches only
      `internal/format/pypi/` + `reg.Register` + main.go repo entries, ZERO routing/blob/meta/repo-
      model/auth/vuln-spine changes; gets OSV scanning free via `VulnCoordinates`.
+  - **DEFERRED (own track, not bundled): audit all admin-API mutations.** Component delete/restore/
+     purge are now audited (commit b5096be) + promote/quota-block already were, but broad admin
+     mutations — repo create/update/delete, cleanup/security policy edits, token issue/revoke, user
+     enable/disable, webhook CRUD — still leave no audit-log trace (the middleware only audits
+     /repository/ + /v2/ writes). Add explicit `recordRepoAudit`-style rows at those handlers for a
+     complete compliance trail. Low-risk, high-value, but its own scoped change.
   9. **Artifact provenance (SBOM/sig/attestation for STORED artifacts) + formal release/support
      policy** — later, when courting external adopters. (Forge already signs its own CI images.)
   Full decision rationale in `~/.claude` memory `project-nexus-roadmap`. Old candidates folded in:
