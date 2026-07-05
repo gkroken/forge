@@ -460,6 +460,12 @@ func buildRepoActivity(log obs.AuditSink, repoName string) []auditRow {
 		if action == "" {
 			action = e.Method
 		}
+		// Admin-lifecycle rows (delete/restore/purge/promote) carry a Detail that
+		// leads with the real verb; use it so a POST restore doesn't read
+		// "Published". Downloads/uploads keep their method-derived verb.
+		if v := leadingVerb(e.Detail); v != "" {
+			action = v
+		}
 		if e.Status >= 400 {
 			action = "Denied"
 		}
@@ -476,6 +482,25 @@ func buildRepoActivity(log obs.AuditSink, repoName string) []auditRow {
 		}
 	}
 	return activity
+}
+
+// leadingVerb maps the first word of a curated audit Detail to a display verb
+// for the activity card, so a structured lifecycle event reads with the action
+// it actually performed rather than its HTTP method. Returns "" for details
+// that don't start with a known verb (their method-derived verb is kept).
+func leadingVerb(detail string) string {
+	first, _, _ := strings.Cut(detail, " ")
+	switch strings.TrimSuffix(first, ":") {
+	case "deleted":
+		return "Deleted"
+	case "restored":
+		return "Restored"
+	case "purged":
+		return "Purged"
+	case "promote":
+		return "Promoted"
+	}
+	return ""
 }
 
 // activityTarget is the human "what" for an audit row: the curated Detail note

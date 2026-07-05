@@ -498,6 +498,24 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request, name stri
 	json.NewEncoder(w).Encode(result)
 }
 
+// recordRepoAudit appends one durable audit row for an admin-API action on a
+// repository (component delete, trash restore/purge, …). The request path
+// carries the repo name so the per-repo activity views pick it up; Detail is the
+// human note shown as the "what". No-op when auditing is off.
+func (s *Server) recordRepoAudit(r *http.Request, status int, detail string) {
+	if s.AuditLog == nil {
+		return
+	}
+	s.AuditLog.Append(obs.AuditEntry{
+		Timestamp: time.Now().UTC(),
+		Actor:     actorLabel(r, s.Auth),
+		Method:    r.Method,
+		Path:      r.URL.Path,
+		Status:    status,
+		Detail:    detail,
+	})
+}
+
 // handleDeleteComponent deletes one component+version from a hosted repo.
 // DELETE /api/v1/repos/{name}/component?name={component}&version={version}
 func (s *Server) handleDeleteComponent(w http.ResponseWriter, r *http.Request, name string) {
@@ -529,6 +547,7 @@ func (s *Server) handleDeleteComponent(w http.ResponseWriter, r *http.Request, n
 		return
 	}
 	s.triggerWalk() // reflect the freed quota promptly
+	s.recordRepoAudit(r, http.StatusOK, fmt.Sprintf("deleted %s@%s → trash (%s)", component, version, humanBytes(ts.Bytes)))
 	if s.Webhooks != nil {
 		ev := webhook.Event{
 			Type: webhook.EventArtifactDeleted, Repo: rp.Name, Format: rp.Format,
@@ -583,6 +602,7 @@ func (s *Server) handleTrash(w http.ResponseWriter, r *http.Request, repoName, a
 		}
 		s.triggerWalk() // restored bytes re-enter the quota
 		s.enqueueVulnScan(repoName) // rescan the re-added version
+		s.recordRepoAudit(r, http.StatusOK, fmt.Sprintf("restored %s@%s from trash", ts.Component, ts.Version))
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"restored": true, "component": ts.Component, "version": ts.Version,
@@ -604,15 +624,19 @@ func (s *Server) handleTrash(w http.ResponseWriter, r *http.Request, repoName, a
 					n++
 				}
 			}
+			s.recordRepoAudit(r, http.StatusOK, fmt.Sprintf("purged %d trash entries (%s freed)", n, humanBytes(freed)))
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{"purged": n, "freedBytes": freed})
 			return
 		}
+		// Capture the coordinates before the tombstone is gone, for the audit note.
+		ts, _, _ := cleanup.GetTombstone(s.Meta, id)
 		freed, err := cleanup.PurgeTombstone(s.Meta, s.Blob, id)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
+		s.recordRepoAudit(r, http.StatusOK, fmt.Sprintf("purged %s@%s from trash (%s freed)", ts.Component, ts.Version, humanBytes(freed)))
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"purged": 1, "freedBytes": freed})
 
