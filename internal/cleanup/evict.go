@@ -13,6 +13,11 @@ import (
 // format-aware version retention for hosted repos, blob-TTL cache eviction for
 // proxy repos. Group repos own no storage and are a no-op.
 func RunForRepo(r repo.Repository, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (Result, error) {
+	// An immutable hosted repo is write-once: retaining N versions or deleting
+	// aged artifacts would mutate a released store, so cleanup does nothing.
+	if r.IsImmutable() {
+		return Result{}, nil
+	}
 	switch r.Kind {
 	case repo.Proxy:
 		return EvictProxyCache(r.Name, p, b, m)
@@ -24,6 +29,9 @@ func RunForRepo(r repo.Repository, p *repo.CleanupPolicy, b blob.Store, m meta.S
 
 // DryRunForRepo previews RunForRepo without deleting anything.
 func DryRunForRepo(r repo.Repository, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (DryRunResult, error) {
+	if r.IsImmutable() {
+		return DryRunResult{Candidates: []Candidate{}}, nil
+	}
 	switch r.Kind {
 	case repo.Proxy:
 		return EvictProxyCacheDryRun(r.Name, p, b, m)

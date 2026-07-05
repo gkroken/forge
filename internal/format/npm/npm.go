@@ -46,6 +46,7 @@ import (
 	"strings"
 	"time"
 
+	"forge/internal/blob"
 	"forge/internal/format"
 	"forge/internal/indexer"
 	"forge/internal/proxy"
@@ -166,6 +167,10 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, c *format.Cont
 			return
 		}
 		if _, err := c.Blob.Put(c.Key(pkg+"/-/"+fname), bytes.NewReader(data)); err != nil {
+			if errors.Is(err, blob.ErrImmutable) {
+				http.Error(w, err.Error(), http.StatusConflict)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

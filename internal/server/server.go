@@ -501,6 +501,13 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		c.MemberFilter = guard.memberFilter
 		c.NameClaimed = guard.claimedName
 	}
+	// Write-once enforcement: an immutable hosted repo rejects overwrites of an
+	// existing artifact at the blob layer (ErrImmutable → 409 in the handler).
+	// OCI is never routed here, so its content-addressed shared-layer re-pushes
+	// stay unaffected.
+	if rp.IsImmutable() {
+		c.Blob = blob.Immutable(s.Blob)
+	}
 	h.Serve(w, r, c)
 }
 

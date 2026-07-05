@@ -498,6 +498,10 @@ func (s *Server) handleDeleteComponent(w http.ResponseWriter, r *http.Request, n
 		http.Error(w, "repository not found: "+name, http.StatusNotFound)
 		return
 	}
+	if rp.IsImmutable() {
+		http.Error(w, `{"error":"repository is immutable; artifacts are write-once and cannot be deleted"}`, http.StatusConflict)
+		return
+	}
 	component := r.URL.Query().Get("name")
 	version := r.URL.Query().Get("version")
 	if component == "" || version == "" {

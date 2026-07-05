@@ -143,7 +143,9 @@
       "Bash(python3 /tmp/vshot.py \"http://localhost:8080/ui/admin/repos/helm-proxy/edit?tab=activity\" /tmp/helm_activity.png)",
       "Bash(bash test.sh)",
       "Bash(rm -rf /tmp/forge-ui)",
-      "Bash(/home/gakro/projects/forge/forge -addr :8080 -data /tmp/forge-ui)"
+      "Bash(/home/gakro/projects/forge/forge -addr :8080 -data /tmp/forge-ui)",
+      "Bash(command -v trivy)",
+      "Bash(trivy --version)"
     ]
   }
 }

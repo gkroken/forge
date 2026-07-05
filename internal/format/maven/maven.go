@@ -142,6 +142,10 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 func (h *Handler) put(w http.ResponseWriter, r *http.Request, c *format.Context) {
 	info, err := c.Blob.Put(c.Key(c.Sub), r.Body)
 	if err != nil {
+		if errors.Is(err, blob.ErrImmutable) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

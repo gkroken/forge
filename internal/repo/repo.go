@@ -138,7 +138,21 @@ type Repository struct {
 	TimeoutSecs    *int           `json:"timeoutSecs,omitempty"`   // nil = 30s
 	Retries        *int           `json:"retries,omitempty"`       // nil = DefaultMaxRetries (2)
 	QuotaGB        *float64       `json:"quotaGB,omitempty"`       // nil = unlimited
+
+	// Immutable makes a HOSTED repository write-once: an existing
+	// component+version can never be overwritten (the blob store rejects a Put
+	// to an occupied key with blob.ErrImmutable → HTTP 409), soft-delete is
+	// refused (which would let a delete-then-republish change released bytes),
+	// and automated cleanup does not run (retaining N versions contradicts
+	// write-once). Publishing a NEW version is still allowed. This is the
+	// natural target for a promoted release: once promoted, it cannot be
+	// mutated. Only meaningful on hosted repos; ignored on proxy/group.
+	Immutable bool `json:"immutable,omitempty"`
 }
+
+// IsImmutable reports whether write-once enforcement is in force for this
+// repository (hosted repos only).
+func (r Repository) IsImmutable() bool { return r.Immutable && r.Kind == Hosted }
 
 // DepGuardEnabled reports whether dependency-confusion protection is in force
 // for this (group or proxy) repository. Unset means enabled.

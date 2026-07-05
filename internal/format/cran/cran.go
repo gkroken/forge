@@ -37,6 +37,7 @@ import (
 	"strings"
 	"time"
 
+	"forge/internal/blob"
 	"forge/internal/format"
 	"forge/internal/proxy"
 	"forge/internal/repo"
@@ -126,6 +127,10 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, c *format.Cont
 		return
 	}
 	if _, err := c.Blob.Put(c.Key(c.Sub), bytes.NewReader(body)); err != nil {
+		if errors.Is(err, blob.ErrImmutable) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -705,6 +710,10 @@ func (h *Handler) publishBin(w http.ResponseWriter, r *http.Request, c *format.C
 		rec = pkgRecord{Package: pkg, Version: ver}
 	}
 	if _, err := c.Blob.Put(c.Key(c.Sub), bytes.NewReader(body)); err != nil {
+		if errors.Is(err, blob.ErrImmutable) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

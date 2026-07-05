@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,6 +30,7 @@ import (
 	"strings"
 	"time"
 
+	"forge/internal/blob"
 	"forge/internal/format"
 	"forge/internal/proxy"
 	"forge/internal/repo"
@@ -94,6 +96,10 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, c *format.Conte
 	filename := fmt.Sprintf("%s-%s.tgz", meta.Name, meta.Version)
 	info, err := c.Blob.Put(c.Key(filename), bytes.NewReader(body))
 	if err != nil {
+		if errors.Is(err, blob.ErrImmutable) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
