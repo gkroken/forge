@@ -377,10 +377,13 @@
       <div class="rail-card">
         <div class="rail-card-title"><span class="ms" style="font-size:15px;vertical-align:middle;margin-right:5px">receipt_long</span>Recent activity</div>
         {{range .RecentActivity}}
-        <div class="rail-activity-row">
-          <span class="rail-activity-time">{{.Time}}</span>
-          <span class="rail-activity-action">{{.Action}}</span>
-          <span class="badge {{if .OK}}badge-ok{{else}}badge-err{{end}}" style="padding:1px 5px;font-size:10px">{{.Status}}</span>
+        <div class="rail-activity-item">
+          <div class="rail-activity-row">
+            <span class="rail-activity-time">{{.Time}}</span>
+            <span class="rail-activity-action">{{.Action}}</span>
+            <span class="badge {{if .OK}}badge-ok{{else}}badge-err{{end}}" style="padding:1px 5px;font-size:10px">{{.Status}}</span>
+          </div>
+          {{if .Target}}<div class="rail-activity-target" title="{{.Target}}">{{.Target}}</div>{{end}}
         </div>
         {{end}}
       </div>

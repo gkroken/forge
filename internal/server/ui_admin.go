@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"forge/internal/auth"
+	"forge/internal/obs"
 	"forge/internal/proxy"
 	"forge/internal/repo"
 )
@@ -438,6 +439,69 @@ func (s *Server) uiAdminEditRepo(w http.ResponseWriter, r *http.Request, name st
 	s.renderRepoConfig(w, rp, tab, "", r.URL.Query().Get("flash"))
 }
 
+// buildRepoActivity assembles the last few audit events touching a repository
+// for the Settings rail card: a semantic verb, the artifact/target it acted on,
+// and the status. It reads the same audit ring the Activity tab paginates.
+func buildRepoActivity(log obs.AuditSink, repoName string) []auditRow {
+	if log == nil {
+		return nil
+	}
+	needle := "/" + repoName
+	methodVerbs := map[string]string{
+		"POST": "Published", "PUT": "Uploaded",
+		"DELETE": "Deleted", "PATCH": "Updated", "GET": "Downloaded",
+	}
+	var activity []auditRow
+	for _, e := range log.Recent(100) {
+		if !strings.Contains(e.Path, needle) {
+			continue
+		}
+		action := methodVerbs[e.Method]
+		if action == "" {
+			action = e.Method
+		}
+		if e.Status >= 400 {
+			action = "Denied"
+		}
+		activity = append(activity, auditRow{
+			Time:   e.Timestamp.UTC().Format("15:04:05"),
+			Actor:  e.Actor,
+			Action: action,
+			Target: activityTarget(e, repoName),
+			Status: strconv.Itoa(e.Status),
+			OK:     e.Status < 400,
+		})
+		if len(activity) == 5 {
+			break
+		}
+	}
+	return activity
+}
+
+// activityTarget is the human "what" for an audit row: the curated Detail note
+// when the event carries one (quota block, vuln-policy decision, promotion),
+// otherwise the request path with the repository's own routing prefix stripped
+// so only the artifact coordinates remain (e.g. "com/acme/app/1.0/app-1.0.jar",
+// "component?name=…&version=…"). The full string is kept; the template
+// ellipsizes and shows it in full on hover.
+func activityTarget(e obs.AuditEntry, repoName string) string {
+	if e.Detail != "" {
+		return e.Detail
+	}
+	for _, pre := range []string{
+		"/repository/" + repoName + "/",
+		"/v2/" + repoName + "/",
+		"/api/v1/repos/" + repoName + "/",
+	} {
+		if strings.HasPrefix(e.Path, pre) {
+			return strings.TrimPrefix(e.Path, pre)
+		}
+	}
+	// Fall back to the path minus a leading routing prefix (group members etc.).
+	p := strings.TrimPrefix(e.Path, "/repository/")
+	return strings.TrimPrefix(p, "/v2/")
+}
+
 func (s *Server) renderRepoConfig(w http.ResponseWriter, rp repo.Repository, tab, errMsg, flash string) {
 	bsizes := s.GetBlobSizes()
 	sizeBytes := bsizes.ByRepo[rp.Name]
@@ -454,36 +518,7 @@ func (s *Server) renderRepoConfig(w http.ResponseWriter, rp repo.Repository, tab
 		}
 	}
 
-	var activity []auditRow
-	if s.AuditLog != nil {
-		needle := "/" + rp.Name
-		methodVerbs := map[string]string{
-			"POST": "Published", "PUT": "Uploaded",
-			"DELETE": "Deleted", "PATCH": "Updated", "GET": "Downloaded",
-		}
-		for _, e := range s.AuditLog.Recent(100) {
-			if !strings.Contains(e.Path, needle) {
-				continue
-			}
-			action := methodVerbs[e.Method]
-			if action == "" {
-				action = e.Method
-			}
-			if e.Status >= 400 {
-				action = "Denied"
-			}
-			activity = append(activity, auditRow{
-				Time:   e.Timestamp.UTC().Format("15:04:05"),
-				Actor:  e.Actor,
-				Action: action,
-				Status: strconv.Itoa(e.Status),
-				OK:     e.Status < 400,
-			})
-			if len(activity) == 5 {
-				break
-			}
-		}
-	}
+	activity := buildRepoActivity(s.AuditLog, rp.Name)
 
 	render(w, tmplRepoConfig, "admin_shell.html", repoConfigPage{
 		Title:          rp.Name + " — Settings",

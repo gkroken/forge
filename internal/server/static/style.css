@@ -1310,10 +1310,12 @@ label.grant-action input { margin: 0; }
 #cache-chart-headline { font-family: var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: var(--track-tight); }
 .rail-progress-bar  { height: 4px; border-radius: 2px; background: var(--border); margin-top: 10px; overflow: hidden; }
 .rail-progress-fill { height: 100%; background: var(--accent); border-radius: 2px; }
-.rail-activity-row  { display: flex; align-items: center; gap: 6px; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 11.5px; }
-.rail-activity-row:last-child { border-bottom: none; }
+.rail-activity-item { padding: 5px 0; border-bottom: 1px solid var(--border); }
+.rail-activity-item:last-child { border-bottom: none; }
+.rail-activity-row  { display: flex; align-items: center; gap: 6px; font-size: 11.5px; }
 .rail-activity-time   { color: var(--text-muted); font-family: 'IBM Plex Mono', ui-monospace, monospace; flex-shrink: 0; }
 .rail-activity-action { flex: 1; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rail-activity-target { margin-top: 2px; padding-left: 2px; color: var(--text-muted); font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .badge-ok  { background: var(--alert-ok-bg);  color: var(--alert-ok-fg);  border-radius: 4px; }
 .badge-err { background: var(--alert-err-bg); color: var(--alert-err-fg); border-radius: 4px; }
 
