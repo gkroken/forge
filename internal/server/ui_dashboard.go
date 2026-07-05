@@ -348,9 +348,9 @@ func (s *Server) uiObservability(w http.ResponseWriter, r *http.Request) {
 			if e.Count == 0 {
 				continue
 			}
-			totalReqs += int64(e.Count)
+			totalReqs += int64(e.Count) // #nosec G115 -- HTTP request counter, bounded far below int64 max
 			if e.Code == "5xx" {
-				errReqs += int64(e.Count)
+				errReqs += int64(e.Count) // #nosec G115 -- HTTP request counter, bounded far below int64 max
 			}
 			breakdown = append(breakdown, statusSlice{
 				Code: e.Code, Label: e.Label, Pct: e.Pct,
@@ -606,9 +606,9 @@ func buildRequestBars(snap []obs.HourlyRequestBucket) ([]reqBar, int64, float64)
 		total := b.Requests
 		hitH := 0
 		if total > 0 && b.CacheHits > 0 {
-			hitH = int(b.CacheHits * 100 / maxTotal)
+			hitH = int(b.CacheHits * 100 / maxTotal) // #nosec G115 -- percentage 0..100, fits int
 		}
-		missH := int(total*100/maxTotal) - hitH
+		missH := int(total*100/maxTotal) - hitH // #nosec G115 -- percentage 0..100, fits int
 		if missH < 0 {
 			missH = 0
 		}

@@ -82,7 +82,7 @@ func (r KindResult) Changes() int { return r.Created + r.Updated + r.Deleted }
 // Load reads the file at path, expands ${VAR} env-var placeholders, and
 // unmarshals it as JSON. Referencing an undefined env var is an error.
 func Load(path string) (File, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) // #nosec G304 -- path is the operator-supplied -config file, not client input
 	if err != nil {
 		return File{}, fmt.Errorf("config: read %s: %w", path, err)
 	}

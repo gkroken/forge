@@ -140,8 +140,8 @@ func (f *FS) Capacity() (used, total int64, err error) {
 	if err = syscall.Statfs(f.root, &st); err != nil {
 		return 0, 0, err
 	}
-	total = int64(st.Blocks) * int64(st.Bsize)
-	avail := int64(st.Bavail) * int64(st.Bsize)
+	total = int64(st.Blocks) * int64(st.Bsize) // #nosec G115 -- disk block count × block size, no realistic int64 overflow
+	avail := int64(st.Bavail) * int64(st.Bsize) // #nosec G115 -- disk block count × block size, no realistic int64 overflow
 	used = total - avail
 	return used, total, nil
 }

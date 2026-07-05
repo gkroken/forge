@@ -31,6 +31,7 @@ type Executor interface {
 type osExecutor struct{ binary string }
 
 func (e *osExecutor) Run(ctx context.Context, env []string, args ...string) ([]byte, error) {
+	// #nosec G204 -- binary is operator-supplied via -trivy-binary; args are built internally, never from client input
 	cmd := exec.CommandContext(ctx, e.binary, args...)
 	if len(env) > 0 {
 		cmd.Env = append(os.Environ(), env...)

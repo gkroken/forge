@@ -134,6 +134,7 @@ func readGzipToEOF(c *format.Context, key string, bytesRead *int64) error {
 		return err
 	}
 	defer gz.Close()
+	// #nosec G110 -- output goes to io.Discard (no allocation); this is the CRC integrity check of an already-stored, upload-size-limited CRAN artifact
 	_, err = io.Copy(io.Discard, gz)
 	*bytesRead += cr.n
 	if err != nil {

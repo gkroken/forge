@@ -43,7 +43,7 @@ func expBackoff(attempt int) time.Duration {
 		d = maxBackoff
 	}
 	half := d / 2
-	return half + time.Duration(rand.Int64N(int64(half)+1))
+	return half + time.Duration(rand.Int64N(int64(half)+1)) // #nosec G404 -- retry jitter, not security-sensitive
 }
 
 // SchemaVersion is the delivered payload's envelope version. Bumped to 2 when

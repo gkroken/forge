@@ -171,6 +171,7 @@ func (s *PGAuditSink) Query(ctx context.Context, f AuditFilter) ([]AuditRecord, 
 		where = "WHERE " + strings.Join(conds, " AND ")
 	}
 	args = append(args, limit)
+	// #nosec G201 -- no user data interpolated: `where` is built from static clauses with $N placeholders; len(args) is an int placeholder index. Values pass through QueryContext args.
 	q := fmt.Sprintf(
 		`SELECT ts, actor, method, path, status, detail, id FROM audit_log %s ORDER BY ts DESC, id DESC LIMIT $%d`,
 		where, len(args))

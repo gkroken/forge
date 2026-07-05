@@ -267,6 +267,7 @@ func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 			s.uiComponent(w, r, repoName, sub)
 		} else {
 			// /ui/repos/{name} → redirect to the browse page
+			// #nosec G710 -- target has a fixed internal "/ui/browse/" prefix; repoName is a single non-slash path segment, so this is always same-origin
 			http.Redirect(w, r, "/ui/browse/"+repoName, http.StatusFound)
 		}
 	case p == "/browse":
