@@ -178,6 +178,64 @@ func TestGroup_PackagesMerge_WithProxy(t *testing.T) {
 	}
 }
 
+// With the dependency-confusion guard active (NameClaimed set), proxy members
+// must not contribute PACKAGES entries for hosted-owned or claimed names —
+// otherwise upstream can advertise a higher version of an internal package to
+// R's resolver.
+func TestGroup_PackagesMerge_DepGuardShadowsProtectedNames(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/src/contrib/PACKAGES" {
+			w.Header().Set("Content-Type", "text/plain")
+			fmt.Fprint(w,
+				"Package: local-pkg\nVersion: 9.9.9\nLicense: EVIL\n\n"+ // hosted-owned: shadowed
+					"Package: claimed-pkg\nVersion: 1.0.0\n\n"+ // claimed: dropped
+					"Package: free-pkg\nVersion: 2.0.0\n\n") // unprotected: kept
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m.PutJSON("cran-hosted+cran", "local-pkg_1.0.0", pkgRecord{Package: "local-pkg", Version: "1.0.0"})
+
+	mgr := repo.NewManager()
+	for _, r := range []repo.Repository{
+		{Name: "cran-hosted", Format: "cran", Kind: repo.Hosted},
+		{Name: "cran-proxy", Format: "cran", Kind: repo.Proxy, Upstream: upstream.URL},
+		{Name: "cran-group", Format: "cran", Kind: repo.Group, Members: []string{"cran-proxy", "cran-hosted"}},
+	} {
+		if err := mgr.Add(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	groupRepo, _ := mgr.Get("cran-group")
+	c := &format.Context{
+		Repo: groupRepo, Meta: m, Blob: b, Repos: mgr, HTTP: upstream.Client(),
+		NameClaimed: func(name string) bool { return name == "claimed-pkg" },
+	}
+
+	recs := New().groupPkgRecords(c)
+	got := map[string]string{}
+	for _, rec := range recs {
+		got[rec.Package] = rec.Version
+	}
+	// Proxy listed first in Members deliberately: hosted shadowing must not
+	// depend on member order.
+	if got["local-pkg"] != "1.0.0" {
+		t.Errorf("local-pkg = %q, want hosted 1.0.0 (upstream 9.9.9 must be shadowed)", got["local-pkg"])
+	}
+	if _, ok := got["claimed-pkg"]; ok {
+		t.Error("claimed-pkg leaked into the group index from the proxy member")
+	}
+	if got["free-pkg"] != "2.0.0" {
+		t.Errorf("free-pkg = %q, want 2.0.0 (unprotected names still merge)", got["free-pkg"])
+	}
+}
+
 // --- PACKAGES.rds tests ----------------------------------------------------
 
 // decompressRDS decompresses the gzip wrapper and returns raw XDR bytes.

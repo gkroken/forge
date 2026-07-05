@@ -351,9 +351,19 @@ func applyField(rec *chartRecord, kv string) {
 
 // groupRecords merges chart records from all members, deduplicating by
 // name+version (first member with a given name+version wins).
+//
+// When the dependency-confusion guard is active (c.NameClaimed != nil), proxy
+// members contribute no entries for chart names claimed by — or present in —
+// a hosted member: the merged index hands clients the upstream chart URLs
+// verbatim, so an unfiltered index would route downloads around forge
+// entirely. Two passes so hosted names shadow regardless of member order.
 func (h *Handler) groupRecords(c *format.Context) []chartRecord {
-	seen := map[string]bool{}
-	var all []chartRecord
+	type memberRecs struct {
+		proxy bool
+		recs  []chartRecord
+	}
+	var collected []memberRecs
+	hostedNames := map[string]bool{}
 	for _, name := range c.Repo.Members {
 		mc, ok := c.MemberCtx(name)
 		if !ok {
@@ -364,8 +374,21 @@ func (h *Handler) groupRecords(c *format.Context) []chartRecord {
 			recs = h.upstreamRecords(mc)
 		} else {
 			recs = h.records(mc)
+			if c.NameClaimed != nil {
+				for _, rec := range recs {
+					hostedNames[rec.Name] = true
+				}
+			}
 		}
-		for _, rec := range recs {
+		collected = append(collected, memberRecs{mc.Repo.Kind == repo.Proxy, recs})
+	}
+	seen := map[string]bool{}
+	var all []chartRecord
+	for _, m := range collected {
+		for _, rec := range m.recs {
+			if m.proxy && c.NameClaimed != nil && (hostedNames[rec.Name] || c.NameClaimed(rec.Name)) {
+				continue
+			}
 			key := rec.Name + "-" + rec.Version
 			if !seen[key] {
 				seen[key] = true

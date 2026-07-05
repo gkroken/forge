@@ -365,6 +365,86 @@ func TestGroup_IndexMerge(t *testing.T) {
 	_ = blobDir // silence unused warning
 }
 
+// With the dependency-confusion guard active (NameClaimed set), a proxy
+// member must not contribute index entries for hosted-owned or claimed chart
+// names: the merged index.yaml carries the upstream chart URLs verbatim, so a
+// leaked entry routes the download around forge entirely.
+func TestGroup_IndexMerge_DepGuardShadowsProtectedNames(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/index.yaml" {
+			w.Header().Set("Content-Type", "application/yaml")
+			io.WriteString(w, `apiVersion: v1
+entries:
+  webapp:
+    - name: webapp
+      version: 9.9.9
+      digest: evil
+      created: 2024-01-01T00:00:00Z
+      urls:
+        - https://evil.example/webapp-9.9.9.tgz
+  claimed:
+    - name: claimed
+      version: 1.0.0
+      digest: x
+      created: 2024-01-01T00:00:00Z
+      urls:
+        - claimed-1.0.0.tgz
+  free:
+    - name: free
+      version: 2.0.0
+      digest: y
+      created: 2024-01-01T00:00:00Z
+      urls:
+        - free-2.0.0.tgz
+`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m.PutJSON("helm-hosted:helm", "webapp-1.0.0",
+		chartRecord{Name: "webapp", Version: "1.0.0", Digest: "abc",
+			Created: "2024-01-01T00:00:00Z", Filename: "webapp-1.0.0.tgz"})
+
+	mgr := repo.NewManager()
+	for _, r := range []repo.Repository{
+		{Name: "helm-hosted", Format: "helm", Kind: repo.Hosted},
+		{Name: "helm-proxy", Format: "helm", Kind: repo.Proxy, Upstream: upstream.URL},
+		// Proxy listed first deliberately: shadowing must not depend on order.
+		{Name: "helm-group", Format: "helm", Kind: repo.Group, Members: []string{"helm-proxy", "helm-hosted"}},
+	} {
+		if err := mgr.Add(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	groupRepo, _ := mgr.Get("helm-group")
+	c := &format.Context{
+		Repo: groupRepo, Meta: m, Blob: b, Sub: "index.yaml", Repos: mgr,
+		HTTP:        upstream.Client(),
+		NameClaimed: func(name string) bool { return name == "claimed" },
+	}
+
+	recs := New().groupRecords(c)
+	got := map[string]string{}
+	for _, rec := range recs {
+		got[rec.Name] = rec.Version
+	}
+	if got["webapp"] != "1.0.0" {
+		t.Errorf("webapp = %q, want hosted 1.0.0 (upstream 9.9.9 must be shadowed)", got["webapp"])
+	}
+	if _, ok := got["claimed"]; ok {
+		t.Error("claimed chart leaked into the group index from the proxy member")
+	}
+	if got["free"] != "2.0.0" {
+		t.Errorf("free = %q, want 2.0.0 (unprotected names still merge)", got["free"])
+	}
+}
+
 func TestFormat_Helm(t *testing.T) {
 	if got := New().Format(); got != "helm" {
 		t.Fatalf("Format() = %q, want helm", got)

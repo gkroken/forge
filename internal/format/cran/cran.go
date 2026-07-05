@@ -244,8 +244,22 @@ func (h *Handler) pkgRecords(c *format.Context) []pkgRecord {
 // For proxy members the upstream PACKAGES file is fetched and parsed so the
 // group index reflects the full upstream catalogue, not just locally cached tarballs.
 func (h *Handler) groupPkgRecords(c *format.Context) []pkgRecord {
-	seen := map[string]bool{}
-	var all []pkgRecord
+	return h.mergeGroupRecords(c, h.upstreamPkgRecords, h.pkgRecords)
+}
+
+// mergeGroupRecords is the shared group index merge for source and binary
+// PACKAGES. When the dependency-confusion guard is active (c.NameClaimed !=
+// nil), proxy members contribute no entries for package names claimed by — or
+// present in — a hosted member, so upstream can never advertise a higher
+// version of an internally-owned package to R's resolver. Two passes so
+// hosted names shadow regardless of member order.
+func (h *Handler) mergeGroupRecords(c *format.Context, fromProxy, fromHosted func(*format.Context) []pkgRecord) []pkgRecord {
+	type memberRecs struct {
+		proxy bool
+		recs  []pkgRecord
+	}
+	var collected []memberRecs
+	hostedNames := map[string]bool{}
 	for _, name := range c.Repo.Members {
 		mc, ok := c.MemberCtx(name)
 		if !ok {
@@ -253,11 +267,24 @@ func (h *Handler) groupPkgRecords(c *format.Context) []pkgRecord {
 		}
 		var recs []pkgRecord
 		if mc.Repo.Kind == repo.Proxy {
-			recs = h.upstreamPkgRecords(mc)
+			recs = fromProxy(mc)
 		} else {
-			recs = h.pkgRecords(mc)
+			recs = fromHosted(mc)
+			if c.NameClaimed != nil {
+				for _, rec := range recs {
+					hostedNames[rec.Package] = true
+				}
+			}
 		}
-		for _, rec := range recs {
+		collected = append(collected, memberRecs{mc.Repo.Kind == repo.Proxy, recs})
+	}
+	seen := map[string]bool{}
+	var all []pkgRecord
+	for _, m := range collected {
+		for _, rec := range m.recs {
+			if m.proxy && c.NameClaimed != nil && (hostedNames[rec.Package] || c.NameClaimed(rec.Package)) {
+				continue
+			}
 			key := rec.Package + "_" + rec.Version
 			if !seen[key] {
 				seen[key] = true
@@ -750,29 +777,9 @@ func (h *Handler) groupDownloadBin(w http.ResponseWriter, c *format.Context) {
 // a given platform+rver, deduplicating by Package_Version (first member wins).
 // For proxy members the upstream binary PACKAGES file is fetched and parsed.
 func (h *Handler) groupBinPkgRecords(c *format.Context, platform, rver string) []pkgRecord {
-	seen := map[string]bool{}
-	var all []pkgRecord
-	for _, name := range c.Repo.Members {
-		mc, ok := c.MemberCtx(name)
-		if !ok {
-			continue
-		}
-		var recs []pkgRecord
-		if mc.Repo.Kind == repo.Proxy {
-			recs = h.upstreamBinPkgRecords(mc, platform, rver)
-		} else {
-			recs = h.binPkgRecords(mc, platform, rver)
-		}
-		for _, rec := range recs {
-			key := rec.Package + "_" + rec.Version
-			if !seen[key] {
-				seen[key] = true
-				all = append(all, rec)
-			}
-		}
-	}
-	sort.Slice(all, func(i, j int) bool { return all[i].Package < all[j].Package })
-	return all
+	return h.mergeGroupRecords(c,
+		func(mc *format.Context) []pkgRecord { return h.upstreamBinPkgRecords(mc, platform, rver) },
+		func(mc *format.Context) []pkgRecord { return h.binPkgRecords(mc, platform, rver) })
 }
 
 // upstreamBinPkgRecords fetches the upstream binary PACKAGES file for a proxy
