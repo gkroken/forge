@@ -490,6 +490,39 @@ the matrix live against registry.npmjs.org and Maven Central.
 
 ---
 
+## Storage quotas & soft-delete
+
+Every **hosted** repository can carry a storage quota (**Storage quota (GB)** on
+the repo form, or `quotaGB` in the repo API). Once usage reaches the quota, the
+next publish is refused in the request spine — before the format handler runs —
+with `507 Insufficient Storage` and a JSON body naming the used and quota bytes.
+The refusal is recorded in the audit log (`quota: blocked write …`), fires the
+`policy.violation` webhook (`kind=quota`), and counts in
+`forge_quota_blocked_total{repo}`; `forge_repo_quota_used_ratio{repo}` gauges
+current fill. Only hosted publishes count — **proxy cache-fills are never
+blocked** (refusing to cache a transitive dependency would break a build; proxy
+growth is bounded by cache eviction instead). Accounting is a documented *soft*
+limit: usage comes from a periodic blob walk (re-run after every write) plus an
+in-flight byte delta, so a burst of concurrent uploads can overrun the quota
+slightly before the next walk reconciles it — exact within one walk cycle, with
+no write-path ledger.
+
+Deleting a version through the admin **Delete** button (or `DELETE
+/api/v1/repos/{name}/component`) is a **soft delete**: the artifact's blobs are
+moved to a reserved `_trash/` key space and the metadata a hard delete would
+have removed is captured into a tombstone. Because trash lives outside every
+repo's key space, **deleting frees quota immediately** and trashed bytes never
+show up as integrity orphans; disk is reclaimed only on purge. The repo's
+**Content** tab shows a Trash panel — **Restore** puts a version back exactly as
+it was (npm packument entry included), **Purge** hard-deletes it. Trash is swept
+automatically after `-trash-retention` (default 7 days; `0` keeps it until
+manually purged). Format-native deletes and cleanup runs still hard-delete —
+their job is to free space; trash is the human undo path. Prove the loop live
+with `scripts/quota-validate.sh` (publish refused at 507, delete → trash →
+restore → purge, cleanup still frees space).
+
+---
+
 ## Migrating from Nexus
 
 forge imports repositories, content, and permissions from a live Nexus 3
