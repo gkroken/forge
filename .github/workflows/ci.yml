@@ -450,6 +450,7 @@ jobs:
           helm template forge deploy/helm/forge \
             --set image.repository=forge \
             --set image.tag=ci \
+            --set storage.type=external \
             --set autoscaling.enabled=true \
             --set podDisruptionBudget.enabled=true \
             | kubectl apply --dry-run=client -f -
