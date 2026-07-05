@@ -295,6 +295,36 @@ func TestBuildIndex_Empty(t *testing.T) {
 	}
 }
 
+// TestBuildIndex_QuotesColonDescription is the regression for the group-index
+// corruption seen against Bitnami: a chart description containing ": " was
+// emitted unquoted, so YAML parsers (and helm) read the tail as a nested
+// mapping ("mapping values are not allowed in this context"), invalidating the
+// whole index at scale. The description must be quoted and must survive a
+// round-trip back through forge's own parser.
+func TestBuildIndex_QuotesColonDescription(t *testing.T) {
+	desc := `Apache Kafka: a distributed streaming platform`
+	recs := []chartRecord{{
+		Name: "kafka", Version: "1.0.0", Description: desc,
+		Digest: "abc", Created: "2024-01-01T00:00:00Z",
+		Filename: "kafka-1.0.0.tgz",
+	}}
+	out := buildIndex(recs, fixedNow)
+
+	// The emitted description line must be quoted (Go %q == valid YAML double-quote).
+	if !strings.Contains(out, "      description: \"Apache Kafka: a distributed streaming platform\"\n") {
+		t.Fatalf("description not safely quoted in output:\n%s", out)
+	}
+	// An unquoted "description: Apache Kafka: ..." would break YAML; ensure it's absent.
+	if strings.Contains(out, "description: Apache Kafka:") {
+		t.Fatalf("description emitted unquoted (would corrupt index):\n%s", out)
+	}
+	// Round-trip through forge's own index parser recovers the exact description.
+	got := parseIndexYAML([]byte(out))
+	if len(got) != 1 || got[0].Description != desc {
+		t.Fatalf("round-trip lost description: got %+v, want %q", got, desc)
+	}
+}
+
 // TestGroup_IndexMerge verifies that a group repo merges chart records from
 // all members and deduplicates overlapping name+version pairs.
 func TestGroup_IndexMerge(t *testing.T) {

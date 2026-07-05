@@ -443,7 +443,12 @@ func buildIndex(recs []chartRecord, now time.Time) string {
 				fmt.Fprintf(&b, "      appVersion: %q\n", rec.AppVersion)
 			}
 			if rec.Description != "" {
-				fmt.Fprintf(&b, "      description: %s\n", rec.Description)
+				// Quote: upstream descriptions (e.g. Bitnami) routinely contain
+				// ": " which YAML would otherwise read as a nested mapping,
+				// corrupting the whole index. %q also handles embedded quotes,
+				// backslashes, and control chars — all valid YAML double-quote
+				// escapes.
+				fmt.Fprintf(&b, "      description: %q\n", rec.Description)
 			}
 			fmt.Fprintf(&b, "      created: %s\n      digest: %s\n      urls:\n        - %s\n",
 				rec.Created, rec.Digest, rec.Filename)

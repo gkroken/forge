@@ -4,7 +4,7 @@ entries:
     - apiVersion: v2
       name: redis
       version: 1.0.0
-      description: Redis chart
+      description: "Redis chart"
       created: 2024-01-13T08:00:00Z
       digest: 111222333
       urls:
@@ -14,7 +14,7 @@ entries:
       name: webapp
       version: 0.4.1
       appVersion: "2.0"
-      description: A demo web application chart
+      description: "A demo web application chart"
       created: 2024-01-15T10:00:00Z
       digest: aaabbbccc
       urls:
@@ -22,7 +22,7 @@ entries:
     - apiVersion: v2
       name: webapp
       version: 0.3.0
-      description: A demo web application chart
+      description: "A demo web application chart"
       created: 2024-01-14T09:00:00Z
       digest: dddeeefff
       urls:
