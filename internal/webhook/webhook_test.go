@@ -383,11 +383,17 @@ func TestHistory_DeadLetterOnExhaustion(t *testing.T) {
 
 	eng.Dispatch(ctx, webhook.Event{Type: webhook.EventArtifactPublished, Repo: "maven-hosted"})
 
-	// 5 attempts: 4 failed + 1 dropped.
+	// 5 attempts: 4 failed + 1 dropped. Wait on the terminal "dropped" metric,
+	// not just the history length: record() appends history before invoking the
+	// metric callback, so gating on len(recs)==5 can observe the record already
+	// written while the metric increment is still pending. The dropped metric
+	// fires last (after all 4 failed metrics and 5 history writes), so it is the
+	// safe barrier for every assertion below.
 	waitFor(t, func() bool {
-		recs, _ := eng.History().List(sub.ID)
-		return len(recs) == 5
-	}, "5 history records")
+		mu.Lock()
+		defer mu.Unlock()
+		return counts[webhook.StatusDropped] == 1
+	}, "dropped metric recorded")
 
 	recs, _ := eng.History().List(sub.ID)
 	// Newest-first: the terminal record is the dead-letter.
