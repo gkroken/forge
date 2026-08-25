@@ -710,3 +710,45 @@ func TestApply_AdoptDoesNotAffectCreate(t *testing.T) {
 		t.Errorf("want Created=1 Adopted=0, got %+v", res.Repositories)
 	}
 }
+
+// TestValidate_RolesWithoutAuthIsAnError — a correctly-spelled section the
+// server cannot apply must fail loudly. Previously Apply skipped it and logged
+// "roles=0", which reads as normal.
+func TestValidate_RolesWithoutAuthIsAnError(t *testing.T) {
+	a := newAppliers(t)
+	a.Roles = nil // as main.go leaves it when -auth is off
+	f := config.File{Roles: []auth.CustomRole{{Name: "ci-deployer", BaseRole: "write"}}}
+
+	_, err := config.Apply(f, a)
+	if err == nil {
+		t.Fatal("expected an error when roles are declared without auth enabled")
+	}
+	if !strings.Contains(err.Error(), "-auth") {
+		t.Errorf("error should name the remedy, got: %v", err)
+	}
+	// Plan must agree, so -config-check catches it before a rollout.
+	if _, err := config.Plan(f, a); err == nil {
+		t.Error("Plan must report it too")
+	}
+}
+
+// TestValidate_NoRolesDeclaredIsFine — the guard must not break the common
+// eval-mode case of a config with no roles section at all.
+func TestValidate_NoRolesDeclaredIsFine(t *testing.T) {
+	a := newAppliers(t)
+	a.Roles = nil
+	f := config.File{Repositories: []repo.Repository{{Name: "r", Format: "npm", Kind: repo.Hosted}}}
+	if _, err := config.Apply(f, a); err != nil {
+		t.Fatalf("a config without roles must apply with auth disabled: %v", err)
+	}
+}
+
+// TestValidate_WebhooksWithoutEngineIsAnError — same rule, second section.
+func TestValidate_WebhooksWithoutEngineIsAnError(t *testing.T) {
+	a := newAppliers(t)
+	a.Webhooks = nil
+	f := config.File{Webhooks: []webhook.Subscription{{Name: "ci", URL: "https://example.com/h"}}}
+	if _, err := config.Apply(f, a); err == nil {
+		t.Fatal("expected an error when webhooks are declared without the engine")
+	}
+}

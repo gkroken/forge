@@ -551,6 +551,20 @@ func validate(f File, a Appliers) error {
 			errs = append(errs, fmt.Sprintf("ldap: %v", err))
 		}
 	}
+	// A section the server cannot apply must not be silently dropped. The file
+	// is the source of truth; quietly ignoring a correctly-spelled block is the
+	// same failure as quietly ignoring a misspelled key, and harder to notice
+	// because nothing looks wrong.
+	if len(f.Roles) > 0 && a.Roles == nil {
+		errs = append(errs, fmt.Sprintf(
+			"%d role(s) declared but role management is disabled — start forge with -auth, or remove the \"roles\" section",
+			len(f.Roles)))
+	}
+	if len(f.Webhooks) > 0 && a.Webhooks == nil {
+		errs = append(errs, fmt.Sprintf(
+			"%d webhook(s) declared but the webhook engine is not configured",
+			len(f.Webhooks)))
+	}
 	if len(errs) > 0 {
 		return fmt.Errorf("config validation failed:\n  %s", strings.Join(errs, "\n  "))
 	}

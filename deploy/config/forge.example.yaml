@@ -1,7 +1,11 @@
 # forge config-as-code — worked example.
 #
 #   ./forge -config-check -config deploy/config/forge.example.yaml   # dry run
-#   ./forge -config       -config deploy/config/forge.example.yaml   # apply on boot
+#   ./forge -auth -config deploy/config/forge.example.yaml            # apply on boot
+#
+# -auth is REQUIRED here because this file declares a `roles` section. Forge
+# refuses to start rather than apply a config it can only partly honour, so
+# drop that section if you want to run without authentication.
 #
 # The file is the SOURCE OF TRUTH for everything it declares: objects listed
 # here refuse edits through the admin API and UI (409), and are badged "config".
