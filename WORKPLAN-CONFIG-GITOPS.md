@@ -57,8 +57,17 @@ indirect dependencies via testcontainers/minio. `go test ./...`, `go vet`, and
 phase adds **`sigs.k8s.io/yaml`**. Chosen over
 `gopkg.in/yaml.v3` directly because it converts YAML→JSON and delegates to
 `encoding/json`, so **every existing struct tag works unchanged** — no `yaml:` tags
-across `repo`, `cleanup`, `vuln`, `auth`, `webhook`. Vendor it. Do not start C1
-without sign-off.
+across `repo`, `cleanup`, `vuln`, `auth`, `webhook`. Do not start C1 without
+sign-off.
+
+**Vendoring: decided against.** `go mod vendor` is all-or-nothing — it would
+have committed 37MB / 2873 files / 86 modules, ~99% testcontainers, Docker
+client and OTel, none of it related to YAML. `go.sum` already pins every module
+by hash (and CI runs `go mod verify`), so vendoring adds in-tree auditability at
+the cost of burying every future dependency bump — of which this repo does
+several a quarter, forced by live-DB govulncheck/Trivy drift — in a
+multi-thousand-file diff. Revisit only for air-gapped builds, and prefer a
+private GOPROXY there.
 
 *Zero-dependency fallback if declined:* structured `config.content` in `values.yaml`
 + `toJson` in the ConfigMap template (gap #3 only). YAML then works **only** inside
