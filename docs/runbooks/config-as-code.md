@@ -1,17 +1,30 @@
 # Config-as-Code runbook
 
 forge can manage its own contents (repositories, cleanup policies, security
-policies, roles, and webhooks) declaratively from a JSON file. Commit the file
-to git, mount it as a Kubernetes ConfigMap, and forge converges on boot.
+policies, roles, and webhooks) declaratively from a YAML or JSON file. Commit the
+file to git, mount it as a Kubernetes ConfigMap, and forge converges on boot.
 
-## Why JSON, not YAML
+## File format: YAML or JSON
 
-The Go standard library has no YAML parser. JSON is the same shape the admin
-API emits (`GET /api/v1/repos`, etc.), so **export → edit → apply** round-trips
-without conversion. YAML support would require an external dependency, which is a
-non-goal.
+forge picks its parser from the file **extension** — `.yaml`/`.yml` parse as
+YAML, anything else as JSON:
 
-## The forge.config.json schema
+```bash
+./forge -config forge.config.yaml     # YAML
+./forge -config forge.config.json     # JSON
+```
+
+Both express exactly the same schema, and JSON is a subset of YAML 1.2, so
+existing `.json` files keep working untouched — there is no migration step.
+
+`${VAR}` placeholder expansion runs on the raw text *before* parsing, so secret
+indirection behaves identically in both formats.
+
+Export defaults to JSON (matching what the admin API emits, so **export → edit →
+apply** round-trips without conversion); pass `-config-export-format=yaml` for
+YAML.
+
+## The config file schema
 
 All sections are optional. A partial file is valid and additive (objects not
 mentioned are left untouched unless `prune` is enabled).
@@ -125,33 +138,56 @@ written.
 
 ## GitOps flow (Argo CD / Flux)
 
-1. Author or export `forge.config.json` (see [Migrating an existing deployment](#migrating)).
+1. Author or export the config file (see [Migrating an existing deployment](#migrating)).
 2. Commit the file to git (alongside the Helm values file).
 3. Set `config.content` in your Helm values (inline) or point `existingConfigMap`
-   at a pre-existing ConfigMap whose `forge.config.json` key holds the content.
+   at a pre-existing ConfigMap holding the content.
 4. Argo CD / Flux sync renders the ConfigMap and the `checksum/config` annotation
    on the Deployment changes → Kubernetes rolls the pods → forge boots with the new
    config applied.
 
-Example values override (inline content):
+The ConfigMap **key is the filename**, and forge selects its parser from that
+extension. The chart derives the `-config` path from the key, so the two can
+never drift apart.
+
+Recommended — `config.content` as a **map**, authored as native YAML. The chart
+renders it to `forge.config.yaml`:
+
+```yaml
+config:
+  content:
+    repositories:
+      - name: maven-central
+        format: maven
+        kind: proxy
+        upstream: https://repo1.maven.org/maven2
+    webhooks:
+      - name: ci
+        url: ${WEBHOOK_URL}
+        secret: ${WEBHOOK_SECRET}
+        enabled: true
+extraEnvFrom:
+  - secretRef:
+      name: forge-webhook-secrets
+```
+
+Legacy — `config.content` as a **string** of inline JSON. Rendered to
+`forge.config.json`; still supported unchanged:
 
 ```yaml
 config:
   content: |
     {
-      "repositories": [ ... ],
-      "webhooks": [{"name":"ci","url":"${WEBHOOK_URL}","secret":"${WEBHOOK_SECRET}","enabled":true}]
+      "repositories": [ ... ]
     }
-extraEnvFrom:
-  - secretRef:
-      name: forge-webhook-secrets
 ```
 
 Or with a separately managed ConfigMap:
 
 ```yaml
 config:
-  existingConfigMap: forge-config   # pre-existing CM; key must be forge.config.json
+  existingConfigMap: forge-config          # pre-existing CM
+  existingConfigMapKey: forge.config.yaml  # default: forge.config.json
 ```
 
 The `checksum/config` pod annotation is computed from the rendered content, so
@@ -163,7 +199,8 @@ rollout.
 Export current state, review it, then switch to config mode:
 
 ```bash
-# 1. Export current state (secrets are blanked).
+# 1. Export current state (secrets are blanked). Add -config-export-format=yaml
+#    for YAML instead.
 ./forge -config-export -data ./data > forge.config.json
 
 # 2. Re-add secrets as ${ENV_VAR} placeholders manually, e.g.:
@@ -185,6 +222,5 @@ These are documented as possible follow-ups; none are required for GitOps:
   secret-lifecycle, not config-file territory.
 - **Live file-watcher / SIGHUP reload** — a ConfigMap-checksum rollout is
   sufficient for GitOps; a watcher adds complexity without benefit at eval scale.
-- **YAML** — requires an external dependency, which is a non-goal.
 - **Terraform provider / Kubernetes CRDs** — possible future extensions; not
   required to make forge's configuration declarative and reproducible.

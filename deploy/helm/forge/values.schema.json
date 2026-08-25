@@ -74,8 +74,9 @@
     "config": {
       "type": "object",
       "properties": {
-        "content":          { "type": "string" },
-        "existingConfigMap": { "type": "string" }
+        "content":          { "type": ["string", "object", "null"] },
+        "existingConfigMap": { "type": "string" },
+        "existingConfigMapKey": { "type": "string" }
       }
     }
   }

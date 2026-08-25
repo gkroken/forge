@@ -30,7 +30,7 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
         {{- if .Values.config.content }}
-        checksum/config: {{ .Values.config.content | sha256sum }}
+        checksum/config: {{ .Values.config.content | toYaml | sha256sum }}
         {{- else if .Values.config.existingConfigMap }}
         checksum/config: {{ .Values.config.existingConfigMap | sha256sum }}
         {{- end }}
@@ -65,7 +65,7 @@ spec:
             - {{ .Values.drainTimeout | quote }}
             {{- if or .Values.config.content .Values.config.existingConfigMap }}
             - -config
-            - /etc/forge/config.json
+            - /etc/forge/{{ include "forge.configFileName" . }}
             {{- end }}
           ports:
             - name: http

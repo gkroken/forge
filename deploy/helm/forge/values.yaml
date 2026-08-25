@@ -140,17 +140,38 @@ metrics:
     namespaceSelector: {}
 
 # Declarative configuration (config-as-code). Two mutually exclusive options:
-#   content         — inline JSON; forge renders a ConfigMap and mounts it.
-#   existingConfigMap — name of an existing ConfigMap whose key "forge.config.json"
-#                       holds the config; forge mounts it directly (no rendered CM).
-# When either is set, forge starts with -config /etc/forge/config.json and the
-# hardcoded seed repos are skipped. A checksum annotation on the Pod ensures
-# Argo/Flux roll the Deployment when the ConfigMap content changes.
-# Secrets must NOT be inlined here — inject them via ${ENV_VAR} placeholders in
-# the JSON and set actual values through extraEnv or extraEnvFrom.
+#   content         — the config itself; forge renders a ConfigMap and mounts it.
+#                     Two accepted shapes:
+#                       * a MAP (recommended) — author native YAML right here; it
+#                         is rendered to forge.config.yaml.
+#                       * a STRING — legacy inline JSON, rendered to
+#                         forge.config.json. Still supported unchanged.
+#   existingConfigMap — name of an existing ConfigMap holding the config; forge
+#                       mounts it directly (no rendered CM). The key defaults to
+#                       "forge.config.json"; override with existingConfigMapKey,
+#                       e.g. "forge.config.yaml" to supply YAML.
+# forge selects its parser from the file extension, so the key name is the format.
+# When either option is set, forge starts with -config and the hardcoded seed
+# repos are skipped. A checksum annotation on the Pod ensures Argo/Flux roll the
+# Deployment when the content changes.
+# Secrets must NOT be inlined here — inject them via ${ENV_VAR} placeholders and
+# set actual values through extraEnv or extraEnvFrom.
+#
+# Example (map form):
+#   config:
+#     content:
+#       prune: true
+#       repositories:
+#         - name: maven-central
+#           format: maven
+#           kind: proxy
+#           upstream: https://repo1.maven.org/maven2
 config:
-  content: ""
+  # null (not "") so a user-supplied map merges; Helm's coalesce discards a table
+  # when the chart default for the same key is a scalar.
+  content: null
   existingConfigMap: ""
+  existingConfigMapKey: ""
 
 # Grafana dashboard auto-import via grafana-sidecar
 grafana:

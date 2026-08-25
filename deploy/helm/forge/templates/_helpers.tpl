@@ -67,3 +67,20 @@ Container image reference, defaulting tag to appVersion.
 {{- define "forge.image" -}}
 {{- printf "%s:%s" .Values.image.repository ((.Values.image.tag | default .Chart.AppVersion)) }}
 {{- end }}
+
+{{/*
+Config-as-code filename. forge picks its parser from the extension, so the
+ConfigMap key doubles as the format selector:
+  - config.content as a string      -> forge.config.json (legacy inline JSON)
+  - config.content as a map         -> forge.config.yaml (authored in values.yaml)
+  - config.existingConfigMap        -> config.existingConfigMapKey, default JSON
+*/}}
+{{- define "forge.configFileName" -}}
+{{- if .Values.config.existingConfigMap -}}
+{{- .Values.config.existingConfigMapKey | default "forge.config.json" -}}
+{{- else if kindIs "string" .Values.config.content -}}
+forge.config.json
+{{- else -}}
+forge.config.yaml
+{{- end -}}
+{{- end -}}

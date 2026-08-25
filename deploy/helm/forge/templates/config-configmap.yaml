@@ -6,6 +6,10 @@ metadata:
   labels:
     {{- include "forge.labels" . | nindent 4 }}
 data:
-  forge.config.json: |
+  {{ include "forge.configFileName" . }}: |
+    {{- if kindIs "string" .Values.config.content }}
     {{- .Values.config.content | nindent 4 }}
+    {{- else }}
+    {{- .Values.config.content | toYaml | nindent 4 }}
+    {{- end }}
 {{- end }}
