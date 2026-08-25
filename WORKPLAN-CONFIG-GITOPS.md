@@ -27,8 +27,8 @@ observable. `go test ./...` (incl. `-race`), `go vet`, `bash test.sh` green.
 | 7 | Config-owned objects are freely editable via UI/API | C3 | ✅ |
 | 8 | Object ownership is invisible in API responses and UI | C3 | ✅ |
 | 9 | No break-glass path for a 03:00 incident | C3 | ✅ |
-| 10 | Drift between file and state is silent until next boot | C4 | [ ] |
-| 11 | No drift metric → Argo/Flux cannot show OutOfSync for forge state | C4 | [ ] |
+| 10 | Drift between file and state is silent until next boot | C4 | ✅ |
+| 11 | No drift metric → Argo/Flux cannot show OutOfSync for forge state | C4 | ✅ |
 
 ## Prior art (researched 2026-08-25 — informs C2/C3)
 
@@ -165,19 +165,29 @@ UI shows it as managed with the source path; break-glass exists and leaves a tra
 
 ## Phase C4 — Drift visibility
 
+**STATUS: C4 COMPLETE — the track is done.** 11 new tests; live-verified
+(drift flips true on a file edit with no restart, the gauge appears in a real
+`/metrics` scrape, and `-config-watch` applies an appended repo within one
+tick). `go test ./...` (incl. `-race`), `go vet`, `bash test.sh` (20/20) green.
+
+Note on the watcher: its first tick applies unconditionally, so a change landing
+between the boot apply and the watcher starting is never missed. After that it
+triggers on file-content changes only — `TestWatch_IgnoresLiveStateChanges`
+pins the no-self-heal decision.
+
 Acceptance: drift between the on-disk file and live state is queryable and
 scrapeable; Argo/Flux can show forge state OutOfSync, not just the ConfigMap.
 
-- [ ] **#10 Drift endpoint.** `GET /api/v1/config/drift` → re-runs `Plan()` against the
+- [x] **#10 Drift endpoint.** `GET /api/v1/config/drift` → re-runs `Plan()` against the
       `-config` file and returns the `Result` (incl. Adopted + per-object detail). Read-only;
       admin-scoped. 404 when not in `-config` mode.
-- [ ] **#11 Drift metric.** `forge_config_drift_objects{kind}` gauge, refreshed on the same
+- [x] **#11 Drift metric.** `forge_config_drift_objects{kind}` gauge, refreshed on the same
       tick as the drift computation.
-- [ ] **Optional — file-watch reconcile.** Poll the config file mtime/hash (~60s; matches
+- [x] **Optional — file-watch reconcile.** DONE, opt-in via `-config-watch`. Poll the config file mtime/hash (~60s; matches
       kubelet ConfigMap sync) and re-`Apply` on change, so a commit takes effect without a pod
       roll. Subsumes the periodic drift computation. **Cut this if C1–C3 slip** — the Argo
       `checksum/config` rollout already closes the loop, just with a restart.
-- [ ] Tests: drift endpoint reports a UI-created divergence; returns clean after `Apply`;
+- [x] Tests: drift endpoint reports a UI-created divergence; returns clean after `Apply`;
       404 outside `-config` mode; gauge tracks the endpoint; watcher re-applies on change.
 
 ---

@@ -86,6 +86,9 @@ type Server struct {
 	// configOverride is the -allow-config-override break-glass: config-managed
 	// objects stay writable, but every such write is logged and audited.
 	configOverride bool
+	// configPlan re-reads the config file and diffs it against live state.
+	// nil outside config-as-code mode (see config_drift.go).
+	configPlan     configPlanner
 	Users          auth.UserStore      // nil = user management not configured
 	Roles          auth.RoleStore      // nil = custom roles not configured
 	Webhooks       *webhook.Engine     // nil = webhooks not configured (no event emission)
@@ -400,6 +403,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/v1/webhooks", s.handleWebhooks)
 	mux.HandleFunc("/api/v1/webhooks/", s.handleWebhooks)
 	mux.HandleFunc("/api/v1/system/", s.handleSystemAPI)
+	mux.HandleFunc("/api/v1/config/drift", s.handleConfigDrift)
 	if s.OIDC != nil && s.Auth != nil {
 		mux.HandleFunc("/auth/oidc/login", s.handleOIDCLogin)
 		mux.HandleFunc("/auth/oidc/callback", s.handleOIDCCallback)

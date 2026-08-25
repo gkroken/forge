@@ -47,6 +47,11 @@ type Metrics struct {
 	// Current count of vulnerable components by repo and worst-severity bucket.
 	// A gauge (not a counter): it reflects present state, re-set after each scan.
 	VulnerableComponents *prometheus.GaugeVec // {repo, severity}
+	// ConfigDriftObjects counts objects whose live state differs from the
+	// -config file, per object kind. Non-zero means the file and reality have
+	// diverged, so Argo/Flux can surface forge state as OutOfSync rather than
+	// only tracking the ConfigMap.
+	ConfigDriftObjects *prometheus.GaugeVec // {kind, op}
 
 	// In-process latency + throughput (not Prometheus instruments)
 	Latency    *LatencyTracker
@@ -122,6 +127,11 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "forge_vulnerable_components",
 			Help: "Vulnerable components by repository and worst-severity bucket (current state).",
 		}, []string{"repo", "severity"}),
+
+		ConfigDriftObjects: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "forge_config_drift_objects",
+			Help: "Objects differing from the config-as-code file, by kind and pending operation (create, update, delete, adopt, conflict).",
+		}, []string{"kind", "op"}),
 	}
 
 	m.Latency = NewLatencyTracker(1000)
@@ -142,6 +152,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.DepGuardBlocked,
 		m.QuotaBlocked,
 		m.QuotaUsedRatio,
+		m.ConfigDriftObjects,
 		m.Promotions,
 		m.WebhookDeliveries,
 		m.VulnerableComponents,

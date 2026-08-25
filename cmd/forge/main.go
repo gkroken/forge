@@ -101,6 +101,8 @@ func main() {
 	configExportFormat := flag.String("config-export-format", "json", "format for -config-export: json | yaml")
 	configAdopt := flag.Bool("config-adopt", false, "allow -config to take ownership of pre-existing objects whose settings differ (overwrites them; each is audited)")
 	configOverride := flag.Bool("allow-config-override", false, "break-glass: permit admin API/UI writes to config-managed objects (each is logged and audited; the next apply reverts them)")
+	configDriftEvery := flag.Duration("config-drift-interval", time.Minute, "how often to refresh the config-drift gauge in -config mode (0 disables the background check)")
+	configWatch := flag.Bool("config-watch", false, "re-apply the -config file when its contents change, without a restart (opt-in; default is to converge on boot only)")
 	flag.Parse()
 
 	obs.InitLog(*logFormat)
@@ -429,8 +431,24 @@ func main() {
 		}
 	}
 
+	// configPlanner re-reads the file on every call, so a ConfigMap update is
+	// reflected in drift without a restart.
+	var configPlanner func() (config.Result, error)
+	if *configPath != "" {
+		path, adopt := *configPath, *configAdopt
+		configPlanner = func() (config.Result, error) {
+			f, err := config.Load(path)
+			if err != nil {
+				return config.Result{}, err
+			}
+			f.Adopt = f.Adopt || adopt
+			return config.Plan(f, cfgAppliers)
+		}
+	}
+
 	forgeSrv := server.New(mgr, reg, blobStore, metaStore, authStore).
 		WithConfigMode(*configPath, *configOverride).
+		WithConfigDrift(configPlanner).
 		WithMetrics(metrics, promReg).
 		WithGlobalStats(globalStats).
 		WithWebhooks(webhookEngine).
@@ -573,6 +591,36 @@ func main() {
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGTERM, syscall.SIGINT)
+
+	// Keep the drift gauge current so Prometheus/Argo see divergence without
+	// anyone hitting the endpoint.
+	driftDone := make(chan struct{})
+	defer close(driftDone)
+	if *configDriftEvery > 0 {
+		forgeSrv.StartDriftWatcher(*configDriftEvery, driftDone)
+	}
+	// Opt-in continuous reconcile. Triggers on the FILE changing, never on live
+	// state changing — reverting an operator's edit on a timer is self-heal,
+	// which forge deliberately does not do (the write is refused at the door).
+	if *configWatch && *configPath != "" {
+		every := *configDriftEvery
+		if every <= 0 {
+			every = time.Minute
+		}
+		go config.Watch(*configPath, cfgAppliers, every, driftDone, func(res config.Result, err error) {
+			if err != nil {
+				slog.Error("config: re-apply failed", "err", err)
+				return
+			}
+			slog.Info("config: re-applied after file change",
+				"repos", res.Repositories.Changes(),
+				"cleanup_policies", res.CleanupPolicies.Changes(),
+				"security_policies", res.SecurityPolicies.Changes(),
+				"roles", res.Roles.Changes(),
+				"webhooks", res.Webhooks.Changes(),
+			)
+		})
+	}
 	go func() {
 		<-quit
 		slog.Info("draining in-flight requests")

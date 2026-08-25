@@ -205,6 +205,63 @@ Terraform and Argo CD `selfHeal` do). Refusing the write tells the operator
 immediately; reverting it fifteen minutes later tells them after they think they
 have fixed the outage.
 
+## Drift: seeing when the file and reality disagree
+
+`Apply` runs at boot, so between a commit and the next rollout the file and live
+state can differ. Argo/Flux track the *ConfigMap*, not forge's objects, so that
+window looked green.
+
+```
+GET /api/v1/config/drift        # admin-only; 404 outside -config mode
+```
+
+It re-reads the config file on every call — an updated ConfigMap is picked up
+without a restart — and returns the same diff `Plan` computes:
+
+```json
+{
+  "drift": true,
+  "objects": 1,
+  "source": "/etc/forge/forge.config.yaml",
+  "kinds": { "repositories": { "created": 1, "updated": 0, "deleted": 0,
+                               "adopted": 0, "noop": 2 }, ... },
+  "conflicts": []
+}
+```
+
+A config file that no longer parses or validates returns **500** rather than a
+misleading "no drift".
+
+The same numbers are exported for Prometheus, refreshed every
+`-config-drift-interval` (default 1m; `0` disables the background check):
+
+```
+forge_config_drift_objects{kind="repositories",op="create"} 1
+forge_config_drift_objects{kind="all",op="conflict"} 0
+```
+
+Alert on `sum(forge_config_drift_objects{op!="adopt"}) > 0` to catch an unapplied
+commit or an override made during an incident.
+
+## Continuous reconcile (opt-in)
+
+By default forge converges **on boot only**: the `checksum/config` annotation
+rolls the Deployment when the ConfigMap changes, and the new pod applies.
+
+`-config-watch` re-applies when the file's *contents* change, so a commit takes
+effect without a pod roll (mounted ConfigMaps are updated in place by the
+kubelet, roughly once a minute). It polls at `-config-drift-interval`.
+
+It triggers on the **file** changing, never on live state changing. Reverting an
+operator's out-of-band edit on a timer is self-heal — Terraform and Argo CD
+`selfHeal` do it, and the failure mode is someone fixing an outage at 03:00 and
+watching it silently undone fifteen minutes later. forge refuses the write at
+the door instead. A break-glass override therefore survives until someone
+actually changes the config file.
+
+A half-written or invalid file is reported and retried on the next tick, never
+applied and never silently skipped.
+
 ## Reconcile dependency order
 
 Apply runs in this order to satisfy references:
