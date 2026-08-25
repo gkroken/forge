@@ -37,7 +37,8 @@ mentioned are left untouched unless `prune` is enabled).
   "securityDefault":  { ...vuln.Policy...                },
   "roles":            [ ...auth.CustomRole objects...    ],
   "webhooks":         [ ...webhook.Subscription objects. ],
-  "prune":            false
+  "prune":            false,
+  "adopt":            false
 }
 ```
 
@@ -122,6 +123,43 @@ itself previously created**. forge tracks a managed-set in the meta store
 
 This gives the GitOps guarantee without accidentally deleting repositories that
 an operator added through the admin UI while the config file was being updated.
+
+## Ownership: adoption vs update
+
+The managed-set also decides what happens when the file names an object that
+already exists. There are three cases:
+
+| Object state | Disposition |
+|---|---|
+| Absent from the store | **Create** |
+| Present, previously managed by config | **Update** (or noop if identical) |
+| Present, **never** managed by config | **Adopt** |
+
+Adoption is how an object created through the UI/API comes under config
+ownership. It splits by whether the settings agree:
+
+- **Identical** → adopted silently, no flag needed. This is the
+  `-config-export` → commit → boot path, and it stays frictionless.
+- **Different** → **refused**, naming the object and every differing field:
+
+  ```
+  config: refusing to adopt 1 object(s) this file has never managed and whose
+  settings differ:
+    repository "npm-proxy" differs in: upstream
+  set "adopt": true (or pass -config-adopt) to take ownership and overwrite them
+  ```
+
+  Set `"adopt": true` in the file, or pass `-config-adopt`, to take ownership
+  anyway. The existing settings are overwritten, the event is written to the
+  audit log (`ADOPT`), and it is logged at WARN on boot.
+
+This mirrors `kubectl apply --force-conflicts`: transferring ownership is never
+the default, because a silent overwrite is how a config commit quietly reverts
+somebody's console change. Once adopted, the object is config-managed — later
+runs treat it as an ordinary update, and `prune` can delete it.
+
+The refusal happens **before the first write**, so a rejected apply never leaves
+state half-converged.
 
 ## Reconcile dependency order
 
