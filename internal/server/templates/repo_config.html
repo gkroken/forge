@@ -44,8 +44,18 @@
 
       {{if eq .ActiveTab "settings"}}
       {{if .Error}}<div class="alert alert-error">{{.Error}}</div>{{end}}
+      {{if .ManagedByConfig}}
+      <div class="alert alert-info">
+        <strong>Managed by config.</strong>
+        This repository is declared in <code>{{.ConfigSource}}</code>. Edit it there and
+        redeploy — changes made here would be reverted on the next apply.
+      </div>
+      {{end}}
       <div class="card" style="padding:20px 24px">
         <form method="POST" class="repo-form">
+          {{/* fieldset disabled: every control inside is inert and unsubmittable,
+               so the form cannot look editable and then fail on save. */}}
+          <fieldset {{if .ManagedByConfig}}disabled{{end}} style="border:0;padding:0;margin:0;min-width:0;">
 
           <!-- ── Identity ── -->
           <div class="form-group">
@@ -259,9 +269,15 @@
           </div>
 
           <div class="form-actions">
+            {{if .ManagedByConfig}}
+            <span class="btn btn-primary" aria-disabled="true"
+                  title="Managed by the config file — edit it there and redeploy.">Save changes</span>
+            {{else}}
             <button type="submit" class="btn btn-primary">Save changes</button>
+            {{end}}
             <a href="/ui/admin/" class="btn">Cancel</a>
           </div>
+          </fieldset>
         </form>
       </div>
 

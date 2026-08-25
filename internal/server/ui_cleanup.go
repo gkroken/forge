@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"forge/internal/cleanup"
+	"forge/internal/config"
 	"forge/internal/repo"
 )
 
@@ -35,6 +36,10 @@ type cleanupPolicyRow struct {
 	HasRepos    bool   // true when at least one repo uses this policy
 	Status      string // "Active" | "Manual"
 	StatusClass string // CSS class for the status pill
+	// ManagedByConfig marks a policy declared in the -config file: Edit is
+	// disabled, but Dry-run/Run stay available (they act on artifacts, not on
+	// the policy definition).
+	ManagedByConfig bool
 }
 
 type schedTask struct {
@@ -83,6 +88,8 @@ func (s *Server) uiCleanupPolicies(w http.ResponseWriter, r *http.Request) {
 					HasRepos:    len(policyRepos[p.Name]) > 0,
 					Status:      status,
 					StatusClass: cls,
+
+					ManagedByConfig: s.configOwns(config.KindCleanupPolicy, p.Name),
 				})
 			}
 		}
@@ -311,6 +318,11 @@ func (s *Server) applyPolicyToRepos(r *http.Request, policyName string) {
 	}
 	for _, rp := range s.Repos.All() {
 		if rp.Kind == repo.Group {
+			continue
+		}
+		// CleanupPolicyName is a repository field the config file owns, so
+		// assigning a policy here is a repo edit — skip config-managed repos.
+		if s.configOwns(config.KindRepository, rp.Name) && !s.configOverride {
 			continue
 		}
 		switch {

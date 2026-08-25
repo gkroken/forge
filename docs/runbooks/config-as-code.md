@@ -161,6 +161,50 @@ runs treat it as an ordinary update, and `prune` can delete it.
 The refusal happens **before the first write**, so a rejected apply never leaves
 state half-converged.
 
+## Enforcement: the file wins
+
+Under `-config`, objects the file manages are **read-only everywhere else**:
+
+- The admin API returns **409** on any write to a config-managed repository,
+  role, cleanup policy, security policy, or webhook, naming the object and the
+  file that owns it.
+- The UI badges them `config`, disables Configure/Edit/Delete, and renders the
+  repository Settings tab inside a disabled `<fieldset>` with an explanatory
+  banner. Controls are disabled **at the door** — a form that looks editable and
+  then refuses to save is the most complained-about part of Grafana provisioning
+  ([grafana/grafana#37679](https://github.com/grafana/grafana/issues/37679)).
+- Every refusal is written to the audit log.
+
+Objects created through the API/UI are untouched by this: ownership is per
+object, from the managed set, not a global read-only mode.
+
+`GET /api/v1/repos` (and the equivalent for each kind) reports
+`"managedBy": "config" | "api"` so tooling can tell them apart.
+
+### What is *not* gated
+
+Config owns a repository's **definition**, not its **contents**. These stay
+available on a config-managed repo, because they act on artifacts:
+
+```
+POST   /api/v1/repos/{name}/cleanup      run retention now
+POST   /api/v1/repos/{name}/scan         vulnerability scan
+POST   /api/v1/repos/{name}/promote      copy a component in
+DELETE /api/v1/repos/{name}/component    delete one artifact
+       .../invalidate .../reindex .../trash/...
+```
+
+### Break-glass
+
+`-allow-config-override` permits writes to config-managed objects. Each one is
+logged at WARN and audited, and the next apply reverts it. Use it for an
+incident, not as a default.
+
+There is deliberately **no self-heal** (silently reverting drift on a timer, as
+Terraform and Argo CD `selfHeal` do). Refusing the write tells the operator
+immediately; reverting it fifteen minutes later tells them after they think they
+have fixed the outage.
+
 ## Reconcile dependency order
 
 Apply runs in this order to satisfy references:

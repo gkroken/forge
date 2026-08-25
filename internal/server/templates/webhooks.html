@@ -63,16 +63,26 @@
           {{range .Endpoints}}
           <tr data-id="{{.ID}}"
               data-name="{{.Name}}" data-url="{{.URL}}" data-repo="{{.RepoValue}}" data-events="{{.EventCSV}}">
-            <td><div class="fw-600">{{.Name}}</div></td>
+            <td><div class="fw-600">{{.Name}}{{if .ManagedByConfig}} <span class="status-pill pill-config" title="Declared in the config file; edit it there, not here.">config</span>{{end}}</div></td>
             <td class="col-mono" style="color:var(--text-muted);">{{.URL}}</td>
             <td style="font-size:12.5px;color:var(--text-muted);">{{.Repo}}</td>
             <td class="col-mono" style="font-size:11.5px;color:var(--text-muted);">{{.Events}}</td>
             <td><span class="status-pill {{.StatusClass}}">{{.Status}}</span></td>
             <td class="col-actions">
               <button class="btn btn-sm" data-action="deliveries" data-id="{{.ID}}" data-name="{{.Name}}">Deliveries</button>
+              {{if .ManagedByConfig}}
+              <span class="btn btn-sm" aria-disabled="true"
+                    title="Managed by the config file — edit it there and redeploy.">Edit</span>
+              {{else}}
               <button class="btn btn-sm" data-action="edit" data-id="{{.ID}}">Edit</button>
+              {{end}}
               <button class="btn btn-sm" data-action="test" data-id="{{.ID}}">Send test</button>
+              {{if .ManagedByConfig}}
+              <span class="btn btn-sm btn-danger" aria-disabled="true"
+                    title="Managed by the config file — remove it there and redeploy.">Delete</span>
+              {{else}}
               <button class="btn btn-sm btn-danger" data-action="delete" data-id="{{.ID}}" data-name="{{.Name}}">Delete</button>
+              {{end}}
             </td>
           </tr>
           {{end}}

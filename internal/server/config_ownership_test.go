@@ -209,3 +209,65 @@ func TestConfigOwned_ContentRoutesNotGated(t *testing.T) {
 		t.Errorf("content route on a config-managed repo must not 409: %s", rec.Body.String())
 	}
 }
+
+// --- UI paths -------------------------------------------------------------
+//
+// The UI mutates repositories through its own handlers rather than the admin
+// API, so the API gate alone would leave the enforcement trivially bypassable
+// by clicking. These cover that.
+
+// TestConfigOwned_UIDeleteRefused covers /ui/admin/repos/{name} DELETE.
+func TestConfigOwned_UIDeleteRefused(t *testing.T) {
+	srv, _ := ownedServer(t, false)
+	rec := do(t, srv, http.MethodDelete, "/ui/admin/repos/managed", "")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("UI delete of config-managed repo = %d, want 409", rec.Code)
+	}
+	if _, ok := srv.Repos.Get("managed"); !ok {
+		t.Error("repo was deleted despite the refusal")
+	}
+}
+
+// TestConfigOwned_UIDeleteAllowsUnmanaged — the UI stays usable for everything
+// config does not own.
+func TestConfigOwned_UIDeleteAllowsUnmanaged(t *testing.T) {
+	srv, _ := ownedServer(t, false)
+	if rec := do(t, srv, http.MethodDelete, "/ui/admin/repos/adhoc", ""); rec.Code == http.StatusConflict {
+		t.Fatalf("UI delete of API-created repo must be allowed, got 409")
+	}
+}
+
+// TestConfigOwned_SettingsFormIsReadOnly — the edit page must render disabled
+// rather than accept input it will reject (grafana/grafana#37679).
+func TestConfigOwned_SettingsFormIsReadOnly(t *testing.T) {
+	srv, _ := ownedServer(t, false)
+	rec := do(t, srv, http.MethodGet, "/ui/admin/repos/managed/edit", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("edit page = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Managed by config") {
+		t.Error("edit page must explain that the repo is config-managed")
+	}
+	if !strings.Contains(body, "<fieldset disabled") {
+		t.Error("form controls must be disabled at the door, not on submit")
+	}
+
+	// And the unmanaged one stays fully editable.
+	rec = do(t, srv, http.MethodGet, "/ui/admin/repos/adhoc/edit", "")
+	if strings.Contains(rec.Body.String(), "<fieldset disabled") {
+		t.Error("API-created repo must render an editable form")
+	}
+}
+
+// TestConfigOwned_ReposListShowsBadge — the list must distinguish the two.
+func TestConfigOwned_ReposListShowsBadge(t *testing.T) {
+	srv, _ := ownedServer(t, false)
+	rec := do(t, srv, http.MethodGet, "/ui/admin/", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin home = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "pill-config") {
+		t.Error("config-managed repo must carry a badge in the repositories list")
+	}
+}

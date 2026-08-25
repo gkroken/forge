@@ -33,6 +33,7 @@
         <tr>
           <td class="col-name">
             <a href="/ui/browse/{{.Name}}">{{.Name}}</a>
+            {{if .ManagedByConfig}}<span class="status-pill pill-config" title="Declared in the config file; edit it there, not here.">config</span>{{end}}
             {{if .Upstream}}<div class="repo-subline col-mono">{{.Upstream}}</div>
             {{else if .Members}}<div class="repo-subline col-mono">{{join .Members ", "}}</div>{{end}}
           </td>
@@ -55,12 +56,20 @@
           </td>
           <td class="col-actions">
             <a href="/ui/browse/{{.Name}}" class="btn btn-sm">Browse</a>
-            <a href="/ui/admin/repos/{{.Name}}/edit" class="btn btn-sm">Configure</a>
-            <button class="btn btn-sm btn-danger"
-                    hx-delete="/ui/admin/repos/{{.Name}}"
-                    hx-confirm="Delete «{{.Name}}»? This cannot be undone.">
-              Delete
-            </button>
+            {{if .ManagedByConfig}}
+              {{/* Disabled at the door, not on submit — see grafana/grafana#37679. */}}
+              <span class="btn btn-sm" aria-disabled="true"
+                    title="Managed by the config file — edit it there and redeploy.">Configure</span>
+              <span class="btn btn-sm btn-danger" aria-disabled="true"
+                    title="Managed by the config file — remove it there and redeploy.">Delete</span>
+            {{else}}
+              <a href="/ui/admin/repos/{{.Name}}/edit" class="btn btn-sm">Configure</a>
+              <button class="btn btn-sm btn-danger"
+                      hx-delete="/ui/admin/repos/{{.Name}}"
+                      hx-confirm="Delete «{{.Name}}»? This cannot be undone.">
+                Delete
+              </button>
+            {{end}}
           </td>
         </tr>
         {{else}}

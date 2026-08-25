@@ -1440,3 +1440,19 @@ label.toggle-sw { position: relative; display: inline-flex; align-items: center;
 .browse-proxy-lookup { padding: 10px 12px; border-top: 1px solid var(--border); display: flex; gap: 6px; }
 .browse-proxy-lookup input { flex: 1; }
 .browse-proxy-lookup button { flex-shrink: 0; }
+
+/* ── config-as-code ownership ─────────────────────────────────────────────── */
+/* An object declared in the config file is read-only in the UI. Controls are
+   disabled at the door rather than failing on submit (grafana/grafana#37679:
+   a provisioned dashboard that looks editable but refuses to save is the most
+   complained-about part of Grafana provisioning). */
+.pill-config { background: var(--accent-subtle); color: var(--accent); }
+.btn[aria-disabled="true"] {
+  opacity: .45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.managed-note { color: var(--text-muted); font-size: 12px; margin-top: 4px; }
+.alert-info { background: var(--accent-subtle); color: var(--accent); border-color: var(--accent); }
+/* A disabled fieldset must not look like an ordinary editable form. */
+fieldset[disabled] { opacity: .6; }

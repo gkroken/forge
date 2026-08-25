@@ -24,9 +24,9 @@ observable. `go test ./...` (incl. `-race`), `go vet`, `bash test.sh` green.
 | 4 | `Apply` silently overwrites + adopts UI-created objects (`config.go:427`) | C2 | ✅ |
 | 5 | `Plan` cannot distinguish "mine" from "someone else's" | C2 | ✅ |
 | 6 | No conflict check on adoption (Grafana footgun, not K8s SSA) | C2 | ✅ |
-| 7 | Config-owned objects are freely editable via UI/API | C3 | [ ] |
-| 8 | Object ownership is invisible in API responses and UI | C3 | [ ] |
-| 9 | No break-glass path for a 03:00 incident | C3 | [ ] |
+| 7 | Config-owned objects are freely editable via UI/API | C3 | ✅ |
+| 8 | Object ownership is invisible in API responses and UI | C3 | ✅ |
+| 9 | No break-glass path for a 03:00 incident | C3 | ✅ |
 | 10 | Drift between file and state is silent until next boot | C4 | [ ] |
 | 11 | No drift metric → Argo/Flux cannot show OutOfSync for forge state | C4 | [ ] |
 
@@ -127,24 +127,40 @@ field names listed; `-config-export` → commit → boot adopts cleanly with zer
 
 ## Phase C3 — Enforcement (the file actually wins)
 
+**STATUS: C3 COMPLETE.** 13 new tests; live-verified (409 with source+remedy,
+`managedBy` in listings, badge + disabled fieldset in the UI, audited refusal).
+`go test ./...`, `go vet`, `bash test.sh` (20/20) green.
+
+**Two corrections to the plan below, both found while implementing:**
+
+1. **Not middleware over the route registrations.** `/api/v1/repos/{name}/`
+   carries ~14 sub-resources (`cleanup`, `scan`, `promote`, `component`,
+   `trash`, `invalidate`, `reindex`, …) that mutate a repo's **artifacts**, not
+   its definition. A blanket route gate would have broken every one of them on
+   any config-managed repo. The gate is applied at the specific mutation points
+   instead; `TestConfigOwned_ContentRoutesNotGated` guards the distinction.
+2. **The UI was a second bypass.** `uiAdminDeleteRepo`, `processRepoForm`, and
+   the cleanup-policy repo assignment call `s.Repos.Update/Delete` directly, so
+   the API gate did not cover clicking. Those paths are gated too, with tests.
+
 Acceptance: a config-owned repo cannot be edited or deleted through UI or API; the
 UI shows it as managed with the source path; break-glass exists and leaves a trace.
 
-- [ ] **#8 Surface ownership.** `managedBy: "config" | "api"` on objects returned by
+- [x] **#8 Surface ownership.** `managedBy: "config" | "api"` on objects returned by
       `/api/v1/{repos,roles,cleanup-policies,security-policies,webhooks}`, derived from the
       managed set.
-- [ ] **#7 Gate mutating writes.** Middleware over the 10 route registrations at
+- [x] **#7 Gate mutating writes.** Middleware over the 10 route registrations at
       `server.go:379-394`: non-GET to a config-owned object → **409** with the config source
       path. Read paths untouched.
-- [ ] **#7 UI: block at the door.** "Managed by config" badge + **disabled** edit/delete
+- [x] **#7 UI: block at the door.** "Managed by config" badge + **disabled** edit/delete
       controls on `admin_repos.html`, `admin_repo_form.html`, `cleanup_policies.html`,
       `security_policies.html`, `webhooks.html`, `access.html`. Follow existing CSP-safe
       conventions — **zero inline handlers**. Explicitly avoids grafana#37679.
-- [ ] **#9 Break-glass.** `-allow-config-override` starts forge with the gate off (409s
+- [x] **#9 Break-glass.** `-allow-config-override` starts forge with the gate off (409s
       become warnings). Every override write audits with actor + object, and marks the object
       drifted until the next `Apply`. No per-request force header — a flag is greppable in a
       postmortem; a header is not.
-- [ ] Tests: 409 on write to config-owned repo/role/policy/webhook; 200 on API-created ones;
+- [x] Tests: 409 on write to config-owned repo/role/policy/webhook; 200 on API-created ones;
       GET unaffected; override flag permits + audits; template render asserts disabled controls.
 
 ## Phase C4 — Drift visibility

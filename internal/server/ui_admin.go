@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"forge/internal/auth"
+	"forge/internal/config"
 	"forge/internal/obs"
 	"forge/internal/proxy"
 	"forge/internal/repo"
@@ -64,17 +65,20 @@ type adminReposPage struct {
 // repo identity + storage usage (member-aggregated for groups) + upstream
 // health, plus what the Browse/Configure/Delete actions need.
 type adminRepoRow struct {
-	Name          string
-	Format        string
-	Kind          string
-	Upstream      string
-	Members       []string
-	ArtifactCount int
-	SizeBytes     int64
-	Health        string // "ok" | "down" | "" (proxy only)
-	VulnTotal     int    // vulnerable components in this repo (0 = none / not scanned)
-	VulnCritical  int    // of those, how many are critical
-	VulnWorst     string // worst severity label for the row badge ("" = none)
+	Name     string
+	Format   string
+	Kind     string
+	Upstream string
+	Members  []string
+	// ManagedByConfig marks a repo declared in the -config file. The UI shows a
+	// badge and disables Configure/Delete; the API refuses those writes anyway.
+	ManagedByConfig bool
+	ArtifactCount   int
+	SizeBytes       int64
+	Health          string // "ok" | "down" | "" (proxy only)
+	VulnTotal       int    // vulnerable components in this repo (0 = none / not scanned)
+	VulnCritical    int    // of those, how many are critical
+	VulnWorst       string // worst severity label for the row badge ("" = none)
 }
 
 type adminFormPage struct {
@@ -141,25 +145,30 @@ func (s *Server) memberOptions(current repo.Repository) []memberOption {
 }
 
 type repoConfigPage struct {
-	Title          string
-	ActiveNav      string
-	Repo           repo.Repository
-	KindStr        string
-	Error          string
-	Flash          string
-	Formats        []string
-	Kinds          []string
-	PolicyNames    []string
-	Members        []memberOption // candidate repos for a group's member picker
-	ActiveTab      string         // "settings" | "content" | "access" | "security" | "integrity" | "activity"
-	ArtifactCount  int
-	SizeBytes      int64
-	StoragePct     int
-	QuotaBytes     int64 // 0 = unlimited
-	QuotaPct       int   // used/quota, 0..100+ (clamped for the bar width in the template)
-	QuotaNear      bool  // >=80% used — warn styling
-	QuotaOver      bool  // >=100% used — over-quota styling
-	RecentActivity []auditRow
+	Title     string
+	ActiveNav string
+	Repo      repo.Repository
+	KindStr   string
+	Error     string
+	Flash     string
+	// ManagedByConfig makes the Settings tab read-only. A form that looks
+	// editable but refuses to save is the most complained-about part of Grafana
+	// provisioning (grafana/grafana#37679) — disable at the door instead.
+	ManagedByConfig bool
+	ConfigSource    string
+	Formats         []string
+	Kinds           []string
+	PolicyNames     []string
+	Members         []memberOption // candidate repos for a group's member picker
+	ActiveTab       string         // "settings" | "content" | "access" | "security" | "integrity" | "activity"
+	ArtifactCount   int
+	SizeBytes       int64
+	StoragePct      int
+	QuotaBytes      int64 // 0 = unlimited
+	QuotaPct        int   // used/quota, 0..100+ (clamped for the bar width in the template)
+	QuotaNear       bool  // >=80% used — warn styling
+	QuotaOver       bool  // >=100% used — over-quota styling
+	RecentActivity  []auditRow
 }
 
 // ── access view types ─────────────────────────────────────────────────────────
@@ -287,6 +296,8 @@ type roleCard struct {
 	RoleClass    string // CSS badge class
 	MemberCount  int
 	IsPredefined bool
+	// ManagedByConfig marks a custom role declared in the -config file.
+	ManagedByConfig bool
 }
 
 // adminTokensV2Page wraps adminTokensPage for the sidebar (Foundry) layout.
@@ -377,6 +388,7 @@ func (s *Server) uiAdminHome(w http.ResponseWriter, r *http.Request) {
 			ArtifactCount: bsizes.CountByRepo[rp.Name],
 			SizeBytes:     bsizes.ByRepo[rp.Name],
 		}
+		row.ManagedByConfig = s.configOwns(config.KindRepository, rp.Name)
 		if rp.Kind == repo.Proxy && rp.Upstream != "" {
 			row.Health = proxy.HealthOf(rp.Upstream)
 		}
@@ -546,30 +558,38 @@ func (s *Server) renderRepoConfig(w http.ResponseWriter, rp repo.Repository, tab
 	activity := buildRepoActivity(s.AuditLog, rp.Name)
 
 	render(w, tmplRepoConfig, "admin_shell.html", repoConfigPage{
-		Title:          rp.Name + " — Settings",
-		ActiveNav:      "repos",
-		Repo:           rp,
-		KindStr:        string(rp.Kind),
-		Error:          errMsg,
-		Flash:          flash,
-		Formats:        allFormats,
-		Kinds:          allKinds,
-		PolicyNames:    s.policyNames(),
-		Members:        s.memberOptions(rp),
-		ActiveTab:      tab,
-		ArtifactCount:  bsizes.CountByRepo[rp.Name],
-		SizeBytes:      sizeBytes,
-		StoragePct:     storagePct,
-		QuotaBytes:     quotaBytes,
-		QuotaPct:       quotaPct,
-		QuotaNear:      quotaBytes > 0 && quotaPct >= 80,
-		QuotaOver:      quotaBytes > 0 && quotaPct >= 100,
-		RecentActivity: activity,
+		Title:     rp.Name + " — Settings",
+		ActiveNav: "repos",
+		Repo:      rp,
+		KindStr:   string(rp.Kind),
+		Error:     errMsg,
+
+		ManagedByConfig: s.configOwns(config.KindRepository, rp.Name) && !s.configOverride,
+		ConfigSource:    s.configSource,
+		Flash:           flash,
+		Formats:         allFormats,
+		Kinds:           allKinds,
+		PolicyNames:     s.policyNames(),
+		Members:         s.memberOptions(rp),
+		ActiveTab:       tab,
+		ArtifactCount:   bsizes.CountByRepo[rp.Name],
+		SizeBytes:       sizeBytes,
+		StoragePct:      storagePct,
+		QuotaBytes:      quotaBytes,
+		QuotaPct:        quotaPct,
+		QuotaNear:       quotaBytes > 0 && quotaPct >= 80,
+		QuotaOver:       quotaBytes > 0 && quotaPct >= 100,
+		RecentActivity:  activity,
 	})
 }
 
 func (s *Server) uiAdminDeleteRepo(w http.ResponseWriter, r *http.Request, name string) {
 	if !s.Enforcer.RequireAdminUI(w, r) {
+		return
+	}
+	// The UI mutates repos through its own handlers, so the admin-API gate does
+	// not cover this path — enforce here too.
+	if s.refuseConfigOwned(w, r, config.KindRepository, name) {
 		return
 	}
 	if err := s.Repos.Delete(name); err != nil {
@@ -695,6 +715,11 @@ func (s *Server) processRepoForm(w http.ResponseWriter, r *http.Request, existin
 		return
 	}
 
+	if isEdit && s.configOwns(config.KindRepository, existingName) && !s.configOverride {
+		s.reRenderForm(w, r, existingName, isEdit,
+			"This repository is managed by "+s.configSource+". Edit it there and redeploy.")
+		return
+	}
 	var opErr error
 	if isEdit {
 		opErr = s.Repos.Update(rp)
@@ -1078,6 +1103,8 @@ func (s *Server) buildRolesTabData() []roleCard {
 					RoleClass:    roleClass(r.Name),
 					MemberCount:  memberCount[r.Name],
 					IsPredefined: false,
+
+					ManagedByConfig: s.configOwns(config.KindRole, r.Name),
 				})
 			}
 		}

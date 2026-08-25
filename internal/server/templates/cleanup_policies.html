@@ -52,7 +52,7 @@
           {{range .Policies}}
           <tr>
             <td>
-              <div class="fw-600">{{.Name}}</div>
+              <div class="fw-600">{{.Name}}{{if .ManagedByConfig}} <span class="status-pill pill-config" title="Declared in the config file; edit it there, not here.">config</span>{{end}}</div>
               {{if .Description}}<div style="font-size:11.5px;color:var(--text-muted);">{{.Description}}</div>{{end}}
             </td>
             <td style="font-size:12.5px;color:var(--text-muted);">{{.Criteria}}</td>
@@ -68,7 +68,12 @@
               {{else}}
               <span class="form-hint" title="Assign a repository before running" style="margin-right:6px">No repos</span>
               {{end}}
+              {{if .ManagedByConfig}}
+              <span class="btn btn-sm" aria-disabled="true"
+                    title="Managed by the config file — edit it there and redeploy.">Edit</span>
+              {{else}}
               <a href="/ui/admin/cleanup-policies/{{.Name}}/edit" class="btn btn-sm">Edit</a>
+              {{end}}
             </td>
           </tr>
           {{end}}

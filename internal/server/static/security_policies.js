@@ -74,16 +74,25 @@
       }
       tbody.innerHTML = list.map(function (p) {
         var supp = (p.suppressions || []).length;
+        // managedBy comes from the API. A config-managed policy is read-only:
+        // badge it and disable the controls rather than letting the click 409.
+        var managed = p.managedBy === 'config';
+        var badge = managed
+          ? ' <span class="status-pill pill-config" title="Declared in the config file; edit it there, not here.">config</span>'
+          : '';
         return '<tr>' +
-          '<td><strong>' + esc(p.name) + '</strong>' +
+          '<td><strong>' + esc(p.name) + '</strong>' + badge +
             (p.description ? '<div style="font-size:11px;color:var(--text-muted);">' + esc(p.description) + '</div>' : '') + '</td>' +
           '<td>' + modePill(p.mode) + '</td>' +
           '<td style="text-transform:capitalize;">' + esc(p.threshold || 'high') + '</td>' +
           '<td>' + (p.failOpen ? 'Serve' : '<span style="color:var(--danger);">Block</span>') + '</td>' +
           '<td>' + (supp ? esc(supp) : '—') + '</td>' +
           '<td style="text-align:right;">' +
-            '<button class="btn btn-sm" data-edit="' + esc(p.name) + '">Edit</button> ' +
-            '<button class="btn btn-sm btn-danger" data-del="' + esc(p.name) + '">Delete</button>' +
+            (managed
+              ? '<span class="btn btn-sm" aria-disabled="true" title="Managed by the config file — edit it there and redeploy.">Edit</span> ' +
+                '<span class="btn btn-sm btn-danger" aria-disabled="true" title="Managed by the config file — remove it there and redeploy.">Delete</span>'
+              : '<button class="btn btn-sm" data-edit="' + esc(p.name) + '">Edit</button> ' +
+                '<button class="btn btn-sm btn-danger" data-del="' + esc(p.name) + '">Delete</button>') +
           '</td></tr>';
       }).join('');
       bindRowButtons(list);

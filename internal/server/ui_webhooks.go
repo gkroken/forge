@@ -7,6 +7,8 @@ import (
 	"forge/internal/queue"
 	"forge/internal/repo"
 	"forge/internal/webhook"
+
+	"forge/internal/config"
 )
 
 type webhooksPage struct {
@@ -30,6 +32,10 @@ type webhookRow struct {
 	EventCSV    string // raw subscribed types, comma-joined ("" = all) for the edit form
 	Status      string
 	StatusClass string
+	// ManagedByConfig marks a subscription declared in the -config file: Edit
+	// and Delete are disabled, but Deliveries/Test stay available (they inspect
+	// and exercise the endpoint rather than redefining it).
+	ManagedByConfig bool
 }
 
 // uiWebhooks renders the webhook endpoints admin page.
@@ -79,6 +85,8 @@ func (s *Server) uiWebhooks(w http.ResponseWriter, r *http.Request) {
 					Repo: repoLabel, RepoValue: repoValue,
 					Events: eventsLabel, EventCSV: strings.Join(sub.Events, ","),
 					Status: status, StatusClass: cls,
+
+					ManagedByConfig: s.configOwns(config.KindWebhook, sub.Name),
 				})
 			}
 			page.Count = len(subs)
