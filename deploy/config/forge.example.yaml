@@ -1,0 +1,147 @@
+# forge config-as-code — worked example.
+#
+#   ./forge -config-check -config deploy/config/forge.example.yaml   # dry run
+#   ./forge -config       -config deploy/config/forge.example.yaml   # apply on boot
+#
+# The file is the SOURCE OF TRUTH for everything it declares: objects listed
+# here refuse edits through the admin API and UI (409), and are badged "config".
+# Unknown keys are a hard error, so a typo fails at boot instead of silently
+# doing nothing.
+#
+# Secrets are never committed: placeholders are expanded from the environment at
+# load time, and an unset variable is an error rather than an empty string.
+# This example needs WEBHOOK_URL, WEBHOOK_SECRET and LDAP_BIND_PASSWORD set.
+#
+# Expansion runs on the raw text before parsing, so a placeholder is substituted
+# ANYWHERE in the file — including inside comments. That is why this header
+# spells the variables out instead of showing the placeholder syntax; see the
+# runbook for it.
+#
+# Full reference: docs/runbooks/config-as-code.md
+
+# Delete objects this file previously created but no longer lists.
+# Objects created via the API/UI are never pruned, whatever this says.
+prune: false
+
+# Take ownership of a pre-existing object whose settings DIFFER from this file,
+# overwriting it. Adopting an object that already matches needs no flag; this is
+# only for conflicts, and every forced adoption is audited. Leave it false and
+# let forge tell you what would be overwritten first.
+adopt: false
+
+repositories:
+  # ── hosted ────────────────────────────────────────────────────────────────
+  - name: maven-hosted
+    format: maven
+    kind: hosted
+    enabled: true
+    anonymousRead: false
+    cleanupPolicyName: keep-releases-30d
+
+  - name: npm-hosted
+    format: npm
+    kind: hosted
+    enabled: true
+    anonymousRead: false
+    securityPolicyName: warn-high
+
+  - name: helm-hosted
+    format: helm
+    kind: hosted
+    enabled: true
+    anonymousRead: false
+
+  - name: docker-hosted
+    format: oci
+    kind: hosted
+    enabled: true
+    anonymousRead: false
+
+  # ── proxy ─────────────────────────────────────────────────────────────────
+  # contentMaxAge / metadataMaxAge are durations ("10m", "24h"), not numbers.
+  - name: maven-central
+    format: maven
+    kind: proxy
+    enabled: true
+    anonymousRead: true
+    upstream: https://repo1.maven.org/maven2
+
+  - name: npm-proxy
+    format: npm
+    kind: proxy
+    enabled: true
+    anonymousRead: true
+    upstream: https://registry.npmjs.org
+
+  - name: cran-proxy
+    format: cran
+    kind: proxy
+    enabled: true
+    anonymousRead: true
+    upstream: https://cloud.r-project.org
+
+  # ── group ─────────────────────────────────────────────────────────────────
+  # Members are searched in order; the first hit wins.
+  - name: maven-group
+    format: maven
+    kind: group
+    enabled: true
+    anonymousRead: true
+    members:
+      - maven-hosted
+      - maven-central
+
+cleanupPolicies:
+  - name: keep-releases-30d
+    description: Keep only release versions; remove anything older than 30 days
+    keepReleasesOnly: true
+    deleteOlderThanDays: 30
+    interval: 24h
+
+securityPolicies:
+  - name: warn-high
+    description: Warn on downloads that have HIGH or CRITICAL vulnerabilities
+    mode: warn
+    threshold: high
+    failOpen: true
+
+# Applies to any repository without its own securityPolicyName.
+securityDefault:
+  mode: "off"
+  threshold: critical
+  failOpen: true
+
+roles:
+  - name: ci-deployer
+    description: "CI pipeline: publish artifacts, no admin access"
+    baseRole: write
+
+webhooks:
+  - name: ci-publish-notify
+    url: ${WEBHOOK_URL}
+    secret: ${WEBHOOK_SECRET}
+    events:
+      - artifact.published
+    enabled: true
+
+# Directory authentication. Validated but not reconciled — it is runtime wiring,
+# not a managed object set, so -config-export omits it.
+ldap:
+  urls:
+    - ldaps://dc1.example.com:636
+    - ldaps://dc2.example.com:636
+  bindDN: cn=forge-svc,ou=service,dc=example,dc=com
+  bindPassword: ${LDAP_BIND_PASSWORD}
+  userBaseDN: ou=people,dc=example,dc=com
+  userFilter: (sAMAccountName=%s)
+  emailAttr: mail
+  groupMode: memberof
+  groupMappings:
+    - group: forge-admins
+      role: admin
+    - group: forge-devs
+      role: write
+  defaultGrants:
+    - repo: "*"
+      role: read
+  tokenTTL: 8h

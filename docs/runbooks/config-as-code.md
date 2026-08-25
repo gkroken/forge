@@ -24,6 +24,34 @@ Export defaults to JSON (matching what the admin API emits, so **export → edit
 apply** round-trips without conversion); pass `-config-export-format=yaml` for
 YAML.
 
+## Unknown keys are an error
+
+A key that matches no field is **rejected**, with its path and a suggestion:
+
+```
+config: forge.config.yaml: unknown field(s):
+  "repositories[0].anonymusRead" (did you mean "anonymousRead"?)
+  "totallyMadeUpTopLevelKey"
+```
+
+`encoding/json` would discard those silently. That was tolerable when config was
+an additive seed loader; now that the file is the source of truth it is not — a
+typo'd `prune` stops deletions happening, and a typo'd `claims` silently
+disables dependency-confusion protection for a repository. Duplicate YAML keys
+are rejected for the same reason (they otherwise keep the last value).
+
+This strictness applies to **config files only**. Records read back out of the
+meta store stay lenient about unknown fields, so a store written by a newer
+forge is still readable by an older one.
+
+### Gotcha: placeholders expand everywhere
+
+`${VAR}` substitution runs on the raw text *before* parsing, which is what makes
+it work identically for YAML and JSON. The consequence is that a placeholder is
+expanded **anywhere** in the file, including inside comments — and an unset
+variable is an error. Don't write the placeholder syntax in a comment unless
+that variable is actually set.
+
 ## The config file schema
 
 All sections are optional. A partial file is valid and additive (objects not
@@ -99,11 +127,11 @@ extraEnvFrom:
 Add this step after building the binary to catch config regressions per PR:
 
 ```yaml
-- name: validate forge.config.json
+- name: validate forge.config.yaml
   run: |
     go build -o forge ./cmd/forge
     WEBHOOK_URL=https://example.com WEBHOOK_SECRET=dummy \
-      ./forge -config-check -config deploy/config/forge.example.json
+      ./forge -config-check -config deploy/config/forge.example.yaml
 ```
 
 ## Prune semantics and the managed-set guarantee

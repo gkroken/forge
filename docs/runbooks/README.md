@@ -10,7 +10,7 @@ Operational procedures for running forge in production.
 | [Backup & restore](backup-restore.md) | Scheduled backup, disaster recovery |
 | [Incident response](incident-response.md) | High error rate, upstream down, disk full, OOM |
 | [Scaling](scaling.md) | Running N replicas, per-pod vs fleet-wide state, Prometheus/Grafana |
-| [Config as code](config-as-code.md) | Declarative repos/policies/webhooks via `forge.config.json` |
+| [Config as code](config-as-code.md) | Declarative repos/policies/webhooks via `forge.config.yaml` |
 | [Nexus migration](nexus-migration.md) | Importing repos, content and permissions from Nexus 3 |
 
 ## Quick orientation
