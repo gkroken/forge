@@ -14,8 +14,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"sigs.k8s.io/yaml"
 
 	"forge/internal/auth"
 	"forge/internal/cleanup"
@@ -29,13 +32,13 @@ import (
 // File is the top-level shape of forge.config.json.
 // All sections are optional; a partial file is valid and additive.
 type File struct {
-	Repositories     []repo.Repository      `json:"repositories,omitempty"`
-	CleanupPolicies  []cleanup.NamedPolicy  `json:"cleanupPolicies,omitempty"`
-	SecurityPolicies []vuln.NamedPolicy     `json:"securityPolicies,omitempty"`
+	Repositories     []repo.Repository     `json:"repositories,omitempty"`
+	CleanupPolicies  []cleanup.NamedPolicy `json:"cleanupPolicies,omitempty"`
+	SecurityPolicies []vuln.NamedPolicy    `json:"securityPolicies,omitempty"`
 	// SecurityDefault overrides the global vulnerability-gate default.
-	SecurityDefault  *vuln.Policy           `json:"securityDefault,omitempty"`
-	Roles            []auth.CustomRole      `json:"roles,omitempty"`
-	Webhooks         []webhook.Subscription `json:"webhooks,omitempty"`
+	SecurityDefault *vuln.Policy           `json:"securityDefault,omitempty"`
+	Roles           []auth.CustomRole      `json:"roles,omitempty"`
+	Webhooks        []webhook.Subscription `json:"webhooks,omitempty"`
 	// LDAP declares the directory-authentication settings honored on boot in
 	// -config mode (an alternative to the -ldap-* flags; the block wins when both
 	// are set). The bind password should be supplied via ${ENV_VAR}. It is a
@@ -59,11 +62,11 @@ type Appliers struct {
 
 // Result summarises what Apply or Plan found.
 type Result struct {
-	Repositories     KindResult
-	CleanupPolicies  KindResult
-	SecurityPolicies KindResult
-	Roles            KindResult
-	Webhooks         KindResult
+	Repositories       KindResult
+	CleanupPolicies    KindResult
+	SecurityPolicies   KindResult
+	Roles              KindResult
+	Webhooks           KindResult
 	SecurityDefaultSet bool // true when the config specified SecurityDefault
 	LDAPConfigured     bool // true when the config specified an ldap block
 }
@@ -80,7 +83,11 @@ type KindResult struct {
 func (r KindResult) Changes() int { return r.Created + r.Updated + r.Deleted }
 
 // Load reads the file at path, expands ${VAR} env-var placeholders, and
-// unmarshals it as JSON. Referencing an undefined env var is an error.
+// unmarshals it. The format is chosen by extension: .yaml/.yml parse as YAML,
+// anything else as JSON. Referencing an undefined env var is an error.
+//
+// Placeholder expansion runs on the raw text before parsing, so ${VAR} secret
+// indirection behaves identically in both formats.
 func Load(path string) (File, error) {
 	raw, err := os.ReadFile(path) // #nosec G304 -- path is the operator-supplied -config file, not client input
 	if err != nil {
@@ -90,11 +97,50 @@ func Load(path string) (File, error) {
 	if err != nil {
 		return File{}, fmt.Errorf("config: %w", err)
 	}
-	var f File
-	if err := json.Unmarshal([]byte(expanded), &f); err != nil {
+	f, err := Unmarshal([]byte(expanded), IsYAMLPath(path))
+	if err != nil {
 		return File{}, fmt.Errorf("config: parse %s: %w", path, err)
 	}
 	return f, nil
+}
+
+// IsYAMLPath reports whether path should be parsed as YAML, based on its
+// extension. JSON is a subset of YAML 1.2, so a .json file parsed as YAML would
+// also succeed; the extension check keeps error messages format-accurate.
+func IsYAMLPath(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".yaml", ".yml":
+		return true
+	}
+	return false
+}
+
+// Unmarshal decodes a config document. When asYAML is set the bytes are parsed
+// as YAML (converted to JSON internally, so every existing json struct tag is
+// honoured unchanged); otherwise as JSON.
+func Unmarshal(data []byte, asYAML bool) (File, error) {
+	var f File
+	if asYAML {
+		// sigs.k8s.io/yaml converts YAML->JSON and delegates to encoding/json,
+		// so File and every nested type keep their existing `json:` tags.
+		if err := yaml.Unmarshal(data, &f); err != nil {
+			return File{}, err
+		}
+		return f, nil
+	}
+	if err := json.Unmarshal(data, &f); err != nil {
+		return File{}, err
+	}
+	return f, nil
+}
+
+// Marshal encodes f as YAML or JSON. JSON output is indented to match what
+// -config-export has always produced.
+func Marshal(f File, asYAML bool) ([]byte, error) {
+	if asYAML {
+		return yaml.Marshal(f)
+	}
+	return json.MarshalIndent(f, "", "  ")
 }
 
 // expandEnv replaces ${VAR} (and $VAR) with the named env var's value.

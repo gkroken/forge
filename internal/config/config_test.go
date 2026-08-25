@@ -340,3 +340,182 @@ func TestExport_RoundTrip(t *testing.T) {
 			res.Repositories, res.CleanupPolicies, res.Roles)
 	}
 }
+
+// --- YAML support (C1) ---------------------------------------------------
+
+// TestIsYAMLPath covers extension detection, including case-insensitivity.
+func TestIsYAMLPath(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{"forge.config.yaml", true},
+		{"forge.config.yml", true},
+		{"/etc/forge/CONFIG.YAML", true},
+		{"forge.config.json", false},
+		{"config", false},
+		{"a.yaml.json", false},
+	} {
+		if got := config.IsYAMLPath(tc.path); got != tc.want {
+			t.Errorf("config.IsYAMLPath(%q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
+
+// TestLoad_YAMLEquivalentToJSON is the core guarantee of C1: the same logical
+// config authored as YAML and as JSON must produce an identical File.
+func TestLoad_YAMLEquivalentToJSON(t *testing.T) {
+	dir := t.TempDir()
+
+	jsonSrc := `{
+	  "prune": true,
+	  "repositories": [
+	    {"name":"maven-central","format":"maven","kind":"proxy",
+	     "upstream":"https://repo1.maven.org/maven2","anonymousRead":true,"enabled":true}
+	  ],
+	  "roles": [
+	    {"name":"backend","grants":[{"repo":"maven-*","actions":["read","write"]}]}
+	  ],
+	  "webhooks": [{"name":"slack","url":"https://example.com/hook"}]
+	}`
+	yamlSrc := `
+prune: true
+repositories:
+  - name: maven-central
+    format: maven
+    kind: proxy
+    upstream: https://repo1.maven.org/maven2
+    anonymousRead: true
+    enabled: true
+roles:
+  - name: backend
+    grants:
+      - repo: "maven-*"
+        actions: [read, write]
+webhooks:
+  - name: slack
+    url: https://example.com/hook
+`
+	jp := filepath.Join(dir, "cfg.json")
+	yp := filepath.Join(dir, "cfg.yaml")
+	if err := os.WriteFile(jp, []byte(jsonSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(yp, []byte(yamlSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fj, err := config.Load(jp)
+	if err != nil {
+		t.Fatalf("load json: %v", err)
+	}
+	fy, err := config.Load(yp)
+	if err != nil {
+		t.Fatalf("load yaml: %v", err)
+	}
+	if !sameJSON(fj, fy) {
+		gj, _ := json.Marshal(fj)
+		gy, _ := json.Marshal(fy)
+		t.Fatalf("YAML and JSON disagree:\n json=%s\n yaml=%s", gj, gy)
+	}
+}
+
+// TestLoad_JSONFileStillParsesAsJSON guards backward compatibility: existing
+// .json configs must keep working untouched.
+func TestLoad_JSONFileStillParsesAsJSON(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "cfg.json")
+	if err := os.WriteFile(f, []byte(`{"repositories":[{"name":"r","format":"npm"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := config.Load(f)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(got.Repositories) != 1 || got.Repositories[0].Name != "r" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+// TestLoad_YAMLEnvExpand verifies ${VAR} indirection is format-agnostic —
+// expansion runs on raw text before parsing.
+func TestLoad_YAMLEnvExpand(t *testing.T) {
+	t.Setenv("TEST_YAML_UPSTREAM", "https://example.com")
+	t.Setenv("TEST_YAML_SECRET", "s3cr3t")
+	f := filepath.Join(t.TempDir(), "cfg.yaml")
+	if err := os.WriteFile(f, []byte(`
+repositories:
+  - name: proxy
+    format: npm
+    kind: proxy
+    upstream: ${TEST_YAML_UPSTREAM}
+webhooks:
+  - name: hook
+    url: https://example.com/h
+    secret: ${TEST_YAML_SECRET}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := config.Load(f)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got.Repositories[0].Upstream != "https://example.com" {
+		t.Errorf("upstream = %q", got.Repositories[0].Upstream)
+	}
+	if got.Webhooks[0].Secret != "s3cr3t" {
+		t.Errorf("secret = %q", got.Webhooks[0].Secret)
+	}
+}
+
+// TestLoad_YAMLUndefinedEnvVar — an unset placeholder must fail loudly in YAML
+// exactly as it does in JSON, never silently blank.
+func TestLoad_YAMLUndefinedEnvVar(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "cfg.yaml")
+	if err := os.WriteFile(f, []byte("webhooks:\n  - url: ${FORGE_TEST_UNDEFINED_YAML_XYZ}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Load(f); err == nil {
+		t.Fatal("expected error for undefined env var, got nil")
+	}
+}
+
+// TestLoad_MalformedYAML reports a parse error rather than silently producing
+// an empty File (which Apply would treat as "delete everything" under prune).
+func TestLoad_MalformedYAML(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "cfg.yaml")
+	if err := os.WriteFile(f, []byte("repositories:\n  - name: a\n   format: bad-indent\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Load(f); err == nil {
+		t.Fatal("expected parse error for malformed YAML, got nil")
+	}
+}
+
+// TestMarshal_RoundTrip covers both export formats surviving a re-parse.
+func TestMarshal_RoundTrip(t *testing.T) {
+	orig := config.File{
+		Prune:        true,
+		Repositories: []repo.Repository{{Name: "r", Format: "maven", Kind: repo.Hosted, Enabled: true}},
+	}
+	for _, asYAML := range []bool{false, true} {
+		out, err := config.Marshal(orig, asYAML)
+		if err != nil {
+			t.Fatalf("marshal(yaml=%v): %v", asYAML, err)
+		}
+		got, err := config.Unmarshal(out, asYAML)
+		if err != nil {
+			t.Fatalf("unmarshal(yaml=%v): %v", asYAML, err)
+		}
+		if !sameJSON(orig, got) {
+			t.Errorf("yaml=%v round-trip mismatch:\n want %+v\n got  %+v", asYAML, orig, got)
+		}
+	}
+}
+
+// sameJSON compares two values by their JSON encoding, matching how the config
+// package itself decides equality.
+func sameJSON(a, b any) bool {
+	ja, err1 := json.Marshal(a)
+	jb, err2 := json.Marshal(b)
+	return err1 == nil && err2 == nil && string(ja) == string(jb)
+}

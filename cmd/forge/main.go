@@ -30,9 +30,9 @@ import (
 	"forge/internal/format/maven"
 	"forge/internal/format/npm"
 	"forge/internal/format/oci"
+	"forge/internal/ldap"
 	"forge/internal/meta"
 	"forge/internal/obs"
-	"forge/internal/ldap"
 	"forge/internal/oidc"
 	"forge/internal/queue"
 	"forge/internal/repo"
@@ -86,17 +86,19 @@ func main() {
 	// Trivy OCI image scanning. Setting -trivy-addr enables the sidecar scanner;
 	// Trivy must be reachable at -trivy-binary (default: found in PATH).
 	// Each flag defaults to its TRIVY_* env var so either works.
-	trivyBinary    := flag.String("trivy-binary", envOr("TRIVY_BINARY", "trivy"), "path to the trivy binary (env TRIVY_BINARY)")
-	trivyAddr      := flag.String("trivy-addr", os.Getenv("TRIVY_ADDR"), "forge registry address for Trivy image pulls, e.g. localhost:8080; setting this enables OCI scanning (env TRIVY_ADDR)")
+	trivyBinary := flag.String("trivy-binary", envOr("TRIVY_BINARY", "trivy"), "path to the trivy binary (env TRIVY_BINARY)")
+	trivyAddr := flag.String("trivy-addr", os.Getenv("TRIVY_ADDR"), "forge registry address for Trivy image pulls, e.g. localhost:8080; setting this enables OCI scanning (env TRIVY_ADDR)")
 	trivyAuthToken := flag.String("trivy-auth-token", os.Getenv("TRIVY_AUTH_TOKEN"), "forge API token for Trivy registry auth; empty = no auth (env TRIVY_AUTH_TOKEN)")
 
-	// Declarative config-as-code. When -config is set, forge reads the JSON
-	// file on every boot and reconciles repos/policies/roles/webhooks to match.
+	// Declarative config-as-code. When -config is set, forge reads the file on
+	// every boot (JSON, or YAML when the extension is .yaml/.yml) and
+	// reconciles repos/policies/roles/webhooks to match.
 	// Secrets are injected via ${ENV_VAR} placeholders — never commit them.
 	// env FORGE_CONFIG overrides the default (empty = eval mode, seeds used).
-	configPath   := flag.String("config", envOr("FORGE_CONFIG", ""), "path to forge.config.json; enables config-as-code mode (env FORGE_CONFIG)")
-	configCheck  := flag.Bool("config-check", false, "validate -config file and print plan, then exit 0 (valid) / 1 (invalid)")
-	configExport := flag.Bool("config-export", false, "print current state as forge.config.json to stdout and exit 0")
+	configPath := flag.String("config", envOr("FORGE_CONFIG", ""), "path to forge.config.{json,yaml}; enables config-as-code mode (env FORGE_CONFIG)")
+	configCheck := flag.Bool("config-check", false, "validate -config file and print plan, then exit 0 (valid) / 1 (invalid)")
+	configExport := flag.Bool("config-export", false, "print current state as a config file to stdout and exit 0")
+	configExportFormat := flag.String("config-export-format", "json", "format for -config-export: json | yaml")
 	flag.Parse()
 
 	obs.InitLog(*logFormat)
@@ -320,11 +322,24 @@ func main() {
 		Meta:     metaStore,
 	}
 	if *configExport {
+		asYAML := false
+		switch strings.ToLower(*configExportFormat) {
+		case "yaml", "yml":
+			asYAML = true
+		case "json":
+		default:
+			slog.Error("-config-export-format must be json or yaml", "got", *configExportFormat)
+			os.Exit(1)
+		}
 		f, err := config.Export(cfgAppliers)
 		must(err)
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		must(enc.Encode(f))
+		out, err := config.Marshal(f, asYAML)
+		must(err)
+		if !asYAML {
+			out = append(out, '\n') // match the trailing newline json.Encoder wrote
+		}
+		_, err = os.Stdout.Write(out)
+		must(err)
 		os.Exit(0)
 	}
 	// ldapFromConfig, when set by a -config file's ldap block, overrides the
