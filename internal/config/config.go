@@ -128,7 +128,13 @@ func Load(path string) (File, error) {
 	if err != nil {
 		return File{}, fmt.Errorf("config: %w", err)
 	}
-	f, err := Unmarshal([]byte(expanded), IsYAMLPath(path))
+	asYAML := IsYAMLPath(path)
+	// Reject unknown keys before decoding: encoding/json would discard them
+	// silently, and a typo in a source-of-truth file must not be a no-op.
+	if err := CheckKeys([]byte(expanded), asYAML); err != nil {
+		return File{}, fmt.Errorf("config: %s: %w", path, err)
+	}
+	f, err := Unmarshal([]byte(expanded), asYAML)
 	if err != nil {
 		return File{}, fmt.Errorf("config: parse %s: %w", path, err)
 	}
