@@ -370,7 +370,8 @@ jobs:
   cluster-install:
     name: Cluster install test (kind)
     # Run on push to main and nightly; skip on PRs to keep them fast.
-    if: github.event_name == 'push' || github.event_name == 'schedule'
+    # workflow_dispatch too, so a manual run reproduces the nightly faithfully.
+    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -494,8 +495,10 @@ jobs:
 
   quickstart:
     name: Quickstart gate (< 10 min, eval path)
-    # Run nightly only — docker compose build is slow and not worth blocking PRs.
-    if: github.event_name == 'schedule'
+    # Nightly only — docker compose build is slow and not worth blocking PRs.
+    # workflow_dispatch so the nightly can be reproduced on demand instead of
+    # waiting for the 02:00 cron (matches the CRAN binary jobs).
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -566,7 +569,8 @@ jobs:
   dast:
     name: DAST — ZAP baseline scan
     # Nightly only: ZAP takes 3–5 minutes and is not worth blocking PRs.
-    if: github.event_name == 'schedule'
+    # workflow_dispatch so the nightly can be reproduced on demand.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -610,7 +614,8 @@ jobs:
     name: Load test — k6 smoke (SLO gate)
     # Nightly only: the 3-minute smoke test is fast but not worth blocking PRs
     # with the docker compose build time.
-    if: github.event_name == 'schedule'
+    # workflow_dispatch so the nightly can be reproduced on demand.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
