@@ -73,16 +73,11 @@ repositories:
     anonymousRead: true
     upstream: https://registry.npmjs.org
 
-  - name: cran-proxy
-    format: cran
-    kind: proxy
-    enabled: true
-    anonymousRead: true
-    upstream: https://cloud.r-project.org
-
   # ── group ─────────────────────────────────────────────────────────────────
-  # Members are searched in order; the first hit wins.
-  - name: maven-group
+  # Members are searched in order; the first hit wins. Point builds at the
+  # group, so a dependency can move between hosted and proxy without clients
+  # changing anything.
+  - name: maven-public
     format: maven
     kind: group
     enabled: true
@@ -90,6 +85,15 @@ repositories:
     members:
       - maven-hosted
       - maven-central
+
+  - name: npm-public
+    format: npm
+    kind: group
+    enabled: true
+    anonymousRead: true
+    members:
+      - npm-hosted
+      - npm-proxy
 
 cleanupPolicies:
   - name: keep-releases-30d

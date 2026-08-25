@@ -135,3 +135,70 @@ func TestCheckKeys_AllowsEmptyAndPartial(t *testing.T) {
 		}
 	}
 }
+
+// TestShippedExample_Applies goes further than checking the example parses:
+// it applies it to a fresh store and asserts every declared object actually
+// lands. A parse-only check would have missed a repository being dropped or
+// renamed during an edit.
+func TestShippedExample_Applies(t *testing.T) {
+	t.Setenv("WEBHOOK_URL", "https://example.com/hook")
+	t.Setenv("WEBHOOK_SECRET", "s3cr3t")
+	t.Setenv("LDAP_BIND_PASSWORD", "pw")
+
+	f, err := config.Load(filepath.Join("..", "..", "deploy", "config", "forge.example.yaml"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	a := newAppliers(t)
+	res, err := config.Apply(f, a)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	// Everything in the file must be created, and nothing left over.
+	if got, want := res.Repositories.Created, len(f.Repositories); got != want {
+		t.Errorf("repositories created = %d, want %d", got, want)
+	}
+	if len(res.Conflicts) != 0 {
+		t.Errorf("a fresh store must produce no conflicts, got %+v", res.Conflicts)
+	}
+
+	// Group members must resolve — a renamed or dropped member repo is exactly
+	// the kind of edit that a load-only check waves through.
+	for _, r := range f.Repositories {
+		got, ok := a.Repos.Get(r.Name)
+		if !ok {
+			t.Errorf("repository %q was not created", r.Name)
+			continue
+		}
+		for _, m := range got.Members {
+			if _, ok := a.Repos.Get(m); !ok {
+				t.Errorf("repository %q lists member %q, which does not exist", r.Name, m)
+			}
+		}
+	}
+
+	// Cross-references from repos to policies must resolve too.
+	for _, r := range f.Repositories {
+		if r.CleanupPolicyName != "" {
+			if _, ok, _ := a.Cleanup.Get(r.CleanupPolicyName); !ok {
+				t.Errorf("repository %q references missing cleanup policy %q", r.Name, r.CleanupPolicyName)
+			}
+		}
+		if r.SecurityPolicyName != "" {
+			if _, ok, _ := a.Vuln.Get(r.SecurityPolicyName); !ok {
+				t.Errorf("repository %q references missing security policy %q", r.Name, r.SecurityPolicyName)
+			}
+		}
+	}
+
+	// Re-applying must be a no-op, or the example is not idempotent.
+	res2, err := config.Apply(f, a)
+	if err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+	if res2.Repositories.Changes() != 0 || res2.CleanupPolicies.Changes() != 0 ||
+		res2.SecurityPolicies.Changes() != 0 || res2.Webhooks.Changes() != 0 {
+		t.Errorf("re-applying the example is not idempotent: %+v", res2)
+	}
+}
