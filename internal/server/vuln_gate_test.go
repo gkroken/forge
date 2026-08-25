@@ -20,7 +20,7 @@ func newGateServer(t *testing.T) *Server {
 	srv.VulnPolicy = vuln.NewPolicyManager(srv.Meta)
 	// handleRepo returns 503 for disabled repos; the harness adds them without
 	// Enabled set, so flip it on for the serve path.
-	srv.Repos.Update(repo.Repository{Name: "npm-hosted", Format: "npm", Kind: repo.Hosted, Enabled: true})    //nolint:errcheck
+	srv.Repos.Update(repo.Repository{Name: "npm-hosted", Format: "npm", Kind: repo.Hosted, Enabled: true})   //nolint:errcheck
 	srv.Repos.Update(repo.Repository{Name: "helm-hosted", Format: "helm", Kind: repo.Hosted, Enabled: true}) //nolint:errcheck
 
 	// A primary artifact to download.

@@ -50,7 +50,7 @@ func TestDashboard_TaskRows(t *testing.T) {
 	srv.TaskRing = queue.NewTaskRing(10)
 	wrap := srv.TaskRing.Wrap
 	ctx := context.Background()
-	wrap(func(context.Context, queue.Job) error { return nil })(ctx, queue.Job{Type: "vuln.scan"})               //nolint:errcheck
+	wrap(func(context.Context, queue.Job) error { return nil })(ctx, queue.Job{Type: "vuln.scan"})              //nolint:errcheck
 	wrap(func(context.Context, queue.Job) error { return context.Canceled })(ctx, queue.Job{Type: "npm.regen"}) //nolint:errcheck
 
 	rw := uiGet(t, srv.Routes(), "/ui/dashboard")

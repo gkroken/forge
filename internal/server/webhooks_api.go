@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"forge/internal/config"
 	"forge/internal/webhook"
 )
 
@@ -56,8 +57,14 @@ func (s *Server) handleWebhooks(w http.ResponseWriter, r *http.Request) {
 	// /{id}
 	switch r.Method {
 	case http.MethodPut:
+		if s.refuseConfigOwnedWebhook(w, r, id) {
+			return
+		}
 		s.updateWebhook(w, r, id)
 	case http.MethodDelete:
+		if s.refuseConfigOwnedWebhook(w, r, id) {
+			return
+		}
 		if err := s.Webhooks.Store().Delete(id); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -121,10 +128,12 @@ func (s *Server) listWebhooks(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	// Never leak secrets in the listing.
+	out := make([]json.RawMessage, 0, len(subs))
 	for i := range subs {
 		subs[i].Secret = ""
+		out = append(out, withManagedBy(subs[i], s.managedBy(config.KindWebhook, subs[i].Name)))
 	}
-	writeJSON(w, subs)
+	writeJSON(w, out)
 }
 
 func (s *Server) createWebhook(w http.ResponseWriter, r *http.Request) {
@@ -136,6 +145,11 @@ func (s *Server) createWebhook(w http.ResponseWriter, r *http.Request) {
 	// Clients don't set server-managed fields.
 	in.ID = ""
 	in.CreatedAt = time.Time{}
+	// Config reconciles webhooks by Name, so a second subscription with a
+	// config-owned name would make the next Apply ambiguous.
+	if s.refuseConfigOwned(w, r, config.KindWebhook, in.Name) {
+		return
+	}
 	if err := s.Webhooks.ValidateTarget(in.URL); err != nil {
 		http.Error(w, "invalid webhook URL: "+err.Error(), http.StatusBadRequest)
 		return
@@ -174,4 +188,20 @@ func (s *Server) testWebhook(w http.ResponseWriter, r *http.Request, id string) 
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// refuseConfigOwnedWebhook gates a write addressed by subscription ID. The
+// config file manages webhooks by Name, so the ID is resolved first; an ID that
+// no longer exists is left to the handler's own 404/500 path.
+func (s *Server) refuseConfigOwnedWebhook(w http.ResponseWriter, r *http.Request, id string) bool {
+	subs, err := s.Webhooks.Store().List()
+	if err != nil {
+		return false
+	}
+	for _, sub := range subs {
+		if sub.ID == id {
+			return s.refuseConfigOwned(w, r, config.KindWebhook, sub.Name)
+		}
+	}
+	return false
 }

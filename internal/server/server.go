@@ -64,30 +64,37 @@ type BlobSizes struct {
 }
 
 type Server struct {
-	Repos          *repo.Manager
-	Handlers       *format.Registry
-	Blob           blob.Store
-	Meta           meta.Store
-	Auth           auth.Store             // nil = auth not enabled (eval mode)
-	Enforcer       *auth.Enforcer         // always non-nil; uses AllowAll when Auth is nil
-	OIDC           oidcProvider           // nil = OIDC not configured; *oidc.Provider satisfies this
-	GroupMapper    *auth.GroupRoleMapper  // nil = no OIDC group→role mapping; SSO logins use fallback grants
-	LDAP           ldapAuthenticator      // nil = LDAP not configured; *ldap.Client satisfies this
-	ldapMapper     *auth.GroupRoleMapper  // nil = no LDAP group→role mapping; LDAP logins use fallback grants
-	Queue          queue.Queue            // nil = no async index regen (eval / tests)
-	Metrics        *obs.Metrics           // nil = no instrumentation (tests)
-	Cleanup        *cleanup.PolicyManager // nil = cleanup-policies API returns 503
-	Scheduler      *cleanup.Scheduler     // nil = no scheduled runs (eval / tests)
-	AuditLog       obs.AuditSink          // nil = no audit log (eval: ring buffer; prod: Postgres)
-	Users          auth.UserStore         // nil = user management not configured
-	Roles          auth.RoleStore         // nil = custom roles not configured
-	Webhooks       *webhook.Engine        // nil = webhooks not configured (no event emission)
-	Vuln           *vuln.Store            // nil = vulnerability scanning not configured
-	OSV            *vuln.Client           // nil = no OSV producer (scans disabled)
-	Trivy          *trivy.Scanner         // nil = OCI image scanning not configured
-	VulnPolicy     *vuln.PolicyManager    // nil = no download-policy gate
-	MaxUpload      int64                  // per-request body limit; 0 = use defaultMaxUpload
-	TrashRetention time.Duration          // soft-delete trash purged after this age; <=0 = keep forever
+	Repos       *repo.Manager
+	Handlers    *format.Registry
+	Blob        blob.Store
+	Meta        meta.Store
+	Auth        auth.Store             // nil = auth not enabled (eval mode)
+	Enforcer    *auth.Enforcer         // always non-nil; uses AllowAll when Auth is nil
+	OIDC        oidcProvider           // nil = OIDC not configured; *oidc.Provider satisfies this
+	GroupMapper *auth.GroupRoleMapper  // nil = no OIDC group→role mapping; SSO logins use fallback grants
+	LDAP        ldapAuthenticator      // nil = LDAP not configured; *ldap.Client satisfies this
+	ldapMapper  *auth.GroupRoleMapper  // nil = no LDAP group→role mapping; LDAP logins use fallback grants
+	Queue       queue.Queue            // nil = no async index regen (eval / tests)
+	Metrics     *obs.Metrics           // nil = no instrumentation (tests)
+	Cleanup     *cleanup.PolicyManager // nil = cleanup-policies API returns 503
+	Scheduler   *cleanup.Scheduler     // nil = no scheduled runs (eval / tests)
+	AuditLog    obs.AuditSink          // nil = no audit log (eval: ring buffer; prod: Postgres)
+	// configSource is the -config file path when forge runs under
+	// config-as-code, "" otherwise. Non-empty enables per-object write
+	// refusal for config-managed objects (see config_ownership.go).
+	configSource string
+	// configOverride is the -allow-config-override break-glass: config-managed
+	// objects stay writable, but every such write is logged and audited.
+	configOverride bool
+	Users          auth.UserStore      // nil = user management not configured
+	Roles          auth.RoleStore      // nil = custom roles not configured
+	Webhooks       *webhook.Engine     // nil = webhooks not configured (no event emission)
+	Vuln           *vuln.Store         // nil = vulnerability scanning not configured
+	OSV            *vuln.Client        // nil = no OSV producer (scans disabled)
+	Trivy          *trivy.Scanner      // nil = OCI image scanning not configured
+	VulnPolicy     *vuln.PolicyManager // nil = no download-policy gate
+	MaxUpload      int64               // per-request body limit; 0 = use defaultMaxUpload
+	TrashRetention time.Duration       // soft-delete trash purged after this age; <=0 = keep forever
 	reg            prometheus.Gatherer
 	client         *http.Client
 	oidcKey        []byte // HMAC key for signing OIDC state cookies; set by WithOIDC

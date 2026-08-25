@@ -127,4 +127,3 @@ func (s *Server) systemStatusBreakdown(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, s.GlobalStats.StatusBreakdown())
 }
-

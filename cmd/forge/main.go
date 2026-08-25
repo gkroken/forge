@@ -100,6 +100,7 @@ func main() {
 	configExport := flag.Bool("config-export", false, "print current state as a config file to stdout and exit 0")
 	configExportFormat := flag.String("config-export-format", "json", "format for -config-export: json | yaml")
 	configAdopt := flag.Bool("config-adopt", false, "allow -config to take ownership of pre-existing objects whose settings differ (overwrites them; each is audited)")
+	configOverride := flag.Bool("allow-config-override", false, "break-glass: permit admin API/UI writes to config-managed objects (each is logged and audited; the next apply reverts them)")
 	flag.Parse()
 
 	obs.InitLog(*logFormat)
@@ -429,6 +430,7 @@ func main() {
 	}
 
 	forgeSrv := server.New(mgr, reg, blobStore, metaStore, authStore).
+		WithConfigMode(*configPath, *configOverride).
 		WithMetrics(metrics, promReg).
 		WithGlobalStats(globalStats).
 		WithWebhooks(webhookEngine).

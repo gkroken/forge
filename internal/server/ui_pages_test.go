@@ -32,8 +32,8 @@ func newRichUIServer(t *testing.T) *Server {
 	mgr := repo.NewManager()
 	reg := format.NewRegistry()
 	reg.Register(npm.New())
-	mgr.Add(repo.Repository{Name: "npm-hosted", Format: "npm", Kind: repo.Hosted, AnonymousRead: true})                              //nolint:errcheck
-	mgr.Add(repo.Repository{Name: "npm-proxy", Format: "npm", Kind: repo.Proxy, Upstream: "https://registry.npmjs.org"})            //nolint:errcheck
+	mgr.Add(repo.Repository{Name: "npm-hosted", Format: "npm", Kind: repo.Hosted, AnonymousRead: true})                  //nolint:errcheck
+	mgr.Add(repo.Repository{Name: "npm-proxy", Format: "npm", Kind: repo.Proxy, Upstream: "https://registry.npmjs.org"}) //nolint:errcheck
 
 	promReg := prometheus.NewRegistry()
 	metrics := obs.NewMetrics(promReg)

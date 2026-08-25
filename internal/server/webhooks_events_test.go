@@ -24,9 +24,9 @@ import (
 
 func TestOCIManifestRef(t *testing.T) {
 	cases := []struct {
-		sub         string
-		image, ref  string
-		ok          bool
+		sub        string
+		image, ref string
+		ok         bool
 	}{
 		{"myapp/manifests/v1.0", "myapp", "v1.0", true},
 		{"org/team/app/manifests/latest", "org/team/app", "latest", true},

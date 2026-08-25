@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"forge/internal/auth"
+	"forge/internal/config"
 )
 
 // handleUsers serves the user management API:
@@ -152,6 +153,9 @@ func (s *Server) handleRoles(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && sub == "":
 		s.apiCreateRole(w, r)
 	case r.Method == http.MethodDelete && sub != "":
+		if s.refuseConfigOwned(w, r, config.KindRole, sub) {
+			return
+		}
 		s.apiDeleteRole(w, r, sub)
 	default:
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
@@ -172,16 +176,23 @@ func (s *Server) apiListRoles(w http.ResponseWriter, _ *http.Request) {
 	if custom == nil {
 		custom = []auth.CustomRole{}
 	}
-	json.NewEncoder(w).Encode(rolesResponse{
-		Predefined: auth.PredefinedRoles,
-		Custom:     custom,
-	})
+	out := make([]json.RawMessage, 0, len(custom))
+	for _, c := range custom {
+		out = append(out, withManagedBy(c, s.managedBy(config.KindRole, c.Name)))
+	}
+	json.NewEncoder(w).Encode(struct {
+		Predefined []auth.CustomRole `json:"predefined"`
+		Custom     []json.RawMessage `json:"custom"`
+	}{Predefined: auth.PredefinedRoles, Custom: out})
 }
 
 func (s *Server) apiCreateRole(w http.ResponseWriter, r *http.Request) {
 	var role auth.CustomRole
 	if err := json.NewDecoder(r.Body).Decode(&role); err != nil {
 		jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if s.refuseConfigOwned(w, r, config.KindRole, role.Name) {
 		return
 	}
 	if err := s.Roles.Create(role); err != nil {

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"forge/internal/config"
 	"forge/internal/repo"
 	"forge/internal/vuln"
 )
@@ -102,11 +103,18 @@ func (s *Server) handleSecurityPoliciesList(w http.ResponseWriter, r *http.Reque
 		if policies == nil {
 			policies = []vuln.NamedPolicy{}
 		}
-		writeJSON(w, policies)
+		out := make([]json.RawMessage, 0, len(policies))
+		for _, p := range policies {
+			out = append(out, withManagedBy(p, s.managedBy(config.KindSecurityPolicy, p.Name)))
+		}
+		writeJSON(w, out)
 	case http.MethodPost:
 		var p vuln.NamedPolicy
 		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 			http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if s.refuseConfigOwned(w, r, config.KindSecurityPolicy, p.Name) {
 			return
 		}
 		stampSuppressions(&p, actorLabel(r, s.Auth))
@@ -142,6 +150,9 @@ func (s *Server) handleSecurityPolicyByName(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		p.Name = name // URL name wins
+		if s.refuseConfigOwned(w, r, config.KindSecurityPolicy, name) {
+			return
+		}
 		stampSuppressions(&p, actorLabel(r, s.Auth))
 		if err := s.VulnPolicy.Put(p); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -149,6 +160,9 @@ func (s *Server) handleSecurityPolicyByName(w http.ResponseWriter, r *http.Reque
 		}
 		writeJSON(w, p)
 	case http.MethodDelete:
+		if s.refuseConfigOwned(w, r, config.KindSecurityPolicy, name) {
+			return
+		}
 		if err := s.VulnPolicy.Delete(name); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -201,6 +215,11 @@ func (s *Server) handleRepoSecurityPolicy(w http.ResponseWriter, r *http.Request
 	case http.MethodGet:
 		writeJSON(w, s.resolveSecurity(rp))
 	case http.MethodPut:
+		// Assigning a policy writes repo.SecurityPolicyName, a field the config
+		// file owns — so this is a repository edit, not a content operation.
+		if s.refuseConfigOwned(w, r, config.KindRepository, name) {
+			return
+		}
 		var body struct {
 			PolicyName string `json:"policyName"`
 		}
@@ -289,4 +308,3 @@ func (s *Server) handleRepoSecurityDryRun(w http.ResponseWriter, r *http.Request
 	out.WarnedComponents = len(warnedComps)
 	writeJSON(w, out)
 }
-

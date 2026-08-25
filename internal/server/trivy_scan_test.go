@@ -61,7 +61,7 @@ func newOCIServer(t *testing.T, trivyOut string) (*Server, *meta.FS) {
 func seedTag(t *testing.T, m *meta.FS, repo, image, tag string) {
 	t.Helper()
 	ns := repo + ":oci"
-	m.PutJSON(ns, "tags/"+image+"/"+tag, tag)             //nolint:errcheck
+	m.PutJSON(ns, "tags/"+image+"/"+tag, tag)                         //nolint:errcheck
 	m.PutJSON(ns, "tag-times/"+image+"/"+tag, "2024-01-01T00:00:00Z") //nolint:errcheck
 }
 

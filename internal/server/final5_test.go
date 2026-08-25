@@ -29,7 +29,7 @@ func TestReindex_NoopForGeneratedIndex(t *testing.T) {
 // TestTopLevelAPI_MethodBranches covers the default/method-not-allowed branches
 // of the top-level admin API dispatchers.
 func TestTopLevelAPI_MethodBranches(t *testing.T) {
-	srv := newUserMgmtServer(t) // Users + Roles wired
+	srv := newUserMgmtServer(t)                                                          // Users + Roles wired
 	srv.Repos.Add(repo.Repository{Name: "npm-hosted", Format: "npm", Kind: repo.Hosted}) //nolint:errcheck
 	h := srv.Routes()
 
@@ -37,9 +37,9 @@ func TestTopLevelAPI_MethodBranches(t *testing.T) {
 		method, path string
 		want         int
 	}{
-		{http.MethodPut, "/api/v1/users", http.StatusNotFound},           // handleUsers default
-		{http.MethodPatch, "/api/v1/roles", http.StatusNotFound},         // handleRoles default
-		{http.MethodPost, "/api/v1/audit", http.StatusMethodNotAllowed},  // handleAuditAPI GET-only
+		{http.MethodPut, "/api/v1/users", http.StatusNotFound},          // handleUsers default
+		{http.MethodPatch, "/api/v1/roles", http.StatusNotFound},        // handleRoles default
+		{http.MethodPost, "/api/v1/audit", http.StatusMethodNotAllowed}, // handleAuditAPI GET-only
 		{http.MethodPut, "/api/v1/blob-stores", http.StatusMethodNotAllowed},
 	}
 	for _, c := range cases {

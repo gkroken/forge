@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"forge/internal/cleanup"
+	"forge/internal/config"
 	"forge/internal/format"
 	"forge/internal/obs"
 	"forge/internal/proxy"
@@ -336,8 +337,18 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		s.getRepo(w, name)
 	case http.MethodPut:
+		// The repo *definition* is config-owned; its contents are not. Only
+		// this bare-name route and the security-policy assignment below mutate
+		// fields the config file manages — the /{name}/{cleanup,scan,promote,
+		// component,trash,...} sub-routes act on artifacts and stay open.
+		if s.refuseConfigOwned(w, r, config.KindRepository, name) {
+			return
+		}
 		s.updateRepo(w, r, name)
 	case http.MethodDelete:
+		if s.refuseConfigOwned(w, r, config.KindRepository, name) {
+			return
+		}
 		s.deleteRepo(w, name)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -345,8 +356,13 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listRepos(w http.ResponseWriter) {
+	all := s.Repos.All()
+	out := make([]json.RawMessage, 0, len(all))
+	for _, r := range all {
+		out = append(out, withManagedBy(r, s.managedBy(config.KindRepository, r.Name)))
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(s.Repos.All())
+	json.NewEncoder(w).Encode(out)
 }
 
 func (s *Server) getRepo(w http.ResponseWriter, name string) {
@@ -356,7 +372,7 @@ func (s *Server) getRepo(w http.ResponseWriter, name string) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(r)
+	json.NewEncoder(w).Encode(withManagedBy(r, s.managedBy(config.KindRepository, name)))
 }
 
 func (s *Server) createRepo(w http.ResponseWriter, r *http.Request) {
@@ -600,7 +616,7 @@ func (s *Server) handleTrash(w http.ResponseWriter, r *http.Request, repoName, a
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
-		s.triggerWalk() // restored bytes re-enter the quota
+		s.triggerWalk()             // restored bytes re-enter the quota
 		s.enqueueVulnScan(repoName) // rescan the re-added version
 		s.recordRepoAudit(r, http.StatusOK, fmt.Sprintf("restored %s@%s from trash", ts.Component, ts.Version))
 		w.Header().Set("Content-Type", "application/json")
@@ -760,12 +776,21 @@ func (s *Server) handleCleanupPoliciesList(w http.ResponseWriter, r *http.Reques
 		if policies == nil {
 			policies = []cleanup.NamedPolicy{}
 		}
+		out := make([]json.RawMessage, 0, len(policies))
+		for _, p := range policies {
+			out = append(out, withManagedBy(p, s.managedBy(config.KindCleanupPolicy, p.Name)))
+		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(policies)
+		json.NewEncoder(w).Encode(out)
 	case http.MethodPost:
 		var p cleanup.NamedPolicy
 		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 			http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		// Put is upsert, so a POST naming an existing config-managed policy is
+		// an edit of it — gate on the decoded name.
+		if s.refuseConfigOwned(w, r, config.KindCleanupPolicy, p.Name) {
 			return
 		}
 		if err := s.Cleanup.Put(p); err != nil {
@@ -801,6 +826,9 @@ func (s *Server) handleCleanupPolicyByName(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		p.Name = name // URL name takes precedence over body
+		if s.refuseConfigOwned(w, r, config.KindCleanupPolicy, name) {
+			return
+		}
 		if err := s.Cleanup.Put(p); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -808,6 +836,9 @@ func (s *Server) handleCleanupPolicyByName(w http.ResponseWriter, r *http.Reques
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(p)
 	case http.MethodDelete:
+		if s.refuseConfigOwned(w, r, config.KindCleanupPolicy, name) {
+			return
+		}
 		if err := s.Cleanup.Delete(name); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

@@ -42,9 +42,9 @@ func (s *Server) handleTokens(w http.ResponseWriter, r *http.Request) {
 }
 
 type createTokenRequest struct {
-	Description string      `json:"description"`
+	Description string       `json:"description"`
 	Grants      []auth.Grant `json:"grants"`
-	ExpiresAt   *time.Time  `json:"expires_at,omitempty"`
+	ExpiresAt   *time.Time   `json:"expires_at,omitempty"`
 }
 
 type createTokenResponse struct {

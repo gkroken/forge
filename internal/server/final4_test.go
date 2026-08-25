@@ -13,7 +13,7 @@ import (
 // TestRepoSecurityPolicy_Assign covers handleRepoSecurityPolicy (GET resolved,
 // PUT assign valid + invalid) and handleRepoSecurityDryRun.
 func TestRepoSecurityPolicy_Assign(t *testing.T) {
-	srv := newRichUIServer(t) // has VulnPolicy + npm-hosted
+	srv := newRichUIServer(t)                                                                       // has VulnPolicy + npm-hosted
 	srv.VulnPolicy.Put(vuln.NamedPolicy{Name: "strict", Policy: vuln.Policy{Mode: vuln.ModeBlock}}) //nolint:errcheck
 	h := srv.Routes()
 

@@ -167,7 +167,7 @@ func TestServer_HandleOCI_WrongFormat(t *testing.T) {
 // TestServer_HandleOCI_HandlerNotRegistered covers the "OCI handler not in
 // registry" branch: an OCI-format repo exists but no handler is registered.
 func TestServer_HandleOCI_HandlerNotRegistered(t *testing.T) {
-	srv := newAdminServer(t) // no handlers registered
+	srv := newAdminServer(t)                                                                               // no handlers registered
 	srv.Repos.Add(repo.Repository{Name: "docker-hosted", Format: "oci", Kind: repo.Hosted, Enabled: true}) //nolint:errcheck
 	rw := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(rw,

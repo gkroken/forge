@@ -87,7 +87,9 @@ func TestTokens_ListAndRevoke(t *testing.T) {
 	if rw.Code != http.StatusCreated {
 		t.Fatalf("create second token: got %d\n%s", rw.Code, rw.Body)
 	}
-	var created struct{ ID string `json:"id"` }
+	var created struct {
+		ID string `json:"id"`
+	}
 	json.NewDecoder(rw.Body).Decode(&created)
 
 	// List tokens — must include both.

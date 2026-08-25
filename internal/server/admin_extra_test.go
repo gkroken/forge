@@ -61,10 +61,10 @@ func TestInvalidate_DeletesCachedBlobs(t *testing.T) {
 
 	// Seed two cache entries (blob + meta) plus the health record that must survive.
 	cacheNS := "npm-proxy:proxy"
-	srv.Blob.Put("npm-proxy/a", strings.NewReader("aaa"))       //nolint:errcheck
-	srv.Blob.Put("npm-proxy/b", strings.NewReader("bbb"))       //nolint:errcheck
-	srv.Meta.PutJSON(cacheNS, "npm-proxy/a", map[string]int{})  //nolint:errcheck
-	srv.Meta.PutJSON(cacheNS, "npm-proxy/b", map[string]int{})  //nolint:errcheck
+	srv.Blob.Put("npm-proxy/a", strings.NewReader("aaa"))      //nolint:errcheck
+	srv.Blob.Put("npm-proxy/b", strings.NewReader("bbb"))      //nolint:errcheck
+	srv.Meta.PutJSON(cacheNS, "npm-proxy/a", map[string]int{}) //nolint:errcheck
+	srv.Meta.PutJSON(cacheNS, "npm-proxy/b", map[string]int{}) //nolint:errcheck
 
 	rw := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodPost, "/api/v1/repos/npm-proxy/invalidate", nil))
@@ -181,8 +181,8 @@ func TestAuditAPI_FiltersAndInitials(t *testing.T) {
 
 func TestDeleteComponent_Validation(t *testing.T) {
 	srv := newAdminServer(t)
-	srv.Repos.Add(repo.Repository{Name: "npm-hosted", Format: "npm", Kind: repo.Hosted})                        //nolint:errcheck
-	srv.Repos.Add(repo.Repository{Name: "immutable-repo", Format: "npm", Kind: repo.Hosted, Immutable: true})   //nolint:errcheck
+	srv.Repos.Add(repo.Repository{Name: "npm-hosted", Format: "npm", Kind: repo.Hosted})                      //nolint:errcheck
+	srv.Repos.Add(repo.Repository{Name: "immutable-repo", Format: "npm", Kind: repo.Hosted, Immutable: true}) //nolint:errcheck
 	h := srv.Routes()
 
 	// Missing name/version → 400.

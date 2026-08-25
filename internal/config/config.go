@@ -67,9 +67,9 @@ type Appliers struct {
 	Cleanup  *cleanup.PolicyManager
 	Vuln     *vuln.PolicyManager
 	Roles    auth.RoleStore // nil when auth is disabled
-	Webhooks *webhook.Store
-	Meta     meta.Store    // for managed-set bookkeeping
-	Audit    obs.AuditSink // optional; records forced adoptions
+	Webhooks *webhook.Store // nil when webhooks are not configured
+	Meta     meta.Store     // for managed-set bookkeeping
+	Audit    obs.AuditSink  // optional; records forced adoptions
 }
 
 // Result summarises what Apply or Plan found.
@@ -216,6 +216,58 @@ func saveManaged(m meta.Store, ms managedSet) error {
 	return m.PutJSON(managedNS, managedKey, ms)
 }
 
+// Object kinds, used by Conflict.Kind and Ownership.Owns. These are the five
+// kinds a config file can manage.
+const (
+	KindRepository     = "repository"
+	KindRole           = "role"
+	KindCleanupPolicy  = "cleanupPolicy"
+	KindSecurityPolicy = "securityPolicy"
+	KindWebhook        = "webhook"
+)
+
+// Ownership answers "does the config file own this object?" for callers outside
+// this package — chiefly the admin API, which refuses writes to config-owned
+// objects. It is a point-in-time snapshot of the managed set.
+type Ownership struct {
+	idx   managedIndex
+	empty bool
+}
+
+// LoadOwnership reads the managed set. A store with no managed set yet (forge
+// has never run an Apply) yields an Ownership that owns nothing.
+func LoadOwnership(m meta.Store) Ownership {
+	ms := loadManaged(m)
+	o := Ownership{idx: ms.index()}
+	o.empty = len(ms.Repositories) == 0 && len(ms.Roles) == 0 &&
+		len(ms.CleanupPolicies) == 0 && len(ms.SecurityPolicies) == 0 &&
+		len(ms.Webhooks) == 0
+	return o
+}
+
+// Owns reports whether the named object of the given kind is config-managed.
+// An unknown kind is never owned — callers must not be able to accidentally
+// lock down an object kind config does not actually manage.
+func (o Ownership) Owns(kind, name string) bool {
+	switch kind {
+	case KindRepository:
+		return o.idx.repos[name]
+	case KindRole:
+		return o.idx.roles[name]
+	case KindCleanupPolicy:
+		return o.idx.cleanup[name]
+	case KindSecurityPolicy:
+		return o.idx.vuln[name]
+	case KindWebhook:
+		return o.idx.webhooks[name]
+	default:
+		return false
+	}
+}
+
+// Empty reports whether nothing at all is config-managed.
+func (o Ownership) Empty() bool { return o.empty }
+
 // disposition is what Apply should do with one desired object. Plan and Apply
 // both derive it from classify, so they can never disagree about an object.
 type disposition int
@@ -349,7 +401,7 @@ func Plan(f File, a Appliers) (Result, error) {
 	cleanupDesired := strSet(f.CleanupPolicies, func(p cleanup.NamedPolicy) string { return p.Name })
 	for _, p := range f.CleanupPolicies {
 		existing, ok, _ := a.Cleanup.Get(p.Name)
-		res.tally(&res.CleanupPolicies, "cleanupPolicy", p.Name,
+		res.tally(&res.CleanupPolicies, KindCleanupPolicy, p.Name,
 			classify(p, existing, ok, mi.cleanup[p.Name]), p, existing)
 	}
 	if f.Prune {
@@ -364,7 +416,7 @@ func Plan(f File, a Appliers) (Result, error) {
 	vulnDesired := strSet(f.SecurityPolicies, func(p vuln.NamedPolicy) string { return p.Name })
 	for _, p := range f.SecurityPolicies {
 		existing, ok, _ := a.Vuln.Get(p.Name)
-		res.tally(&res.SecurityPolicies, "securityPolicy", p.Name,
+		res.tally(&res.SecurityPolicies, KindSecurityPolicy, p.Name,
 			classify(p, existing, ok, mi.vuln[p.Name]), p, existing)
 	}
 	if f.Prune {
@@ -384,7 +436,7 @@ func Plan(f File, a Appliers) (Result, error) {
 		rolesDesired := strSet(f.Roles, func(r auth.CustomRole) string { return r.Name })
 		for _, r := range f.Roles {
 			existing, ok, _ := a.Roles.Get(r.Name)
-			res.tally(&res.Roles, "role", r.Name,
+			res.tally(&res.Roles, KindRole, r.Name,
 				classify(r, existing, ok, mi.roles[r.Name]), r, existing)
 		}
 		if f.Prune {
@@ -400,7 +452,7 @@ func Plan(f File, a Appliers) (Result, error) {
 	reposDesired := strSet(f.Repositories, func(r repo.Repository) string { return r.Name })
 	for _, r := range f.Repositories {
 		existing, ok := a.Repos.Get(r.Name)
-		res.tally(&res.Repositories, "repository", r.Name,
+		res.tally(&res.Repositories, KindRepository, r.Name,
 			classify(r, existing, ok, mi.repos[r.Name]), r, existing)
 	}
 	if f.Prune {
@@ -412,24 +464,26 @@ func Plan(f File, a Appliers) (Result, error) {
 	}
 
 	// Webhooks (matched by Name).
-	subs, _ := a.Webhooks.List()
-	byName := make(map[string]webhook.Subscription, len(subs))
-	for _, s := range subs {
-		byName[s.Name] = s
-	}
-	webhooksDesired := strSet(f.Webhooks, func(s webhook.Subscription) string { return s.Name })
-	for _, s := range f.Webhooks {
-		ex, ok := byName[s.Name]
-		// Compare the merged form so server-owned fields (ID, CreatedAt) and an
-		// omitted secret never read as a difference.
-		merged := mergeWebhook(s, ex)
-		res.tally(&res.Webhooks, "webhook", s.Name,
-			classify(merged, ex, ok, mi.webhooks[s.Name]), merged, ex)
-	}
-	if f.Prune {
-		for _, name := range managed.Webhooks {
-			if !webhooksDesired[name] {
-				res.Webhooks.Deleted++
+	if a.Webhooks != nil {
+		subs, _ := a.Webhooks.List()
+		byName := make(map[string]webhook.Subscription, len(subs))
+		for _, s := range subs {
+			byName[s.Name] = s
+		}
+		webhooksDesired := strSet(f.Webhooks, func(s webhook.Subscription) string { return s.Name })
+		for _, s := range f.Webhooks {
+			ex, ok := byName[s.Name]
+			// Compare the merged form so server-owned fields (ID, CreatedAt) and an
+			// omitted secret never read as a difference.
+			merged := mergeWebhook(s, ex)
+			res.tally(&res.Webhooks, KindWebhook, s.Name,
+				classify(merged, ex, ok, mi.webhooks[s.Name]), merged, ex)
+		}
+		if f.Prune {
+			for _, name := range managed.Webhooks {
+				if !webhooksDesired[name] {
+					res.Webhooks.Deleted++
+				}
 			}
 		}
 	}
@@ -547,7 +601,7 @@ func Apply(f File, a Appliers) (Result, error) {
 					return res, fmt.Errorf("config: update role %q (recreate): %w", r.Name, err)
 				}
 				if d == dispAdoptConflict {
-					a.auditAdoption("role", r.Name, diffFields(r, existing))
+					a.auditAdoption(KindRole, r.Name, diffFields(r, existing))
 					res.Roles.Adopted++
 				} else {
 					res.Roles.Updated++
@@ -587,7 +641,7 @@ func Apply(f File, a Appliers) (Result, error) {
 			case dispUpdate:
 				res.CleanupPolicies.Updated++
 			default:
-				a.auditAdoption("cleanupPolicy", p.Name, diffFields(p, existing))
+				a.auditAdoption(KindCleanupPolicy, p.Name, diffFields(p, existing))
 				res.CleanupPolicies.Adopted++
 			}
 		case dispAdopt:
@@ -624,7 +678,7 @@ func Apply(f File, a Appliers) (Result, error) {
 			case dispUpdate:
 				res.SecurityPolicies.Updated++
 			default:
-				a.auditAdoption("securityPolicy", p.Name, diffFields(p, existing))
+				a.auditAdoption(KindSecurityPolicy, p.Name, diffFields(p, existing))
 				res.SecurityPolicies.Adopted++
 			}
 		case dispAdopt:
@@ -668,7 +722,7 @@ func Apply(f File, a Appliers) (Result, error) {
 				return res, fmt.Errorf("config: update repo %q: %w", r.Name, err)
 			}
 			if d == dispAdoptConflict {
-				a.auditAdoption("repository", r.Name, diffFields(r, existing))
+				a.auditAdoption(KindRepository, r.Name, diffFields(r, existing))
 				res.Repositories.Adopted++
 			} else {
 				res.Repositories.Updated++
@@ -693,6 +747,12 @@ func Apply(f File, a Appliers) (Result, error) {
 	managed.Repositories = strSlice(f.Repositories, func(r repo.Repository) string { return r.Name })
 
 	// 5. Webhooks (reconciled by Name; ID is server-assigned).
+	if a.Webhooks == nil {
+		if err := saveManaged(a.Meta, managed); err != nil {
+			return res, fmt.Errorf("config: save managed set: %w", err)
+		}
+		return res, nil
+	}
 	existing, err := a.Webhooks.List()
 	if err != nil {
 		return res, fmt.Errorf("config: list webhooks: %w", err)
@@ -716,7 +776,7 @@ func Apply(f File, a Appliers) (Result, error) {
 				return res, fmt.Errorf("config: update webhook %q: %w", s.Name, err)
 			}
 			if d == dispAdoptConflict {
-				a.auditAdoption("webhook", s.Name, diffFields(merged, ex))
+				a.auditAdoption(KindWebhook, s.Name, diffFields(merged, ex))
 				res.Webhooks.Adopted++
 			} else {
 				res.Webhooks.Updated++
@@ -784,14 +844,16 @@ func Export(a Appliers) (File, error) {
 		f.Roles = roles
 	}
 
-	subs, err := a.Webhooks.List()
-	if err != nil {
-		return File{}, fmt.Errorf("config export: webhooks: %w", err)
+	if a.Webhooks != nil {
+		subs, err := a.Webhooks.List()
+		if err != nil {
+			return File{}, fmt.Errorf("config export: webhooks: %w", err)
+		}
+		for i := range subs {
+			subs[i].Secret = "" // blanked; re-supply via ${WEBHOOK_SECRET}
+		}
+		f.Webhooks = subs
 	}
-	for i := range subs {
-		subs[i].Secret = "" // blanked; re-supply via ${WEBHOOK_SECRET}
-	}
-	f.Webhooks = subs
 
 	return f, nil
 }
