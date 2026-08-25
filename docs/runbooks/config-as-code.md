@@ -216,6 +216,8 @@ available on a config-managed repo, because they act on artifacts:
 
 ```
 POST   /api/v1/repos/{name}/cleanup      run retention now
+                                         (add ?dry=true to PREVIEW candidates;
+                                          any other spelling deletes for real)
 POST   /api/v1/repos/{name}/scan         vulnerability scan
 POST   /api/v1/repos/{name}/promote      copy a component in
 DELETE /api/v1/repos/{name}/component    delete one artifact
