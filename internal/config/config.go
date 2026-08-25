@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"forge/internal/cleanup"
 	"forge/internal/ldap"
 	"forge/internal/meta"
+	"forge/internal/obs"
 	"forge/internal/repo"
 	"forge/internal/vuln"
 	"forge/internal/webhook"
@@ -48,6 +50,15 @@ type File struct {
 	// Prune deletes objects previously managed by this file but now absent.
 	// Objects created via REST/UI are never pruned regardless of this flag.
 	Prune bool `json:"prune,omitempty"`
+	// Adopt permits taking ownership of a pre-existing object that this file has
+	// never managed AND whose fields differ from the desired state — overwriting
+	// whatever the UI/API put there. Adopting an object that already matches is
+	// always allowed and needs no flag.
+	//
+	// Modelled on `kubectl apply --force-conflicts`: ownership transfer is never
+	// the default, because a silent overwrite is how a config commit quietly
+	// reverts somebody's console change. Every forced adoption is audited.
+	Adopt bool `json:"adopt,omitempty"`
 }
 
 // Appliers holds the managers that Apply writes through.
@@ -57,7 +68,8 @@ type Appliers struct {
 	Vuln     *vuln.PolicyManager
 	Roles    auth.RoleStore // nil when auth is disabled
 	Webhooks *webhook.Store
-	Meta     meta.Store // for managed-set bookkeeping
+	Meta     meta.Store    // for managed-set bookkeeping
+	Audit    obs.AuditSink // optional; records forced adoptions
 }
 
 // Result summarises what Apply or Plan found.
@@ -69,6 +81,21 @@ type Result struct {
 	Webhooks           KindResult
 	SecurityDefaultSet bool // true when the config specified SecurityDefault
 	LDAPConfigured     bool // true when the config specified an ldap block
+	// Conflicts lists objects that exist but have never been managed by this
+	// file and whose fields differ from it. Apply refuses unless File.Adopt is
+	// set; with Adopt they are reported here and force-adopted.
+	Conflicts []Conflict
+}
+
+// Conflict describes one object whose adoption would overwrite unmanaged state.
+type Conflict struct {
+	Kind   string   `json:"kind"` // "repository", "role", "cleanupPolicy", ...
+	Name   string   `json:"name"`
+	Fields []string `json:"fields"` // differing field names, sorted
+}
+
+func (c Conflict) String() string {
+	return fmt.Sprintf("%s %q differs in: %s", c.Kind, c.Name, strings.Join(c.Fields, ", "))
 }
 
 // KindResult holds per-object-kind operation counts.
@@ -77,10 +104,14 @@ type KindResult struct {
 	Updated int
 	Noop    int
 	Deleted int
+	// Adopted counts objects that existed but were not previously managed by
+	// this file and have now been taken under management.
+	Adopted int
 }
 
-// Changes returns the number of write operations (Created+Updated+Deleted).
-func (r KindResult) Changes() int { return r.Created + r.Updated + r.Deleted }
+// Changes returns the number of write operations
+// (Created+Updated+Deleted+Adopted).
+func (r KindResult) Changes() int { return r.Created + r.Updated + r.Deleted + r.Adopted }
 
 // Load reads the file at path, expands ${VAR} env-var placeholders, and
 // unmarshals it. The format is chosen by extension: .yaml/.yml parse as YAML,
@@ -185,8 +216,126 @@ func saveManaged(m meta.Store, ms managedSet) error {
 	return m.PutJSON(managedNS, managedKey, ms)
 }
 
+// disposition is what Apply should do with one desired object. Plan and Apply
+// both derive it from classify, so they can never disagree about an object.
+type disposition int
+
+const (
+	dispCreate        disposition = iota // absent from the store
+	dispUpdate                           // present, config-managed, differs
+	dispNoop                             // present, config-managed, identical
+	dispAdopt                            // present, NOT managed, identical -> free
+	dispAdoptConflict                    // present, NOT managed, differs -> needs Adopt
+)
+
+// classify decides an object's disposition from three facts: does it exist,
+// has this config file managed it before, and does it match the desired state.
+//
+// The managed distinction is the whole point: without it a UI-created object
+// silently becomes config-owned on the next boot and its settings are
+// overwritten with no signal to anyone.
+func classify(desired, existing any, exists, managed bool) disposition {
+	switch {
+	case !exists:
+		return dispCreate
+	case managed && jsonEqual(desired, existing):
+		return dispNoop
+	case managed:
+		return dispUpdate
+	case jsonEqual(desired, existing):
+		return dispAdopt
+	default:
+		return dispAdoptConflict
+	}
+}
+
+// managedIndex is the managed set as lookup maps, one per object kind.
+type managedIndex struct {
+	repos, cleanup, vuln, roles, webhooks map[string]bool
+}
+
+func (ms managedSet) index() managedIndex {
+	return managedIndex{
+		repos:    sliceSet(ms.Repositories),
+		cleanup:  sliceSet(ms.CleanupPolicies),
+		vuln:     sliceSet(ms.SecurityPolicies),
+		roles:    sliceSet(ms.Roles),
+		webhooks: sliceSet(ms.Webhooks),
+	}
+}
+
+func sliceSet(names []string) map[string]bool {
+	m := make(map[string]bool, len(names))
+	for _, n := range names {
+		m[n] = true
+	}
+	return m
+}
+
+// diffFields reports the top-level JSON field names on which a and b differ,
+// sorted. Used to tell an operator exactly what a forced adoption would
+// overwrite rather than just naming the object.
+func diffFields(a, b any) []string {
+	ma, mb := toFieldMap(a), toFieldMap(b)
+	seen := make(map[string]bool, len(ma)+len(mb))
+	var out []string
+	for k, va := range ma {
+		seen[k] = true
+		vb, ok := mb[k]
+		if !ok || !jsonEqual(va, vb) {
+			out = append(out, k)
+		}
+	}
+	for k := range mb {
+		if !seen[k] {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func toFieldMap(v any) map[string]json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil
+	}
+	return m
+}
+
+// addConflict records an adoption conflict against the result.
+func (r *Result) addConflict(kind, name string, fields []string) {
+	r.Conflicts = append(r.Conflicts, Conflict{Kind: kind, Name: name, Fields: fields})
+}
+
+// auditAdoption records a forced adoption. Best-effort: a nil sink (auth
+// disabled, or a unit test) is not an error.
+func (a Appliers) auditAdoption(kind, name string, fields []string) {
+	if a.Audit == nil {
+		return
+	}
+	a.Audit.Append(obs.AuditEntry{
+		Timestamp: time.Now().UTC(),
+		Actor:     "config",
+		Method:    "ADOPT",
+		Path:      kind + "/" + name,
+		Status:    200,
+		Detail: fmt.Sprintf("config force-adopted unmanaged %s %q, overwriting: %s",
+			kind, name, strings.Join(fields, ", ")),
+	})
+}
+
 // Plan computes the diff between the desired File and current state.
 // It reads from the managers but makes no writes.
+//
+// Objects that exist but were never managed by this file are classified as
+// adoptions, not updates. An adoption whose fields already match is free; one
+// that differs is recorded in Result.Conflicts and blocks Apply unless
+// File.Adopt is set.
 func Plan(f File, a Appliers) (Result, error) {
 	if err := validate(f, a); err != nil {
 		return Result{}, err
@@ -194,19 +343,14 @@ func Plan(f File, a Appliers) (Result, error) {
 
 	var res Result
 	managed := loadManaged(a.Meta)
+	mi := managed.index()
 
 	// Cleanup policies.
 	cleanupDesired := strSet(f.CleanupPolicies, func(p cleanup.NamedPolicy) string { return p.Name })
 	for _, p := range f.CleanupPolicies {
 		existing, ok, _ := a.Cleanup.Get(p.Name)
-		switch {
-		case !ok:
-			res.CleanupPolicies.Created++
-		case jsonEqual(p, existing):
-			res.CleanupPolicies.Noop++
-		default:
-			res.CleanupPolicies.Updated++
-		}
+		res.tally(&res.CleanupPolicies, "cleanupPolicy", p.Name,
+			classify(p, existing, ok, mi.cleanup[p.Name]), p, existing)
 	}
 	if f.Prune {
 		for _, name := range managed.CleanupPolicies {
@@ -220,14 +364,8 @@ func Plan(f File, a Appliers) (Result, error) {
 	vulnDesired := strSet(f.SecurityPolicies, func(p vuln.NamedPolicy) string { return p.Name })
 	for _, p := range f.SecurityPolicies {
 		existing, ok, _ := a.Vuln.Get(p.Name)
-		switch {
-		case !ok:
-			res.SecurityPolicies.Created++
-		case jsonEqual(p, existing):
-			res.SecurityPolicies.Noop++
-		default:
-			res.SecurityPolicies.Updated++
-		}
+		res.tally(&res.SecurityPolicies, "securityPolicy", p.Name,
+			classify(p, existing, ok, mi.vuln[p.Name]), p, existing)
 	}
 	if f.Prune {
 		for _, name := range managed.SecurityPolicies {
@@ -246,14 +384,8 @@ func Plan(f File, a Appliers) (Result, error) {
 		rolesDesired := strSet(f.Roles, func(r auth.CustomRole) string { return r.Name })
 		for _, r := range f.Roles {
 			existing, ok, _ := a.Roles.Get(r.Name)
-			switch {
-			case !ok:
-				res.Roles.Created++
-			case jsonEqual(r, existing):
-				res.Roles.Noop++
-			default:
-				res.Roles.Updated++
-			}
+			res.tally(&res.Roles, "role", r.Name,
+				classify(r, existing, ok, mi.roles[r.Name]), r, existing)
 		}
 		if f.Prune {
 			for _, name := range managed.Roles {
@@ -268,14 +400,8 @@ func Plan(f File, a Appliers) (Result, error) {
 	reposDesired := strSet(f.Repositories, func(r repo.Repository) string { return r.Name })
 	for _, r := range f.Repositories {
 		existing, ok := a.Repos.Get(r.Name)
-		switch {
-		case !ok:
-			res.Repositories.Created++
-		case jsonEqual(r, existing):
-			res.Repositories.Noop++
-		default:
-			res.Repositories.Updated++
-		}
+		res.tally(&res.Repositories, "repository", r.Name,
+			classify(r, existing, ok, mi.repos[r.Name]), r, existing)
 	}
 	if f.Prune {
 		for _, name := range managed.Repositories {
@@ -294,14 +420,11 @@ func Plan(f File, a Appliers) (Result, error) {
 	webhooksDesired := strSet(f.Webhooks, func(s webhook.Subscription) string { return s.Name })
 	for _, s := range f.Webhooks {
 		ex, ok := byName[s.Name]
-		switch {
-		case !ok:
-			res.Webhooks.Created++
-		case webhookEqual(mergeWebhook(s, ex), ex):
-			res.Webhooks.Noop++
-		default:
-			res.Webhooks.Updated++
-		}
+		// Compare the merged form so server-owned fields (ID, CreatedAt) and an
+		// omitted secret never read as a difference.
+		merged := mergeWebhook(s, ex)
+		res.tally(&res.Webhooks, "webhook", s.Name,
+			classify(merged, ex, ok, mi.webhooks[s.Name]), merged, ex)
 	}
 	if f.Prune {
 		for _, name := range managed.Webhooks {
@@ -312,6 +435,24 @@ func Plan(f File, a Appliers) (Result, error) {
 	}
 
 	return res, nil
+}
+
+// tally increments the right counter for a disposition and records a conflict
+// when an adoption would overwrite unmanaged state.
+func (r *Result) tally(k *KindResult, kind, name string, d disposition, desired, existing any) {
+	switch d {
+	case dispCreate:
+		k.Created++
+	case dispUpdate:
+		k.Updated++
+	case dispNoop:
+		k.Noop++
+	case dispAdopt:
+		k.Adopted++
+	case dispAdoptConflict:
+		k.Adopted++
+		r.addConflict(kind, name, diffFields(desired, existing))
+	}
 }
 
 // validate checks cross-references in f against the file itself and the
@@ -358,33 +499,62 @@ func validate(f File, a Appliers) error {
 
 // Apply reconciles the current state to match f. It is idempotent.
 // Dependency order: roles → cleanup policies → security policies (+default) → repositories → webhooks.
+//
+// Apply refuses, before writing anything, if the file would adopt an object it
+// has never managed whose fields differ from the desired state — set File.Adopt
+// to allow that. Refusing up front (rather than failing partway) keeps a
+// rejected apply from leaving state half-converged.
 func Apply(f File, a Appliers) (Result, error) {
-	if err := validate(f, a); err != nil {
+	// Plan is read-only and already validates; it also surfaces conflicts so we
+	// can bail before the first write.
+	pre, err := Plan(f, a)
+	if err != nil {
 		return Result{}, err
+	}
+	if len(pre.Conflicts) > 0 && !f.Adopt {
+		var lines []string
+		for _, c := range pre.Conflicts {
+			lines = append(lines, c.String())
+		}
+		return Result{}, fmt.Errorf(
+			"config: refusing to adopt %d object(s) this file has never managed and whose settings differ:\n  %s\n"+
+				"set \"adopt\": true (or pass -config-adopt) to take ownership and overwrite them",
+			len(pre.Conflicts), strings.Join(lines, "\n  "))
 	}
 
 	var res Result
+	res.Conflicts = pre.Conflicts // forced adoptions, reported for the operator
 	managed := loadManaged(a.Meta)
 	snapshot := managed // copy before mutation (for prune)
+	mi := managed.index()
 
 	// 1. Roles (RoleStore has no Update — delete+recreate for changes).
 	if a.Roles != nil {
 		for _, r := range f.Roles {
 			existing, ok, _ := a.Roles.Get(r.Name)
-			if !ok {
+			d := classify(r, existing, ok, mi.roles[r.Name])
+			switch d {
+			case dispCreate:
 				if err := a.Roles.Create(r); err != nil {
 					return res, fmt.Errorf("config: create role %q: %w", r.Name, err)
 				}
 				res.Roles.Created++
-			} else if !jsonEqual(r, existing) {
+			case dispUpdate, dispAdoptConflict:
 				if err := a.Roles.Delete(r.Name); err != nil {
 					return res, fmt.Errorf("config: update role %q (delete): %w", r.Name, err)
 				}
 				if err := a.Roles.Create(r); err != nil {
 					return res, fmt.Errorf("config: update role %q (recreate): %w", r.Name, err)
 				}
-				res.Roles.Updated++
-			} else {
+				if d == dispAdoptConflict {
+					a.auditAdoption("role", r.Name, diffFields(r, existing))
+					res.Roles.Adopted++
+				} else {
+					res.Roles.Updated++
+				}
+			case dispAdopt:
+				res.Roles.Adopted++ // identical already; only ownership changes
+			default:
 				res.Roles.Noop++
 			}
 		}
@@ -405,17 +575,24 @@ func Apply(f File, a Appliers) (Result, error) {
 	// 2. Cleanup policies.
 	for _, p := range f.CleanupPolicies {
 		existing, ok, _ := a.Cleanup.Get(p.Name)
-		if !ok {
+		d := classify(p, existing, ok, mi.cleanup[p.Name])
+		switch d {
+		case dispCreate, dispUpdate, dispAdoptConflict:
 			if err := a.Cleanup.Put(p); err != nil {
-				return res, fmt.Errorf("config: create cleanup policy %q: %w", p.Name, err)
+				return res, fmt.Errorf("config: write cleanup policy %q: %w", p.Name, err)
 			}
-			res.CleanupPolicies.Created++
-		} else if !jsonEqual(p, existing) {
-			if err := a.Cleanup.Put(p); err != nil {
-				return res, fmt.Errorf("config: update cleanup policy %q: %w", p.Name, err)
+			switch d {
+			case dispCreate:
+				res.CleanupPolicies.Created++
+			case dispUpdate:
+				res.CleanupPolicies.Updated++
+			default:
+				a.auditAdoption("cleanupPolicy", p.Name, diffFields(p, existing))
+				res.CleanupPolicies.Adopted++
 			}
-			res.CleanupPolicies.Updated++
-		} else {
+		case dispAdopt:
+			res.CleanupPolicies.Adopted++
+		default:
 			res.CleanupPolicies.Noop++
 		}
 	}
@@ -435,17 +612,24 @@ func Apply(f File, a Appliers) (Result, error) {
 	// 3. Security policies + optional global default.
 	for _, p := range f.SecurityPolicies {
 		existing, ok, _ := a.Vuln.Get(p.Name)
-		if !ok {
+		d := classify(p, existing, ok, mi.vuln[p.Name])
+		switch d {
+		case dispCreate, dispUpdate, dispAdoptConflict:
 			if err := a.Vuln.Put(p); err != nil {
-				return res, fmt.Errorf("config: create security policy %q: %w", p.Name, err)
+				return res, fmt.Errorf("config: write security policy %q: %w", p.Name, err)
 			}
-			res.SecurityPolicies.Created++
-		} else if !jsonEqual(p, existing) {
-			if err := a.Vuln.Put(p); err != nil {
-				return res, fmt.Errorf("config: update security policy %q: %w", p.Name, err)
+			switch d {
+			case dispCreate:
+				res.SecurityPolicies.Created++
+			case dispUpdate:
+				res.SecurityPolicies.Updated++
+			default:
+				a.auditAdoption("securityPolicy", p.Name, diffFields(p, existing))
+				res.SecurityPolicies.Adopted++
 			}
-			res.SecurityPolicies.Updated++
-		} else {
+		case dispAdopt:
+			res.SecurityPolicies.Adopted++
+		default:
 			res.SecurityPolicies.Noop++
 		}
 	}
@@ -472,17 +656,26 @@ func Apply(f File, a Appliers) (Result, error) {
 	// 4. Repositories.
 	for _, r := range f.Repositories {
 		existing, ok := a.Repos.Get(r.Name)
-		if !ok {
+		d := classify(r, existing, ok, mi.repos[r.Name])
+		switch d {
+		case dispCreate:
 			if err := a.Repos.Add(r); err != nil {
 				return res, fmt.Errorf("config: create repo %q: %w", r.Name, err)
 			}
 			res.Repositories.Created++
-		} else if !jsonEqual(r, existing) {
+		case dispUpdate, dispAdoptConflict:
 			if err := a.Repos.Update(r); err != nil {
 				return res, fmt.Errorf("config: update repo %q: %w", r.Name, err)
 			}
-			res.Repositories.Updated++
-		} else {
+			if d == dispAdoptConflict {
+				a.auditAdoption("repository", r.Name, diffFields(r, existing))
+				res.Repositories.Adopted++
+			} else {
+				res.Repositories.Updated++
+			}
+		case dispAdopt:
+			res.Repositories.Adopted++
+		default:
 			res.Repositories.Noop++
 		}
 	}
@@ -510,21 +703,28 @@ func Apply(f File, a Appliers) (Result, error) {
 	}
 	for _, s := range f.Webhooks {
 		ex, ok := byName[s.Name]
-		if !ok {
+		merged := mergeWebhook(s, ex)
+		d := classify(merged, ex, ok, mi.webhooks[s.Name])
+		switch d {
+		case dispCreate:
 			if _, err := a.Webhooks.Create(s); err != nil {
 				return res, fmt.Errorf("config: create webhook %q: %w", s.Name, err)
 			}
 			res.Webhooks.Created++
-		} else {
-			merged := mergeWebhook(s, ex)
-			if !webhookEqual(merged, ex) {
-				if _, err := a.Webhooks.Update(merged); err != nil {
-					return res, fmt.Errorf("config: update webhook %q: %w", s.Name, err)
-				}
-				res.Webhooks.Updated++
-			} else {
-				res.Webhooks.Noop++
+		case dispUpdate, dispAdoptConflict:
+			if _, err := a.Webhooks.Update(merged); err != nil {
+				return res, fmt.Errorf("config: update webhook %q: %w", s.Name, err)
 			}
+			if d == dispAdoptConflict {
+				a.auditAdoption("webhook", s.Name, diffFields(merged, ex))
+				res.Webhooks.Adopted++
+			} else {
+				res.Webhooks.Updated++
+			}
+		case dispAdopt:
+			res.Webhooks.Adopted++
+		default:
+			res.Webhooks.Noop++
 		}
 	}
 	if f.Prune {

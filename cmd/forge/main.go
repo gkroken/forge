@@ -99,6 +99,7 @@ func main() {
 	configCheck := flag.Bool("config-check", false, "validate -config file and print plan, then exit 0 (valid) / 1 (invalid)")
 	configExport := flag.Bool("config-export", false, "print current state as a config file to stdout and exit 0")
 	configExportFormat := flag.String("config-export-format", "json", "format for -config-export: json | yaml")
+	configAdopt := flag.Bool("config-adopt", false, "allow -config to take ownership of pre-existing objects whose settings differ (overwrites them; each is audited)")
 	flag.Parse()
 
 	obs.InitLog(*logFormat)
@@ -320,6 +321,7 @@ func main() {
 		Roles:    roleStore,
 		Webhooks: webhookEngine.Store(),
 		Meta:     metaStore,
+		Audit:    auditSink,
 	}
 	if *configExport {
 		asYAML := false
@@ -355,6 +357,9 @@ func main() {
 			slog.Error("config: load failed", "err", err)
 			os.Exit(1)
 		}
+		// -config-adopt is the CLI spelling of the file's "adopt" key; either
+		// one permits taking ownership of differing unmanaged objects.
+		f.Adopt = f.Adopt || *configAdopt
 		if *configCheck {
 			res, err := config.Plan(f, cfgAppliers)
 			if err != nil {
@@ -366,17 +371,38 @@ func main() {
 				"repos_update", res.Repositories.Updated,
 				"repos_noop", res.Repositories.Noop,
 				"repos_delete", res.Repositories.Deleted,
+				"repos_adopt", res.Repositories.Adopted,
 				"cleanup_create", res.CleanupPolicies.Created,
 				"cleanup_update", res.CleanupPolicies.Updated,
+				"cleanup_adopt", res.CleanupPolicies.Adopted,
 				"vuln_create", res.SecurityPolicies.Created,
 				"vuln_update", res.SecurityPolicies.Updated,
+				"vuln_adopt", res.SecurityPolicies.Adopted,
 				"roles_create", res.Roles.Created,
 				"roles_update", res.Roles.Updated,
+				"roles_adopt", res.Roles.Adopted,
 				"webhooks_create", res.Webhooks.Created,
 				"webhooks_update", res.Webhooks.Updated,
+				"webhooks_adopt", res.Webhooks.Adopted,
+				"conflicts", len(res.Conflicts),
 				"security_default_set", res.SecurityDefaultSet,
 				"ldap_configured", res.LDAPConfigured,
 			)
+			// Conflicts are objects this file has never managed whose settings
+			// differ. Without adopt they would block Apply, so -config-check must
+			// report the file as not-applyable.
+			for _, c := range res.Conflicts {
+				if f.Adopt {
+					slog.Warn("config: will force-adopt", "object", c.String())
+				} else {
+					slog.Error("config: adoption conflict", "object", c.String())
+				}
+			}
+			if len(res.Conflicts) > 0 && !f.Adopt {
+				slog.Error("config: not applyable without -config-adopt (or \"adopt\": true)",
+					"conflicts", len(res.Conflicts))
+				os.Exit(1)
+			}
 			os.Exit(0)
 		}
 		// -config mode: apply on boot (fatal on error — bad desired state must
@@ -384,13 +410,22 @@ func main() {
 		res, err := config.Apply(f, cfgAppliers)
 		must(err)
 		ldapFromConfig = f.LDAP // consumed at the LDAP wiring block below
+		adopted := res.Repositories.Adopted + res.CleanupPolicies.Adopted +
+			res.SecurityPolicies.Adopted + res.Roles.Adopted + res.Webhooks.Adopted
 		slog.Info("config applied",
 			"repos", res.Repositories.Changes(),
 			"cleanup_policies", res.CleanupPolicies.Changes(),
 			"security_policies", res.SecurityPolicies.Changes(),
 			"roles", res.Roles.Changes(),
 			"webhooks", res.Webhooks.Changes(),
+			"adopted", adopted,
+			"forced_adoptions", len(res.Conflicts),
 		)
+		// A forced adoption overwrote state somebody set outside the config file.
+		// It is audited, but it should also be loud in the boot log.
+		for _, c := range res.Conflicts {
+			slog.Warn("config: force-adopted unmanaged object", "object", c.String())
+		}
 	}
 
 	forgeSrv := server.New(mgr, reg, blobStore, metaStore, authStore).

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"forge/internal/auth"
@@ -11,6 +12,7 @@ import (
 	"forge/internal/config"
 	"forge/internal/ldap"
 	"forge/internal/meta"
+	"forge/internal/obs"
 	"forge/internal/repo"
 	"forge/internal/vuln"
 	"forge/internal/webhook"
@@ -518,4 +520,193 @@ func sameJSON(a, b any) bool {
 	ja, err1 := json.Marshal(a)
 	jb, err2 := json.Marshal(b)
 	return err1 == nil && err2 == nil && string(ja) == string(jb)
+}
+
+// --- C2: ownership (adopt != update) ------------------------------------
+
+// adoptFile is a one-repo config used by the adoption tests.
+func adoptFile(upstream string) config.File {
+	return config.File{Repositories: []repo.Repository{{
+		Name: "shared", Format: "npm", Kind: repo.Proxy, Upstream: upstream, Enabled: true,
+	}}}
+}
+
+// TestApply_AdoptIdenticalIsFree — an object created outside config that already
+// matches the file is adopted silently. This is the -config-export -> commit ->
+// boot path and must need no flag.
+func TestApply_AdoptIdenticalIsFree(t *testing.T) {
+	a := newAppliers(t)
+	f := adoptFile("https://registry.npmjs.org")
+
+	// Simulate a UI/API-created repo identical to the desired state.
+	if err := a.Repos.Add(f.Repositories[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := config.Apply(f, a)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if res.Repositories.Adopted != 1 {
+		t.Errorf("Adopted = %d, want 1 (result %+v)", res.Repositories.Adopted, res.Repositories)
+	}
+	if res.Repositories.Updated != 0 || res.Repositories.Created != 0 {
+		t.Errorf("expected pure adoption, got %+v", res.Repositories)
+	}
+	if len(res.Conflicts) != 0 {
+		t.Errorf("identical adoption must not conflict, got %+v", res.Conflicts)
+	}
+}
+
+// TestApply_AdoptConflictRefused is the core C2 guarantee: config must not
+// silently overwrite an object somebody configured through the UI.
+func TestApply_AdoptConflictRefused(t *testing.T) {
+	a := newAppliers(t)
+
+	// UI-created repo with a DIFFERENT upstream than the file wants.
+	if err := a.Repos.Add(adoptFile("https://ui-set-upstream.example.com").Repositories[0]); err != nil {
+		t.Fatal(err)
+	}
+	f := adoptFile("https://registry.npmjs.org")
+
+	_, err := config.Apply(f, a)
+	if err == nil {
+		t.Fatal("expected refusal, got nil error")
+	}
+	if !strings.Contains(err.Error(), "upstream") {
+		t.Errorf("error should name the differing field, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "adopt") {
+		t.Errorf("error should point at the remedy, got: %v", err)
+	}
+
+	// And nothing may have been written.
+	got, ok := a.Repos.Get("shared")
+	if !ok || got.Upstream != "https://ui-set-upstream.example.com" {
+		t.Errorf("refused apply must not mutate state, got %+v", got)
+	}
+}
+
+// TestPlan_ReportsConflictFields — Plan surfaces the conflict without writing,
+// naming every differing field so -config-check can print it.
+func TestPlan_ReportsConflictFields(t *testing.T) {
+	a := newAppliers(t)
+	existing := adoptFile("https://ui.example.com").Repositories[0]
+	existing.AnonymousRead = true
+	if err := a.Repos.Add(existing); err != nil {
+		t.Fatal(err)
+	}
+	f := adoptFile("https://registry.npmjs.org") // differs: upstream + anonymousRead
+
+	res, err := config.Plan(f, a)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if len(res.Conflicts) != 1 {
+		t.Fatalf("Conflicts = %+v, want 1", res.Conflicts)
+	}
+	c := res.Conflicts[0]
+	if c.Kind != "repository" || c.Name != "shared" {
+		t.Errorf("conflict identity = %+v", c)
+	}
+	joined := strings.Join(c.Fields, ",")
+	for _, want := range []string{"upstream", "anonymousRead"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("fields %v missing %q", c.Fields, want)
+		}
+	}
+}
+
+// TestApply_AdoptConflictAllowedWithFlag — with adopt set, ownership transfers,
+// the object is overwritten, and the event is audited.
+func TestApply_AdoptConflictAllowedWithFlag(t *testing.T) {
+	a := newAppliers(t)
+	sink := obs.NewAuditLog(16)
+	a.Audit = sink
+
+	if err := a.Repos.Add(adoptFile("https://ui-set-upstream.example.com").Repositories[0]); err != nil {
+		t.Fatal(err)
+	}
+	f := adoptFile("https://registry.npmjs.org")
+	f.Adopt = true
+
+	res, err := config.Apply(f, a)
+	if err != nil {
+		t.Fatalf("apply with adopt: %v", err)
+	}
+	if res.Repositories.Adopted != 1 {
+		t.Errorf("Adopted = %d, want 1", res.Repositories.Adopted)
+	}
+	got, _ := a.Repos.Get("shared")
+	if got.Upstream != "https://registry.npmjs.org" {
+		t.Errorf("upstream = %q, want the config value", got.Upstream)
+	}
+	// The forced adoption must leave a trace.
+	var found bool
+	for _, e := range sink.Recent(16) {
+		if e.Method == "ADOPT" && strings.Contains(e.Detail, "shared") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("forced adoption was not audited: %+v", sink.Recent(16))
+	}
+}
+
+// TestApply_AdoptedObjectBecomesManaged — after adoption the object is owned by
+// config, so a later run treats it as a normal update, not a fresh conflict.
+func TestApply_AdoptedObjectBecomesManaged(t *testing.T) {
+	a := newAppliers(t)
+	if err := a.Repos.Add(adoptFile("https://registry.npmjs.org").Repositories[0]); err != nil {
+		t.Fatal(err)
+	}
+	f := adoptFile("https://registry.npmjs.org")
+	if _, err := config.Apply(f, a); err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+
+	// Now change the file. Previously-adopted => managed => plain update, no flag.
+	f2 := adoptFile("https://changed.example.com")
+	res, err := config.Apply(f2, a)
+	if err != nil {
+		t.Fatalf("second apply must not conflict: %v", err)
+	}
+	if res.Repositories.Updated != 1 {
+		t.Errorf("expected Updated=1, got %+v", res.Repositories)
+	}
+	if len(res.Conflicts) != 0 {
+		t.Errorf("managed object must never conflict, got %+v", res.Conflicts)
+	}
+}
+
+// TestApply_ConflictBlocksEntireApply — the refusal happens before any write, so
+// a conflict in one kind cannot leave other kinds half-applied.
+func TestApply_ConflictBlocksEntireApply(t *testing.T) {
+	a := newAppliers(t)
+	if err := a.Repos.Add(adoptFile("https://ui.example.com").Repositories[0]); err != nil {
+		t.Fatal(err)
+	}
+	f := adoptFile("https://registry.npmjs.org")
+	// A perfectly fine cleanup policy that must NOT be created.
+	f.CleanupPolicies = []cleanup.NamedPolicy{{Name: "cp-untouched"}}
+
+	if _, err := config.Apply(f, a); err == nil {
+		t.Fatal("expected refusal")
+	}
+	if _, ok, _ := a.Cleanup.Get("cp-untouched"); ok {
+		t.Error("a refused apply wrote a cleanup policy — apply is not atomic on conflict")
+	}
+}
+
+// TestApply_AdoptDoesNotAffectCreate — an object absent from the store is still
+// a plain Create, never an adoption.
+func TestApply_AdoptDoesNotAffectCreate(t *testing.T) {
+	a := newAppliers(t)
+	res, err := config.Apply(adoptFile("https://registry.npmjs.org"), a)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if res.Repositories.Created != 1 || res.Repositories.Adopted != 0 {
+		t.Errorf("want Created=1 Adopted=0, got %+v", res.Repositories)
+	}
 }

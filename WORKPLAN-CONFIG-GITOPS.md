@@ -21,9 +21,9 @@ observable. `go test ./...` (incl. `-race`), `go vet`, `bash test.sh` green.
 | 1 | Config is JSON only; GitOps users expect YAML | C1 | ✅ |
 | 2 | `-config-export` emits JSON only | C1 | ✅ |
 | 3 | Helm `config.content` is a raw JSON string, not structured YAML | C1 | ✅ |
-| 4 | `Apply` silently overwrites + adopts UI-created objects (`config.go:427`) | C2 | [ ] |
-| 5 | `Plan` cannot distinguish "mine" from "someone else's" | C2 | [ ] |
-| 6 | No conflict check on adoption (Grafana footgun, not K8s SSA) | C2 | [ ] |
+| 4 | `Apply` silently overwrites + adopts UI-created objects (`config.go:427`) | C2 | ✅ |
+| 5 | `Plan` cannot distinguish "mine" from "someone else's" | C2 | ✅ |
+| 6 | No conflict check on adoption (Grafana footgun, not K8s SSA) | C2 | ✅ |
 | 7 | Config-owned objects are freely editable via UI/API | C3 | [ ] |
 | 8 | Object ownership is invisible in API responses and UI | C3 | [ ] |
 | 9 | No break-glass path for a 03:00 incident | C3 | [ ] |
@@ -96,23 +96,32 @@ parse byte-identically (JSON ⊂ YAML 1.2 — no migration, no dual code path).
 
 ## Phase C2 — Ownership: adopt ≠ update
 
+**STATUS: C2 COMPLETE.** `classify()` is the single decision point shared by
+Plan and Apply, so the two can no longer disagree about an object. Apply now
+runs Plan first and refuses *before the first write*, keeping a rejected apply
+from leaving state half-converged. 7 new unit tests + live-verified against the
+13 seeded repos: export→check reports `repos_adopt=13, conflicts=0` (exit 0);
+one altered upstream reports `repository "npm-proxy" differs in: upstream`
+(exit 1); the same file with `-config-adopt` passes (exit 0) with a warning.
+`go test ./...` (incl. `-race`), `go vet`, `bash test.sh` (20/20) green.
+
 Acceptance: `Plan` reports **Adopted** separately from Created/Updated/Noop/Deleted;
 adopting an object whose fields differ is refused by default with the conflicting
 field names listed; `-config-export` → commit → boot adopts cleanly with zero prompts.
 
-- [ ] **#5 Managed-set cross-reference.** `Plan`/`Apply` classify against `loadManaged()`,
+- [x] **#5 Managed-set cross-reference.** `Plan`/`Apply` classify against `loadManaged()`,
       not just store presence: in store **and** in managed set → Update; in store, **not** in
       managed set → **Adopt**. Applies to all five kinds (repos, roles, cleanup, security,
       webhooks). Add `Adopted int` to `KindResult`; include in `Changes()`.
-- [ ] **#6 Conflict check.** Adopt with `jsonEqual(desired, existing)` → free, silent
+- [x] **#6 Conflict check.** Adopt with `jsonEqual(desired, existing)` → free, silent
       (this is the export→commit path; it must stay frictionless). Adopt with differing
       fields → **refuse**, error naming object + differing field names.
-- [ ] **#4 Explicit override.** `adopt: true` in `File` (and `-config-adopt` flag) permits
+- [x] **#4 Explicit override.** `adopt: true` in `File` (and `-config-adopt` flag) permits
       conflicting adoption; transfers ownership into the managed set. Per K8s guidance this
       is **never** the default. Every forced adoption writes an audit entry.
-- [ ] `-config-check` output gains an Adopted line + the conflict list — this is the
+- [x] `-config-check` output gains an Adopted line + the conflict list — this is the
       Crossplane observe-first stage for a Nexus migration.
-- [ ] Tests: adopt-identical is a no-op; adopt-conflicting refuses and names fields;
+- [x] Tests: adopt-identical is a no-op; adopt-conflicting refuses and names fields;
       `adopt: true` succeeds + audits + object lands in managed set; adopted object is
       subsequently prunable; unchanged prune semantics for API-created objects.
 
