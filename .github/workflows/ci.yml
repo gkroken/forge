@@ -28,7 +28,7 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code go.mod go.sum
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with:
           version: v3.17.3
       - name: helm lint
@@ -39,7 +39,7 @@ jobs:
           WEBHOOK_URL=https://example.com WEBHOOK_SECRET=dummy LDAP_BIND_PASSWORD=dummy \
             /tmp/forge-check -config-check -auth -config deploy/config/forge.example.yaml \
             -data /tmp/forge-config-check
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: "~1.5"
       - name: terraform fmt check
@@ -183,10 +183,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: Build image (PR — no push)
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: false
@@ -222,10 +222,10 @@ jobs:
       - uses: actions/checkout@v6
 
       # ── Docker image ────────────────────────────────────────────────────────
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -233,7 +233,7 @@ jobs:
 
       - name: Docker metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository_owner }}/forge
           tags: |
@@ -247,7 +247,7 @@ jobs:
 
       - name: Build and push image
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
@@ -258,7 +258,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       # ── Helm chart ──────────────────────────────────────────────────────────
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with:
           version: v3.17.3
 
@@ -361,7 +361,7 @@ jobs:
       # skipped on plain pushes to main where no release object exists.
       - name: Attach SBOMs to GitHub release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             sbom-source.spdx.json
@@ -382,9 +382,9 @@ jobs:
           cache: true
 
       # Build the forge image for amd64 only (kind is always amd64).
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: Build image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: false
@@ -404,7 +404,7 @@ jobs:
       - name: Load image into kind
         run: kind load docker-image forge:ci --name forge-test
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with:
           version: v3.17.3
 
