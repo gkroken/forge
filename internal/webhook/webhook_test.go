@@ -340,12 +340,21 @@ func TestHistory_RecordsSuccess(t *testing.T) {
 
 	eng.Dispatch(ctx, webhook.Event{Type: webhook.EventArtifactPublished, Repo: "maven-hosted"})
 
+	// Wait on the success metric, not the history length: record() appends the
+	// history entry before invoking the metric callback, so gating on
+	// len(recs)==1 can observe the record already written while the metric
+	// increment is still pending. The metric fires last, so it is the safe
+	// barrier for both assertions below.
 	waitFor(t, func() bool {
-		recs, _ := eng.History().List(sub.ID)
-		return len(recs) == 1
-	}, "one history record")
+		mu.Lock()
+		defer mu.Unlock()
+		return counts[webhook.StatusSuccess] == 1
+	}, "success metric recorded")
 
 	recs, _ := eng.History().List(sub.ID)
+	if len(recs) != 1 {
+		t.Fatalf("history records = %d, want 1", len(recs))
+	}
 	if recs[0].Status != webhook.StatusSuccess || recs[0].HTTPCode != 200 || recs[0].Attempt != 1 {
 		t.Fatalf("unexpected record: %+v", recs[0])
 	}
