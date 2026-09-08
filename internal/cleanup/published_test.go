@@ -90,20 +90,6 @@ func TestLedgerKeyMatchesMavenGrouping(t *testing.T) {
 	}
 }
 
-// TestRecordPublishDoesNotOverwrite — re-publishing or a proxy re-caching must
-// not make an old artifact look new, or retention would never catch up with it.
-func TestRecordPublishDoesNotOverwrite(t *testing.T) {
-	_, m := stores(t)
-	old := time.Now().UTC().AddDate(0, 0, -100)
-	ledger.RecordAt(m, "r", "pkg", "1.0.0", old)
-	ledger.Record(m, "r", "pkg", "1.0.0") // would stamp "now"
-
-	got := ledger.Load(m, "r")[ledger.Key("pkg", "1.0.0")]
-	if got.Sub(old).Abs() > time.Second {
-		t.Errorf("publish time was overwritten: %v, want ~%v", got, old)
-	}
-}
-
 // TestForgetPublishOnDelete — a deleted version must not leave a ledger entry
 // that would make a later republish look instantly old.
 func TestForgetPublishOnDelete(t *testing.T) {

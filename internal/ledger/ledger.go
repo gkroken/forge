@@ -63,11 +63,19 @@ func recordAt(m meta.Store, repoName, component, version string, t time.Time) {
 	if m == nil || repoName == "" || component == "" || version == "" {
 		return
 	}
-	// Never overwrite an existing entry: re-publishing the same coordinates, or
-	// a proxy re-caching a tarball, must not make an old artifact look new.
-	if ok, err := m.GetJSON(NS(repoName), Key(component, version), &record{}); ok && err == nil {
-		return
-	}
+	// A publish always stamps the time, overwriting any earlier entry.
+	//
+	// This deliberately replaced a "never overwrite" rule, which was written to
+	// stop a proxy re-caching a tarball from making an old artifact look new.
+	// Proxies never write here — only the five publish handlers do — so that
+	// rule protected against nothing, while creating real data loss: deleting a
+	// version through a format's own API (npm unpublish, helm DELETE, maven
+	// DELETE) leaves the ledger row behind, so re-publishing the same
+	// coordinates inherited the old date and retention deleted the brand-new
+	// artifact on its next run.
+	//
+	// Overwriting also makes a missed Forget harmless — a stale row, rather
+	// than an artifact deleted for being "old" the day it was published.
 	_ = m.PutJSON(NS(repoName), Key(component, version), record{PublishedAt: t})
 }
 

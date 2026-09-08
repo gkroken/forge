@@ -234,3 +234,47 @@ interface seams.
 - **One giant interface with no default.** Would force every format to write
   fourteen stub methods, and the stubs would rot. `Unsupported` makes declining a
   seam one line.
+
+---
+
+## Review findings (2026-09-08, after P0–P4)
+
+A deliberate pass over the session's own work, looking for what would bite later.
+
+**Fixed — data loss from a rule written on a false premise.** The publish ledger
+refused to overwrite an existing entry, to stop "a proxy re-caching a tarball
+making an old artifact look new". Proxies never write to the ledger; only the
+five publish handlers do, so that rule protected against nothing. Meanwhile only
+cleanup's two paths call `Forget`, so deleting a version through a format's own
+API (npm unpublish, helm/maven/cran/oci DELETE — nine handlers) left the row
+behind, and re-publishing the same coordinates inherited the old date. Retention
+then deleted the brand-new artifact on its next run. Demonstrated with a test
+before fixing; a publish now always stamps the time, which also makes a missed
+`Forget` harmless rather than destructive.
+
+**Accepted — the ledger grows with deletions.** Those nine native delete paths
+still leave rows behind. With overwrite semantics that is cosmetic, and a row is
+tiny. Worth revisiting only if a repository churns enough for it to matter;
+integrity verify is the natural place to report orphaned rows.
+
+**Accepted — `ledger.Load` is O(versions) per retention run.** It reads the whole
+ledger into a map on every run. The per-format passes it replaced were also O(n)
+over meta keys, so this is not a regression, but it is a second scan. Fine at
+current scale; a Postgres-backed ledger would push the filter into the query.
+
+**Accepted — `sameComponent` applies maven's colon rule to every format.** It
+treats `a.b:c` and `a/b/c` as equal regardless of format. No other format's
+component identity contains a colon (npm scopes use `@`, oci splits image from
+tag before this point), so it is safe today, and it lives next to the promotion
+code that needs it rather than in the formats.
+
+**Accepted — `Result.Deleted` changed meaning for maven** (files → versions).
+Historical cleanup-run records keep their old numbers, so a long history shows
+both. Not worth a migration; the new meaning is the one the UI always implied.
+
+**Noted — OCI's sweep is now per-tag rather than per-run.** `DeleteVersion`
+recomputes reachability for each tag it removes, where the old pass did it once.
+Correctness is unchanged and it is simpler to reason about, but pruning many tags
+from one image is O(tags x manifests). Revisit if OCI retention is ever used on a
+registry with thousands of tags per image.
+
