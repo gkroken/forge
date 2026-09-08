@@ -77,6 +77,26 @@ func promoteErr(status int, format string, a ...any) *promoteError {
 	return &promoteError{Status: status, Msg: fmt.Sprintf(format, a...)}
 }
 
+// promoteStrategy copies one component+version from src to tgt, returning the
+// promoted artifact's digest and the bytes written.
+type promoteStrategy func(ctx context.Context, src, tgt repo.Repository, component, version, publicBase string) (string, int64, error)
+
+// promoteStrategies is the dispatch table, as data rather than a switch so a
+// test can enumerate which formats are promotable without having to publish an
+// artifact in each one first. Promotion stays here rather than moving onto
+// format.Handler because it replays a publish through the target's own handler
+// (internalServe); a format package implementing it would either duplicate its
+// own publish logic or have to depend on the server's request machinery.
+func (s *Server) promoteStrategies() map[string]promoteStrategy {
+	return map[string]promoteStrategy{
+		"maven": s.promoteMaven,
+		"cran":  s.promoteCRAN,
+		"helm":  s.promoteHelm,
+		"npm":   s.promoteNPM,
+		"oci":   s.promoteOCI,
+	}
+}
+
 // promoteComponent copies one component+version from src to tgt through tgt's
 // format handler, records provenance, and returns the stored record plus the
 // number of bytes copied. Both repos must be hosted and share a format. The
@@ -119,23 +139,11 @@ func (s *Server) promoteComponent(ctx context.Context, actor string, src, tgt re
 		}
 	}
 
-	var digest string
-	var copied int64
-	var err error
-	switch src.Format {
-	case "maven":
-		digest, copied, err = s.promoteMaven(ctx, src, tgt, component, version, publicBase)
-	case "cran":
-		digest, copied, err = s.promoteCRAN(ctx, src, tgt, component, version, publicBase)
-	case "helm":
-		digest, copied, err = s.promoteHelm(ctx, src, tgt, component, version, publicBase)
-	case "npm":
-		digest, copied, err = s.promoteNPM(ctx, src, tgt, component, version, publicBase)
-	case "oci":
-		digest, copied, err = s.promoteOCI(ctx, src, tgt, component, version, publicBase)
-	default:
+	strategy, ok := s.promoteStrategies()[src.Format]
+	if !ok {
 		return nil, 0, promoteErr(http.StatusNotImplemented, "no promotion strategy for format %s", src.Format)
 	}
+	digest, copied, err := strategy(ctx, src, tgt, component, version, publicBase)
 	if err != nil {
 		if _, ok := err.(*promoteError); ok {
 			return nil, 0, err

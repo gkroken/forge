@@ -160,11 +160,22 @@ every format's storage layout in componentExists and componentBytes, which is
 precisely the drift that made CRAN retention read the wrong namespace for its
 entire life. Those now go through ListVersions.
 
-The three strategy switches stay. They encode real per-format work — promotion
-reconstructs a publish document and pushes it through the target's handler —
-and converting them would move ~250 lines across five packages, against a
-well-tested feature, to replace a loud failure with a compile-time one. Recorded
-as a deliberate stop, not an oversight.
+The three strategy switches stay, and a later look confirmed why with a better
+reason than cost: **promotion replays a publish through the target's own handler**
+(`internalServe`). A format package implementing it would either duplicate its
+own publish logic — undoing the property that makes promotion correct by
+construction — or have to depend on the server's request machinery. Migration
+needs Nexus mapping knowledge, and browser upload is HTTP form handling. All
+three are server concerns.
+
+What they must not do is go missing quietly, so `internal/server/format_coverage_test.go`
+declares which formats are promotable and browser-uploadable and checks it. The
+promote switch became a `map[string]promoteStrategy` so the test can enumerate
+it: the first version probed through `promoteComponent` and was **useless** —
+that checks the component exists before it dispatches, so a nonexistent probe
+component always failed with "not found" and every format looked supported, even
+with a strategy deleted. Found by mutation-testing the guard, which is the only
+reason it is not still sitting there looking reassuring.
 
 - [x] `internal/server/promote.go`: **15 case labels → 5.** componentExists and
       componentBytes were a second implementation of every format's layout; both
