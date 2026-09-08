@@ -47,6 +47,7 @@ import (
 	"time"
 
 	"forge/internal/blob"
+	"forge/internal/cleanup"
 	"forge/internal/format"
 	"forge/internal/indexer"
 	"forge/internal/proxy"
@@ -55,10 +56,10 @@ import (
 
 type Handler struct{}
 
-func New() *Handler            { return &Handler{} }
+func New() *Handler               { return &Handler{} }
 func (h *Handler) Format() string { return "npm" }
 
-func (h *Handler) ns(c *format.Context) string    { return c.Repo.Name + ":npm" }
+func (h *Handler) ns(c *format.Context) string     { return c.Repo.Name + ":npm" }
 func (h *Handler) versNS(c *format.Context) string { return c.Repo.Name + ":npm:v" }
 func (h *Handler) tagsNS(c *format.Context) string { return c.Repo.Name + ":npm:dt" }
 
@@ -197,6 +198,9 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, c *format.Cont
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// Publish ledger: npm's version records are rebuilt from meta key names
+		// at cleanup time, so they carry no timestamp of their own.
+		cleanup.RecordPublish(c.Meta, c.Repo.Name, pkg, ver)
 	}
 
 	// Merge incoming dist-tags into the stored set.
@@ -376,8 +380,8 @@ func (h *Handler) distTags(w http.ResponseWriter, r *http.Request, c *format.Con
 		}
 		distTags[tag] = ver
 		packument["dist-tags"] = distTags
-		c.Meta.PutJSON(h.ns(c), pkg, packument)           //nolint:errcheck
-		c.Meta.PutJSON(h.tagsNS(c), pkg, distTags)        //nolint:errcheck
+		c.Meta.PutJSON(h.ns(c), pkg, packument)    //nolint:errcheck
+		c.Meta.PutJSON(h.tagsNS(c), pkg, distTags) //nolint:errcheck
 		json.NewEncoder(w).Encode(distTags)
 
 	case http.MethodDelete:
@@ -387,8 +391,8 @@ func (h *Handler) distTags(w http.ResponseWriter, r *http.Request, c *format.Con
 		}
 		delete(distTags, tag)
 		packument["dist-tags"] = distTags
-		c.Meta.PutJSON(h.ns(c), pkg, packument)           //nolint:errcheck
-		c.Meta.PutJSON(h.tagsNS(c), pkg, distTags)        //nolint:errcheck
+		c.Meta.PutJSON(h.ns(c), pkg, packument)    //nolint:errcheck
+		c.Meta.PutJSON(h.tagsNS(c), pkg, distTags) //nolint:errcheck
 		json.NewEncoder(w).Encode(distTags)
 
 	default:
@@ -412,9 +416,9 @@ func (h *Handler) login(w http.ResponseWriter) {
 func (h *Handler) audit(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"actions":   []any{},
+		"actions":    []any{},
 		"advisories": map[string]any{},
-		"muted":     []any{},
+		"muted":      []any{},
 		"metadata": map[string]any{
 			"vulnerabilities": map[string]int{
 				"info": 0, "low": 0, "moderate": 0, "high": 0, "critical": 0,

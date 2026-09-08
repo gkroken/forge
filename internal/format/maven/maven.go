@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"forge/internal/blob"
+	"forge/internal/cleanup"
 	"forge/internal/format"
 	"forge/internal/proxy"
 	"forge/internal/repo"
@@ -42,7 +43,7 @@ import (
 
 type Handler struct{}
 
-func New() *Handler            { return &Handler{} }
+func New() *Handler               { return &Handler{} }
 func (h *Handler) Format() string { return "maven" }
 
 // --- SNAPSHOT tracking types -----------------------------------------------
@@ -86,7 +87,7 @@ type snapArtifact struct {
 	UploadedAt time.Time `json:"uploadedAt,omitempty"`
 }
 
-func (h *Handler) snapNS(c *format.Context) string    { return c.Repo.Name + ":maven:snap" }
+func (h *Handler) snapNS(c *format.Context) string     { return c.Repo.Name + ":maven:snap" }
 func (h *Handler) snapVersNS(c *format.Context) string { return c.Repo.Name + ":maven:snap:v" }
 func (h *Handler) compNS(c *format.Context) string     { return c.Repo.Name + ":maven:comp" }
 
@@ -155,6 +156,11 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request, c *format.Context)
 	if comp, ok := compKeyFromSub(c.Sub); ok {
 		c.Meta.PutJSON(h.compNS(c), comp, compMeta{UpdatedAt: time.Now().UTC()}) //nolint:errcheck
 	}
+	// Publish ledger, keyed the way cleanup groups maven artifacts
+	// ("groupId/artifactId" + version directory). Snapshots also get a richer
+	// per-file record from maybeUpdateSnapshotMeta above; releases have only
+	// this, which is what makes age-based retention work for them at all.
+	cleanup.RecordPublishFromMavenPath(c.Meta, c.Repo.Name, c.Sub)
 	w.WriteHeader(http.StatusCreated)
 	fmt.Fprintf(w, "stored %s (%d bytes, sha1=%s)\n", c.Sub, info.Size, info.SHA1)
 }

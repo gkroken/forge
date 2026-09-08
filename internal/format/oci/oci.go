@@ -34,6 +34,7 @@ import (
 	"strings"
 	"time"
 
+	"forge/internal/cleanup"
 	"forge/internal/format"
 	"forge/internal/repo"
 )
@@ -41,7 +42,7 @@ import (
 // Handler implements format.Handler for the OCI Distribution Spec.
 type Handler struct{}
 
-func New() *Handler            { return &Handler{} }
+func New() *Handler               { return &Handler{} }
 func (h *Handler) Format() string { return "oci" }
 
 // manifestMeta is stored in the meta store (key: "manifests/{digest}")
@@ -323,8 +324,12 @@ func (h *Handler) putManifest(w http.ResponseWriter, r *http.Request, c *format.
 
 	// If reference is a tag, store tag → digest mapping and push timestamp.
 	if !strings.HasPrefix(ref, "sha256:") {
-		c.Meta.PutJSON(h.ns(c), "tags/"+image+"/"+ref, dgst)                                                        //nolint:errcheck
+		c.Meta.PutJSON(h.ns(c), "tags/"+image+"/"+ref, dgst)                                       //nolint:errcheck
 		c.Meta.PutJSON(h.ns(c), "tag-times/"+image+"/"+ref, time.Now().UTC().Format(time.RFC3339)) //nolint:errcheck
+		// The cleanup engine has no OCI pass yet, but recording publishes now
+		// means retention will have real dates to work with when it gains one,
+		// rather than treating every existing image as undatable.
+		cleanup.RecordPublish(c.Meta, c.Repo.Name, image, ref)
 	}
 
 	w.Header().Set("Location", fmt.Sprintf("/v2/%s/%s/manifests/%s", c.Repo.Name, image, dgst))
@@ -520,7 +525,9 @@ func (h *Handler) VulnGateTarget(sub string) (component, version string, ok bool
 }
 
 // compile-time assertion: Handler satisfies format.VulnGate.
-var _ interface{ VulnGateTarget(string) (string, string, bool) } = (*Handler)(nil)
+var _ interface {
+	VulnGateTarget(string) (string, string, bool)
+} = (*Handler)(nil)
 
 // BrowseRepo implements format.Browsable.
 // OCI tags are stored at meta key "tags/{image}/{tag}".

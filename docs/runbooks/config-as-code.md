@@ -218,6 +218,11 @@ available on a config-managed repo, because they act on artifacts:
 POST   /api/v1/repos/{name}/cleanup      run retention now
                                          (add ?dry=true to PREVIEW candidates;
                                           any other spelling deletes for real)
+
+A dry run also returns `unevaluable`: versions an age-based rule could not judge
+because no publish time is known for them. An empty `candidates` list with a
+non-empty `unevaluable` list means the rule is not matching rather than that
+nothing is old enough yet.
 POST   /api/v1/repos/{name}/scan         vulnerability scan
 POST   /api/v1/repos/{name}/promote      copy a component in
 DELETE /api/v1/repos/{name}/component    delete one artifact

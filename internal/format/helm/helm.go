@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"forge/internal/blob"
+	"forge/internal/cleanup"
 	"forge/internal/format"
 	"forge/internal/proxy"
 	"forge/internal/repo"
@@ -38,7 +39,7 @@ import (
 
 type Handler struct{}
 
-func New() *Handler            { return &Handler{} }
+func New() *Handler               { return &Handler{} }
 func (h *Handler) Format() string { return "helm" }
 
 // chartRecord is what we persist per chart version (meta namespace).
@@ -114,6 +115,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, c *format.Conte
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	cleanup.RecordPublishAt(c.Meta, c.Repo.Name, meta.Name, meta.Version, now)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]bool{"saved": true})
@@ -200,8 +202,8 @@ func parseIndexYAML(data []byte) []chartRecord {
 	inEntries := false
 	entryDashIndent := -1 // set when first entry dash is found
 	inURLs := false
-	contKey := ""  // field key whose value continues on wrapped lines
-	contVal := ""  // accumulated value for contKey
+	contKey := "" // field key whose value continues on wrapped lines
+	contVal := "" // accumulated value for contKey
 
 	flushCont := func() {
 		if contKey != "" {
@@ -571,9 +573,9 @@ var _ format.ReferencedImages = (*Handler)(nil)
 //
 //   - flat:        image: repo/name:tag   (a key ending in "image" with a :tag value)
 //   - structured:  image:
-//                    registry: docker.io   (optional)
-//                    repository: repo/name
-//                    tag: "1.2.3"
+//     registry: docker.io   (optional)
+//     repository: repo/name
+//     tag: "1.2.3"
 //
 // Only refs with an explicit tag are returned — a bare repository would scan
 // ":latest", which is rarely what the chart pins. Results are deduplicated and

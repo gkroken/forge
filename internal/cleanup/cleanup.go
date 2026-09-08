@@ -97,9 +97,15 @@ func runMaven(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store
 
 	var res Result
 	snapNS := repoName + ":maven:snap:v"
+	pub := PublishIndex(m, repoName)
+	// mavenUploadTime prefers the snapshot record's own timestamp (which carries
+	// the real deploy time for a timestamped snapshot) and falls back to the
+	// publish ledger, which is the only source releases have.
+	mavenUploadTime := func(ga, version string, keys []string) time.Time {
+		return publishedAt(mavenSnapUploadTime(snapNS, version, keys, m), pub, ga, version)
+	}
 
 	for ga, arts := range byGA {
-		_ = ga
 		// Apply KeepReleasesOnly: collect SNAPSHOT versions to delete.
 		var toDelete []artifact
 		var kept []artifact
@@ -122,7 +128,7 @@ func runMaven(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store
 					continue
 				}
 				// Look up upload time from any snap record for this version.
-				snapTime := mavenSnapUploadTime(snapNS, a.version, a.keys, m)
+				snapTime := mavenUploadTime(ga, a.version, a.keys)
 				if !snapTime.IsZero() && snapTime.Before(cutoff) {
 					toDelete = append(toDelete, a)
 				} else {
@@ -137,7 +143,7 @@ func runMaven(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store
 			cutoff := time.Now().UTC().AddDate(0, 0, -p.DeleteOlderThanDays)
 			var remaining []artifact
 			for _, a := range arts {
-				snapTime := mavenSnapUploadTime(snapNS, a.version, a.keys, m)
+				snapTime := mavenUploadTime(ga, a.version, a.keys)
 				if !snapTime.IsZero() && snapTime.Before(cutoff) {
 					toDelete = append(toDelete, a)
 				} else {
@@ -155,7 +161,7 @@ func runMaven(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store
 			for _, a := range arts {
 				eff := effectiveDownloadTime(
 					lastDownloadTime(m, a.keys...),
-					mavenSnapUploadTime(snapNS, a.version, a.keys, m),
+					mavenUploadTime(ga, a.version, a.keys),
 				)
 				if !eff.IsZero() && eff.Before(cutoff) {
 					toDelete = append(toDelete, a)
@@ -188,6 +194,7 @@ func runMaven(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store
 					res.Deleted++
 				}
 			}
+			ForgetPublish(m, repoName, ga, a.version)
 		}
 	}
 	return res, nil
@@ -239,11 +246,14 @@ func runCRAN(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store)
 		byPkg[rec.Package] = append(byPkg[rec.Package], rec)
 	}
 
+	pub := PublishIndex(m, repoName)
 	var res Result
 	for _, recs := range byPkg {
 		toDelete := applyPolicies(p, recs,
-			func(r cranRecord) string    { return r.Version },
-			func(r cranRecord) time.Time { return r.UploadedAt },
+			func(r cranRecord) string { return r.Version },
+			func(r cranRecord) time.Time {
+				return publishedAt(r.UploadedAt, pub, r.Package, r.Version)
+			},
 			func(r cranRecord) time.Time {
 				return lastDownloadTime(m, repoName+"/src/contrib/"+r.Package+"_"+r.Version+".tar.gz")
 			},
@@ -256,6 +266,7 @@ func runCRAN(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store)
 				b.Delete(blobKey) //nolint:errcheck
 			}
 			m.Delete(ns, rec.Package+"_"+rec.Version) //nolint:errcheck
+			ForgetPublish(m, repoName, rec.Package, rec.Version)
 			res.Deleted++
 		}
 	}
@@ -287,11 +298,14 @@ func runHelm(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store)
 		byChart[rec.Name] = append(byChart[rec.Name], rec)
 	}
 
+	pub := PublishIndex(m, repoName)
 	var res Result
 	for _, recs := range byChart {
 		toDelete := applyPolicies(p, recs,
-			func(r helmRecord) string    { return r.Version },
-			func(r helmRecord) time.Time { return r.UploadedAt },
+			func(r helmRecord) string { return r.Version },
+			func(r helmRecord) time.Time {
+				return publishedAt(r.UploadedAt, pub, r.Name, r.Version)
+			},
 			func(r helmRecord) time.Time { return lastDownloadTime(m, repoName+"/"+r.Filename) },
 		)
 		for _, rec := range toDelete {
@@ -302,6 +316,7 @@ func runHelm(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store)
 				b.Delete(blobKey) //nolint:errcheck
 			}
 			m.Delete(ns, rec.Name+"-"+rec.Version) //nolint:errcheck
+			ForgetPublish(m, repoName, rec.Name, rec.Version)
 			res.Deleted++
 		}
 	}
@@ -335,11 +350,14 @@ func runNPM(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store) 
 		byPkg[pkg] = append(byPkg[pkg], npmVersionRecord{Package: pkg, Version: ver})
 	}
 
+	pub := PublishIndex(m, repoName)
 	var res Result
 	for _, recs := range byPkg {
 		toDelete := applyPolicies(p, recs,
-			func(r npmVersionRecord) string    { return r.Version },
-			func(r npmVersionRecord) time.Time { return r.UploadedAt },
+			func(r npmVersionRecord) string { return r.Version },
+			func(r npmVersionRecord) time.Time {
+				return publishedAt(r.UploadedAt, pub, r.Package, r.Version)
+			},
 			func(r npmVersionRecord) time.Time {
 				return lastDownloadTime(m, repoName+"/"+r.Package+"/-/"+r.Package+"-"+r.Version+".tgz")
 			},
@@ -352,6 +370,7 @@ func runNPM(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store) 
 				b.Delete(blobKey) //nolint:errcheck
 			}
 			m.Delete(versNS, rec.Package+":"+rec.Version) //nolint:errcheck
+			ForgetPublish(m, repoName, rec.Package, rec.Version)
 
 			// Remove the version from the packument.
 			var packument map[string]any
@@ -521,4 +540,3 @@ func isSnapshotVersion(version string) bool {
 		strings.Contains(version, "-rc") ||
 		strings.Contains(version, "-dev")
 }
-

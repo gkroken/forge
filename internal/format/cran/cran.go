@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"forge/internal/blob"
+	"forge/internal/cleanup"
 	"forge/internal/format"
 	"forge/internal/proxy"
 	"forge/internal/repo"
@@ -135,7 +136,8 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, c *format.Cont
 		return
 	}
 	rec.UploadedAt = time.Now().UTC()
-	c.Meta.PutJSON(h.ns(c), rec.Package+"_"+rec.Version, rec)
+	c.Meta.PutJSON(h.ns(c), rec.Package+"_"+rec.Version, rec) //nolint:errcheck
+	cleanup.RecordPublishAt(c.Meta, c.Repo.Name, rec.Package, rec.Version, rec.UploadedAt)
 	w.WriteHeader(http.StatusCreated)
 	fmt.Fprintf(w, "stored %s %s\n", rec.Package, rec.Version)
 }

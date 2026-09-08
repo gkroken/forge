@@ -18,9 +18,22 @@ type Candidate struct {
 	Reason    string `json:"reason"`
 }
 
+// Unevaluable is a version that an age-based rule could not judge, because no
+// publish time is known for it. Reporting these is the difference between a
+// rule that is inert and a rule that is silently inert: without it, "no
+// candidates" reads identically to "nothing is old enough yet".
+type Unevaluable struct {
+	Component string `json:"component"`
+	Version   string `json:"version"`
+	Rule      string `json:"rule"`
+}
+
 // DryRunResult lists the artifacts that would be removed without deleting them.
 type DryRunResult struct {
 	Candidates []Candidate `json:"candidates"`
+	// Unevaluable is empty unless an age rule is configured and some version
+	// has no known publish time.
+	Unevaluable []Unevaluable `json:"unevaluable,omitempty"`
 }
 
 // DryRun applies p against repoName's stores and returns what would be deleted,
@@ -46,6 +59,7 @@ func DryRun(repoName, format string, p *repo.CleanupPolicy, b blob.Store, m meta
 type tagged[T any] struct {
 	rec    T
 	reason string
+	at     time.Time // resolved publish time; zero when unknown
 }
 
 // applyPoliciesTagged mirrors applyPolicies but labels each candidate with the
@@ -56,37 +70,44 @@ func applyPoliciesTagged[T any](
 	version func(T) string,
 	uploadedAt func(T) time.Time,
 	downloadedAt func(T) time.Time,
-) []tagged[T] {
+) ([]tagged[T], []T) {
 	var toDelete []tagged[T]
+	var unevaluable []T
 	kept := make([]T, 0, len(recs))
 	now := time.Now().UTC()
+	// An age rule that cannot see a publish time skips the version rather than
+	// assuming it is old. Track those so the caller can say so out loud.
+	ageRule := p.DeleteOlderThanDays > 0 || p.DeleteSnapshotsDays > 0
 
 	for _, r := range recs {
 		ver := version(r)
 		isSnap := isSnapshotVersion(ver)
 		ua := uploadedAt(r)
 		deleted := false
+		if ageRule && ua.IsZero() {
+			unevaluable = append(unevaluable, r)
+		}
 
 		if p.KeepReleasesOnly && isSnap {
-			toDelete = append(toDelete, tagged[T]{r, "keep_releases_only"})
+			toDelete = append(toDelete, tagged[T]{r, "keep_releases_only", ua})
 			deleted = true
 		}
 		if !deleted && p.DeleteSnapshotsDays > 0 && isSnap && !ua.IsZero() {
 			if ua.Before(now.AddDate(0, 0, -p.DeleteSnapshotsDays)) {
-				toDelete = append(toDelete, tagged[T]{r, "delete_snapshots_days"})
+				toDelete = append(toDelete, tagged[T]{r, "delete_snapshots_days", ua})
 				deleted = true
 			}
 		}
 		if !deleted && p.DeleteOlderThanDays > 0 && !ua.IsZero() {
 			if ua.Before(now.AddDate(0, 0, -p.DeleteOlderThanDays)) {
-				toDelete = append(toDelete, tagged[T]{r, "delete_older_than_days"})
+				toDelete = append(toDelete, tagged[T]{r, "delete_older_than_days", ua})
 				deleted = true
 			}
 		}
 		if !deleted && p.LastDownloadedDays > 0 {
 			if eff := effectiveDownloadTime(downloadedAt(r), ua); !eff.IsZero() &&
 				eff.Before(now.AddDate(0, 0, -p.LastDownloadedDays)) {
-				toDelete = append(toDelete, tagged[T]{r, "last_downloaded_days"})
+				toDelete = append(toDelete, tagged[T]{r, "last_downloaded_days", ua})
 				deleted = true
 			}
 		}
@@ -104,11 +125,11 @@ func applyPoliciesTagged[T any](
 			}
 		}
 		for _, r := range sorted[:len(sorted)-p.KeepVersions] {
-			toDelete = append(toDelete, tagged[T]{r, "keep_versions"})
+			toDelete = append(toDelete, tagged[T]{r, "keep_versions", uploadedAt(r)})
 		}
 	}
 
-	return toDelete
+	return toDelete, unevaluable
 }
 
 func blobAgeDays(t time.Time) int {
@@ -144,21 +165,30 @@ func dryRunCRAN(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Sto
 		byPkg[rec.Package] = append(byPkg[rec.Package], rec)
 	}
 
+	pub := PublishIndex(m, repoName)
 	var result DryRunResult
 	for _, recs := range byPkg {
-		for _, t := range applyPoliciesTagged(p, recs,
-			func(r cranRecord) string    { return r.Version },
-			func(r cranRecord) time.Time { return r.UploadedAt },
+		cands, skipped := applyPoliciesTagged(p, recs,
+			func(r cranRecord) string { return r.Version },
+			func(r cranRecord) time.Time {
+				return publishedAt(r.UploadedAt, pub, r.Package, r.Version)
+			},
 			func(r cranRecord) time.Time {
 				return lastDownloadTime(m, repoName+"/src/contrib/"+r.Package+"_"+r.Version+".tar.gz")
 			},
-		) {
+		)
+		for _, r := range skipped {
+			result.Unevaluable = append(result.Unevaluable, Unevaluable{
+				Component: r.Package, Version: r.Version, Rule: "delete_older_than_days",
+			})
+		}
+		for _, t := range cands {
 			blobKey := repoName + "/src/contrib/" + t.rec.Package + "_" + t.rec.Version + ".tar.gz"
 			result.Candidates = append(result.Candidates, Candidate{
 				Component: t.rec.Package,
 				Version:   t.rec.Version,
 				SizeBytes: statSize(b, blobKey),
-				AgeDays:   blobAgeDays(t.rec.UploadedAt),
+				AgeDays:   blobAgeDays(t.at),
 				Reason:    t.reason,
 			})
 		}
@@ -184,19 +214,28 @@ func dryRunHelm(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Sto
 		byChart[rec.Name] = append(byChart[rec.Name], rec)
 	}
 
+	pub := PublishIndex(m, repoName)
 	var result DryRunResult
 	for _, recs := range byChart {
-		for _, t := range applyPoliciesTagged(p, recs,
-			func(r helmRecord) string    { return r.Version },
-			func(r helmRecord) time.Time { return r.UploadedAt },
+		cands, skipped := applyPoliciesTagged(p, recs,
+			func(r helmRecord) string { return r.Version },
+			func(r helmRecord) time.Time {
+				return publishedAt(r.UploadedAt, pub, r.Name, r.Version)
+			},
 			func(r helmRecord) time.Time { return lastDownloadTime(m, repoName+"/"+r.Filename) },
-		) {
+		)
+		for _, r := range skipped {
+			result.Unevaluable = append(result.Unevaluable, Unevaluable{
+				Component: r.Name, Version: r.Version, Rule: "delete_older_than_days",
+			})
+		}
+		for _, t := range cands {
 			blobKey := repoName + "/" + t.rec.Filename
 			result.Candidates = append(result.Candidates, Candidate{
 				Component: t.rec.Name,
 				Version:   t.rec.Version,
 				SizeBytes: statSize(b, blobKey),
-				AgeDays:   blobAgeDays(t.rec.UploadedAt),
+				AgeDays:   blobAgeDays(t.at),
 				Reason:    t.reason,
 			})
 		}
@@ -222,21 +261,30 @@ func dryRunNPM(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Stor
 		byPkg[pkg] = append(byPkg[pkg], npmVersionRecord{Package: pkg, Version: ver})
 	}
 
+	pub := PublishIndex(m, repoName)
 	var result DryRunResult
 	for _, recs := range byPkg {
-		for _, t := range applyPoliciesTagged(p, recs,
-			func(r npmVersionRecord) string    { return r.Version },
-			func(r npmVersionRecord) time.Time { return r.UploadedAt },
+		cands, skipped := applyPoliciesTagged(p, recs,
+			func(r npmVersionRecord) string { return r.Version },
+			func(r npmVersionRecord) time.Time {
+				return publishedAt(r.UploadedAt, pub, r.Package, r.Version)
+			},
 			func(r npmVersionRecord) time.Time {
 				return lastDownloadTime(m, repoName+"/"+r.Package+"/-/"+r.Package+"-"+r.Version+".tgz")
 			},
-		) {
+		)
+		for _, r := range skipped {
+			result.Unevaluable = append(result.Unevaluable, Unevaluable{
+				Component: r.Package, Version: r.Version, Rule: "delete_older_than_days",
+			})
+		}
+		for _, t := range cands {
 			blobKey := repoName + "/" + t.rec.Package + "/-/" + t.rec.Package + "-" + t.rec.Version + ".tgz"
 			result.Candidates = append(result.Candidates, Candidate{
 				Component: t.rec.Package,
 				Version:   t.rec.Version,
 				SizeBytes: statSize(b, blobKey),
-				AgeDays:   blobAgeDays(t.rec.UploadedAt),
+				AgeDays:   blobAgeDays(t.at),
 				Reason:    t.reason,
 			})
 		}
@@ -253,8 +301,8 @@ func dryRunMaven(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.St
 	}
 
 	type mavenArtifact struct {
-		ga      string
-		version string
+		ga       string
+		version  string
 		blobKeys []string
 	}
 
@@ -285,14 +333,27 @@ func dryRunMaven(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.St
 		}
 	}
 
-	zero := time.Time{}
+	// The real run resolves a maven version's publish time from the snapshot
+	// record, falling back to the publish ledger. The dry run used a hardcoded
+	// zero here, so age rules silently never fired in a preview even where the
+	// real run would have deleted. Use the same resolution in both.
+	snapNS := repoName + ":maven:snap:v"
+	pub := PublishIndex(m, repoName)
 	var result DryRunResult
 	for _, arts := range byGA {
-		for _, t := range applyPoliciesTagged(p, arts,
-			func(a mavenArtifact) string    { return a.version },
-			func(a mavenArtifact) time.Time { return zero },
+		cands, skipped := applyPoliciesTagged(p, arts,
+			func(a mavenArtifact) string { return a.version },
+			func(a mavenArtifact) time.Time {
+				return publishedAt(mavenSnapUploadTime(snapNS, a.version, a.blobKeys, m), pub, a.ga, a.version)
+			},
 			func(a mavenArtifact) time.Time { return lastDownloadTime(m, a.blobKeys...) },
-		) {
+		)
+		for _, a := range skipped {
+			result.Unevaluable = append(result.Unevaluable, Unevaluable{
+				Component: a.ga, Version: a.version, Rule: "delete_older_than_days",
+			})
+		}
+		for _, t := range cands {
 			var size int64
 			for _, k := range t.rec.blobKeys {
 				size += statSize(b, k)
@@ -301,6 +362,7 @@ func dryRunMaven(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.St
 				Component: t.rec.ga,
 				Version:   t.rec.version,
 				SizeBytes: size,
+				AgeDays:   blobAgeDays(t.at),
 				Reason:    t.reason,
 			})
 		}
