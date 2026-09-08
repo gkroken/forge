@@ -75,6 +75,17 @@ func (h *Handler) DeleteVersion(c *format.Context, component, version string) (i
 	return freed, nil
 }
 
+// mavenPathParts splits a maven sub-path into its component and version, the
+// same way ListVersions groups blobs. Returns false for a path too short to
+// carry a version (a metadata file at the artifact level, say).
+func mavenPathParts(sub string) (component, version string, ok bool) {
+	parts := strings.Split(strings.Trim(sub, "/"), "/")
+	if len(parts) < 3 {
+		return "", "", false
+	}
+	return strings.Join(parts[:len(parts)-2], "/"), parts[len(parts)-2], true
+}
+
 // gaPath normalises a maven component to its blob-layout form. "com.acme:app"
 // becomes "com/acme/app"; a value already in path form is returned unchanged.
 func gaPath(component string) string {

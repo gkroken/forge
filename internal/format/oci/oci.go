@@ -346,6 +346,7 @@ func (h *Handler) deleteManifest(w http.ResponseWriter, c *format.Context, image
 
 	c.Blob.Delete(h.manifestKey(c, dgst))
 	c.Meta.Delete(h.ns(c), "manifests/"+dgst)
+	ledger.Forget(c.Meta, c.Repo.Name, image, ref)
 
 	// Remove any tags pointing to this digest.
 	if keys, _ := c.Meta.List(h.ns(c)); keys != nil {

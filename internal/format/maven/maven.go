@@ -679,6 +679,13 @@ func (h *Handler) deleteArtifact(w http.ResponseWriter, c *format.Context) {
 		return
 	}
 	h.maybeDeleteSnapshotMeta(c)
+	// A maven version is several files (jar, pom, sources); the publish ledger
+	// tracks the version, so its entry only goes when the last file does.
+	if component, version, ok := mavenPathParts(c.Sub); ok {
+		if remaining, _ := c.Blob.List(c.Repo.Name + "/" + component + "/" + version + "/"); len(remaining) == 0 {
+			ledger.Forget(c.Meta, c.Repo.Name, component, version)
+		}
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

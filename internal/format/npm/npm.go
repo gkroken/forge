@@ -291,6 +291,7 @@ func (h *Handler) unpublish(w http.ResponseWriter, c *format.Context, pkg string
 		for _, k := range keys {
 			if strings.HasPrefix(k, prefix) {
 				c.Meta.Delete(h.versNS(c), k) //nolint:errcheck
+				ledger.Forget(c.Meta, c.Repo.Name, pkg, strings.TrimPrefix(k, prefix))
 			}
 		}
 	}
@@ -320,6 +321,7 @@ func (h *Handler) deleteTarball(w http.ResponseWriter, c *format.Context, sub st
 
 	// Remove from per-version namespace (new-format storage).
 	c.Meta.Delete(h.versNS(c), pkg+":"+ver) //nolint:errcheck
+	ledger.Forget(c.Meta, c.Repo.Name, pkg, ver)
 
 	// Prune from the materialized packument (covers both old and new format).
 	var packument map[string]any

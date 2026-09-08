@@ -252,10 +252,16 @@ then deleted the brand-new artifact on its next run. Demonstrated with a test
 before fixing; a publish now always stamps the time, which also makes a missed
 `Forget` harmless rather than destructive.
 
-**Accepted — the ledger grows with deletions.** Those nine native delete paths
-still leave rows behind. With overwrite semantics that is cosmetic, and a row is
-tiny. Worth revisiting only if a repository churns enough for it to matter;
-integrity verify is the natural place to report orphaned rows.
+**Fixed on review — the ledger grew with deletions.** This was first written
+down as accepted, on the grounds that a leaked row is cosmetic once a publish
+re-stamps. That undersold it: every row is read on every retention run, so
+leaking them makes cleanup quietly slower forever, and the asymmetry was the
+tell — five `Record` calls against two `Forget` calls. The native delete
+handlers now forget: npm unpublish and tarball delete, helm delete, cran
+deletePkg, oci deleteManifest. Maven only forgets when the last file under a
+version goes, because a maven version is several files.
+`TestNativeDelete_ForgetsLedgerEntry` drives the real routes and was
+mutation-tested by removing npm's call.
 
 **Accepted — `ledger.Load` is O(versions) per retention run.** It reads the whole
 ledger into a map on every run. The per-format passes it replaced were also O(n)
@@ -272,7 +278,9 @@ code that needs it rather than in the formats.
 Historical cleanup-run records keep their old numbers, so a long history shows
 both. Not worth a migration; the new meaning is the one the UI always implied.
 
-**Noted — OCI's sweep is now per-tag rather than per-run.** `DeleteVersion`
+**Known scaling limit — OCI's sweep is now per-tag rather than per-run.** Stated
+as a neutral "note" first time round, which was too soft: this is a real cost P2
+introduced, not a neutral observation. `DeleteVersion`
 recomputes reachability for each tag it removes, where the old pass did it once.
 Correctness is unchanged and it is simpler to reason about, but pruning many tags
 from one image is O(tags x manifests). Revisit if OCI retention is ever used on a

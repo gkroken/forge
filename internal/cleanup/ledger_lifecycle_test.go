@@ -62,3 +62,4 @@ func TestLedger_ForgetRemovesEntry(t *testing.T) {
 		t.Error("Forget left the entry behind")
 	}
 }
+

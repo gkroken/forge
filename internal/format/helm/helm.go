@@ -504,6 +504,7 @@ func (h *Handler) delete(w http.ResponseWriter, c *format.Context, nameVer strin
 	}
 	c.Meta.Delete(h.ns(c), name+"-"+ver)
 	c.Blob.Delete(c.Key(fmt.Sprintf("%s-%s.tgz", name, ver)))
+	ledger.Forget(c.Meta, c.Repo.Name, name, ver)
 	w.WriteHeader(http.StatusOK)
 }
 
