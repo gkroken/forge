@@ -15,6 +15,7 @@ import (
 	"forge/internal/meta"
 	"forge/internal/obs"
 	"forge/internal/repo"
+	"forge/internal/vuln"
 )
 
 // ownedServer builds a server whose "managed" repo is config-owned and whose
@@ -269,5 +270,87 @@ func TestConfigOwned_ReposListShowsBadge(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "pill-config") {
 		t.Error("config-managed repo must carry a badge in the repositories list")
+	}
+}
+
+// --- repo policy bindings over the admin API ------------------------------
+
+// apiServer is a plain admin-API server with the policy managers wired, and no
+// config-as-code mode.
+func apiServer(t *testing.T) *Server {
+	t.Helper()
+	dir := t.TempDir()
+	b, err := blob.NewFS(filepath.Join(dir, "b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := meta.NewFS(filepath.Join(dir, "m"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := New(repo.NewManager(), format.NewRegistry(), b, m, nil)
+	srv.Cleanup = cleanup.NewPolicyManager(m)
+	srv.VulnPolicy = vuln.NewPolicyManager(m)
+	return srv
+}
+
+// TestRepoUpdate_PreservesPolicyBindings is the regression: repoRequest had no
+// cleanupPolicyName or securityPolicyName, and updateRepo rebuilds the
+// repository from the request — so any unrelated PUT silently detached a repo's
+// vulnerability gate and retention policy.
+func TestRepoUpdate_PreservesPolicyBindings(t *testing.T) {
+	srv := apiServer(t)
+	do(t, srv, http.MethodPost, "/api/v1/cleanup-policies", `{"name":"age30","deleteOlderThanDays":30}`)
+	do(t, srv, http.MethodPost, "/api/v1/security-policies", `{"name":"blockme","mode":"block","threshold":"high"}`)
+	do(t, srv, http.MethodPost, "/api/v1/repos",
+		`{"name":"t1","format":"npm","kind":"hosted","enabled":true,"cleanupPolicyName":"age30","securityPolicyName":"blockme"}`)
+
+	got, ok := srv.Repos.Get("t1")
+	if !ok || got.CleanupPolicyName != "age30" || got.SecurityPolicyName != "blockme" {
+		t.Fatalf("create did not accept the bindings: %+v", got)
+	}
+
+	// An update that says nothing about policies must not clear them.
+	do(t, srv, http.MethodPut, "/api/v1/repos/t1",
+		`{"name":"t1","format":"npm","kind":"hosted","enabled":true,"anonymousRead":true}`)
+	got, _ = srv.Repos.Get("t1")
+	if got.CleanupPolicyName != "age30" {
+		t.Errorf("cleanupPolicyName was cleared by an unrelated update: %q", got.CleanupPolicyName)
+	}
+	if got.SecurityPolicyName != "blockme" {
+		t.Errorf("securityPolicyName was cleared by an unrelated update: %q", got.SecurityPolicyName)
+	}
+	if !got.AnonymousRead {
+		t.Error("the update itself did not apply")
+	}
+}
+
+// TestRepoUpdate_ExplicitUnbind — an empty string still detaches, so there is a
+// way to remove a binding through the API.
+func TestRepoUpdate_ExplicitUnbind(t *testing.T) {
+	srv := apiServer(t)
+	do(t, srv, http.MethodPost, "/api/v1/security-policies", `{"name":"blockme","mode":"block","threshold":"high"}`)
+	do(t, srv, http.MethodPost, "/api/v1/repos",
+		`{"name":"t1","format":"npm","kind":"hosted","enabled":true,"securityPolicyName":"blockme"}`)
+	do(t, srv, http.MethodPut, "/api/v1/repos/t1",
+		`{"name":"t1","format":"npm","kind":"hosted","enabled":true,"securityPolicyName":""}`)
+
+	if got, _ := srv.Repos.Get("t1"); got.SecurityPolicyName != "" {
+		t.Errorf("explicit unbind ignored: %q", got.SecurityPolicyName)
+	}
+}
+
+// TestRepoUpdate_RejectsUnknownPolicy — config-as-code refuses a dangling
+// policy reference; the admin API must not be the looser door.
+func TestRepoUpdate_RejectsUnknownPolicy(t *testing.T) {
+	srv := apiServer(t)
+	do(t, srv, http.MethodPost, "/api/v1/repos", `{"name":"t1","format":"npm","kind":"hosted","enabled":true}`)
+	for _, body := range []string{
+		`{"name":"t1","format":"npm","kind":"hosted","cleanupPolicyName":"nope"}`,
+		`{"name":"t1","format":"npm","kind":"hosted","securityPolicyName":"nope"}`,
+	} {
+		if rec := do(t, srv, http.MethodPut, "/api/v1/repos/t1", body); rec.Code != http.StatusBadRequest {
+			t.Errorf("dangling policy reference = %d, want 400 (%s)", rec.Code, body)
+		}
 	}
 }

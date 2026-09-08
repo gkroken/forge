@@ -44,6 +44,11 @@ type repoRequest struct {
 	// the enforcement toggle (group/proxy repos; nil = enabled).
 	Claims            []string `json:"claims,omitempty"`
 	DepConfusionGuard *bool    `json:"depConfusionGuard,omitempty"`
+	// Policy bindings. Pointers so an omitted field means "keep what is there"
+	// rather than "clear it": an update that only toggles anonymousRead must not
+	// silently detach a repository's vulnerability gate. Send "" to unbind.
+	CleanupPolicyName  *string `json:"cleanupPolicyName,omitempty"`
+	SecurityPolicyName *string `json:"securityPolicyName,omitempty"`
 }
 
 func (req repoRequest) toRepository() (repo.Repository, error) {
@@ -91,6 +96,12 @@ func (req repoRequest) toRepository() (repo.Repository, error) {
 			return repo.Repository{}, fmt.Errorf("invalid metadataMaxAge: %w", err)
 		}
 		r.MetadataMaxAge = &d
+	}
+	if req.CleanupPolicyName != nil {
+		r.CleanupPolicyName = *req.CleanupPolicyName
+	}
+	if req.SecurityPolicyName != nil {
+		r.SecurityPolicyName = *req.SecurityPolicyName
 	}
 	return r, nil
 }
@@ -394,6 +405,10 @@ func (s *Server) createRepo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
+	if msg := s.validatePolicyRefs(newRepo); msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
+		return
+	}
 	if err := s.Repos.Add(newRepo); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
@@ -414,6 +429,22 @@ func (s *Server) updateRepo(w http.ResponseWriter, r *http.Request, name string)
 	updated, err := req.toRepository()
 	if err != nil {
 		http.Error(w, "invalid proxyTTL: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	// An update rebuilds the repository from the request, so a binding the
+	// request does not mention has to be carried over explicitly — otherwise
+	// changing any unrelated setting detaches the repo's cleanup and security
+	// policies without saying so.
+	if existing, ok := s.Repos.Get(name); ok {
+		if req.CleanupPolicyName == nil {
+			updated.CleanupPolicyName = existing.CleanupPolicyName
+		}
+		if req.SecurityPolicyName == nil {
+			updated.SecurityPolicyName = existing.SecurityPolicyName
+		}
+	}
+	if msg := s.validatePolicyRefs(updated); msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
 	if msg := validateRepo(updated); msg != "" {
@@ -1130,4 +1161,21 @@ func (s *Server) handleBlobStores(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, []map[string]string{{"name": "default"}})
+}
+
+// validatePolicyRefs rejects a repository that names a cleanup or security
+// policy which does not exist. Config-as-code already refuses such a file; the
+// admin API should not be the looser door.
+func (s *Server) validatePolicyRefs(r repo.Repository) string {
+	if r.CleanupPolicyName != "" && s.Cleanup != nil {
+		if _, ok, err := s.Cleanup.Get(r.CleanupPolicyName); err == nil && !ok {
+			return "cleanup policy not found: " + r.CleanupPolicyName
+		}
+	}
+	if r.SecurityPolicyName != "" && s.VulnPolicy != nil {
+		if _, ok, err := s.VulnPolicy.Get(r.SecurityPolicyName); err == nil && !ok {
+			return "security policy not found: " + r.SecurityPolicyName
+		}
+	}
+	return ""
 }
