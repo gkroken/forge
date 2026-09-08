@@ -70,7 +70,7 @@ func TestOCI_DeleteOlderThanDays(t *testing.T) {
 	old := time.Now().UTC().AddDate(0, 0, -60)
 	pushImage(t, b, m, "docker", "acme/api", "v1", []string{"sha256:l1"}, old)
 
-	res, err := cleanup.Run("docker", "oci", &repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m)
+	res, err := cleanup.Run(rp("docker", "oci"), formats(), &repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestOCI_SharedLayerSurvives(t *testing.T) {
 	pushImage(t, b, m, "docker", "acme/api", "old", []string{"sha256:shared", "sha256:only-old"}, old)
 	pushImage(t, b, m, "docker", "acme/api", "new", []string{"sha256:shared", "sha256:only-new"}, recent)
 
-	res, err := cleanup.Run("docker", "oci", &repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m)
+	res, err := cleanup.Run(rp("docker", "oci"), formats(), &repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestOCI_InFlightPushUntouched(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := cleanup.Run("docker", "oci", &repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m); err != nil {
+	if _, err := cleanup.Run(rp("docker", "oci"), formats(), &repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m); err != nil {
 		t.Fatal(err)
 	}
 	if !exists(t, b, "docker/blobs/sha256:inflight") {
@@ -143,7 +143,7 @@ func TestOCI_KeepVersions(t *testing.T) {
 	for _, v := range []string{"1.0.0", "1.1.0", "1.2.0", "1.3.0"} {
 		pushImage(t, b, m, "docker", "acme/api", v, []string{"sha256:l-" + v}, now)
 	}
-	res, err := cleanup.Run("docker", "oci", &repo.CleanupPolicy{KeepVersions: 2}, b, m)
+	res, err := cleanup.Run(rp("docker", "oci"), formats(), &repo.CleanupPolicy{KeepVersions: 2}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestOCI_DryRunDoesNotMutate(t *testing.T) {
 	pushImage(t, b, m, "docker", "acme/api", "v1", []string{"sha256:l1"},
 		time.Now().UTC().AddDate(0, 0, -60))
 
-	res, err := cleanup.DryRun("docker", "oci", &repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m)
+	res, err := cleanup.DryRun(rp("docker", "oci"), formats(), &repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestOCI_ImageNameWithSlashesRoundTrips(t *testing.T) {
 	b, m := stores(t)
 	pushImage(t, b, m, "docker", "team/group/svc", "v2", []string{"sha256:l1"},
 		time.Now().UTC().AddDate(0, 0, -60))
-	res, err := cleanup.DryRun("docker", "oci", &repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m)
+	res, err := cleanup.DryRun(rp("docker", "oci"), formats(), &repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestOCI_UnevaluableReported(t *testing.T) {
 	pushImage(t, b, m, "docker", "acme/api", "v1", []string{"sha256:l1"}, time.Time{})
 	m.Delete("docker:oci", "tag-times/acme/api/v1") //nolint:errcheck
 
-	res, err := cleanup.DryRun("docker", "oci", &repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m)
+	res, err := cleanup.DryRun(rp("docker", "oci"), formats(), &repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}

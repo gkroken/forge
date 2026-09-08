@@ -24,7 +24,7 @@ func TestNPM_DeleteOlderThanDays_NowFires(t *testing.T) {
 	ledger.RecordAt(m, "npm-hosted", "left-pad", "1.0.0",
 		time.Now().UTC().AddDate(0, 0, -60))
 
-	res, err := cleanup.Run("npm-hosted", "npm",
+	res, err := cleanup.Run(rp("npm-hosted", "npm"), formats(),
 		&repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m)
 	if err != nil {
 		t.Fatal(err)
@@ -47,7 +47,7 @@ func TestNPM_RecentPublishSurvives(t *testing.T) {
 	ledger.RecordAt(m, "npm-hosted", "fresh", "1.0.0",
 		time.Now().UTC().AddDate(0, 0, -2))
 
-	res, err := cleanup.Run("npm-hosted", "npm",
+	res, err := cleanup.Run(rp("npm-hosted", "npm"), formats(),
 		&repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m)
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func TestMavenRelease_DeleteOlderThanDays_NowFires(t *testing.T) {
 	ledger.RecordAt(m, "maven-hosted", "com/acme/demo", "1.0.0",
 		time.Now().UTC().AddDate(0, 0, -90))
 
-	res, err := cleanup.Run("maven-hosted", "maven",
+	res, err := cleanup.Run(rp("maven-hosted", "maven"), formats(),
 		&repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m)
 	if err != nil {
 		t.Fatal(err)
@@ -115,7 +115,7 @@ func TestForgetPublishOnDelete(t *testing.T) {
 	ledger.RecordAt(m, "npm-hosted", "gone", "1.0.0",
 		time.Now().UTC().AddDate(0, 0, -60))
 
-	if _, err := cleanup.Run("npm-hosted", "npm",
+	if _, err := cleanup.Run(rp("npm-hosted", "npm"), formats(),
 		&repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m); err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestDryRun_ReportsUnevaluable(t *testing.T) {
 	}
 	// Deliberately no ledger entry: this version's publish time is unknown.
 
-	res, err := cleanup.DryRun("npm-hosted", "npm",
+	res, err := cleanup.DryRun(rp("npm-hosted", "npm"), formats(),
 		&repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m)
 	if err != nil {
 		t.Fatal(err)
@@ -159,7 +159,7 @@ func TestDryRun_NoAgeRuleNoNoise(t *testing.T) {
 	if err := m.PutJSON("npm-hosted:npm:v", "quiet:1.0.0", map[string]any{}); err != nil {
 		t.Fatal(err)
 	}
-	res, err := cleanup.DryRun("npm-hosted", "npm", &repo.CleanupPolicy{KeepVersions: 5}, b, m)
+	res, err := cleanup.DryRun(rp("npm-hosted", "npm"), formats(), &repo.CleanupPolicy{KeepVersions: 5}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}

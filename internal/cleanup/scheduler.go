@@ -30,6 +30,10 @@ type Scheduler struct {
 	// localCoordinator; main.go swaps in a PGCoordinator when POSTGRES_DSN is set.
 	coord Coordinator
 
+	// formats resolves a repository's handler so retention can dispatch through
+	// format.Handler. nil falls back to the per-format switch.
+	formats Resolver
+
 	pubMu       sync.Mutex
 	lastPublish map[string]time.Time // last on-publish run time per repo name
 	now         func() time.Time     // injectable clock for tests
@@ -57,6 +61,10 @@ type RunEvent struct {
 	FreedBytes int64
 	Trigger    string // "scheduled" | "on-publish"
 }
+
+// WithFormats gives the scheduler a handler resolver, so scheduled retention
+// dispatches through format.Handler like every other caller.
+func (s *Scheduler) WithFormats(r Resolver) *Scheduler { s.formats = r; return s }
 
 func NewScheduler(repos *repo.Manager, policies *PolicyManager, b blob.Store, m meta.Store) *Scheduler {
 	return &Scheduler{
@@ -194,7 +202,7 @@ func (s *Scheduler) Wait() { s.runWG.Wait() }
 // trigger labels the log line ("scheduled" / "on-publish").
 func (s *Scheduler) runOne(r repo.Repository, np NamedPolicy, ts time.Time, trigger string) {
 	start := time.Now()
-	result, err := RunForRepo(r, np.ToCleanupPolicy(), s.blob, s.meta)
+	result, err := RunForRepo(r, s.formats, np.ToCleanupPolicy(), s.blob, s.meta)
 	if err != nil {
 		slog.Error("cleanup: "+trigger+" run failed", "repo", r.Name, "err", err)
 		return

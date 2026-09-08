@@ -53,7 +53,7 @@ func TestRun_LastDownloadedDays(t *testing.T) {
 	stamp("2.0.0", now.AddDate(0, 0, -2))  // fresh → keep
 	// 3.0.0 never downloaded, no upload time → skipped (kept).
 
-	res, err := Run("charts", "helm", &repo.CleanupPolicy{LastDownloadedDays: 30}, b, m)
+	res, err := Run(repo.Repository{Name: "charts", Format: "helm"}, testFormats(), &repo.CleanupPolicy{LastDownloadedDays: 30}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}

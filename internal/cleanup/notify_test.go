@@ -65,7 +65,7 @@ func TestNotify_Gating(t *testing.T) {
 	mustAdd(repo.Repository{Name: "hosted-none", Format: "helm", Kind: repo.Hosted})
 	mustAdd(repo.Repository{Name: "proxy-pub", Format: "helm", Kind: repo.Proxy, CleanupPolicyName: "on-pub"})
 
-	s := NewScheduler(mgr, pm, b, m)
+	s := NewScheduler(mgr, pm, b, m).WithFormats(testFormats())
 	clock := time.Now()
 	s.now = func() time.Time { return clock }
 
@@ -118,7 +118,7 @@ func TestNotify_RunsDeletion(t *testing.T) {
 	// Three versions present; keep-2 should prune the lowest (0.1.0).
 	seedHelmVersions(t, b, m, "charts", "myapp", "0.1.0", "0.2.0", "0.3.0")
 
-	s := NewScheduler(mgr, pm, b, m)
+	s := NewScheduler(mgr, pm, b, m).WithFormats(testFormats())
 	if !s.Notify("charts") {
 		t.Fatal("expected publish to schedule a run")
 	}

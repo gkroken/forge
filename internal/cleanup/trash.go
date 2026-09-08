@@ -182,7 +182,7 @@ func trashCRAN(ts *Tombstone, repoName, pkg, version string, b blob.Store, m met
 	if err := ts.moveToTrash(b, repoName+"/src/contrib/"+pkg+"_"+version+".tar.gz"); err != nil {
 		return err
 	}
-	return ts.captureMeta(m, repoName+":cran", pkg+"_"+version)
+	return ts.captureMeta(m, repoName+"+cran", pkg+"_"+version)
 }
 
 func trashHelm(ts *Tombstone, repoName, chart, version string, b blob.Store, m meta.Store) error {

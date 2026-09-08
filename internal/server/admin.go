@@ -504,7 +504,7 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request, name stri
 	w.Header().Set("Content-Type", "application/json")
 	start := time.Now()
 	if r.URL.Query().Get("dry") == "true" {
-		result, err := cleanup.DryRunForRepo(rp, p, s.Blob, s.Meta)
+		result, err := cleanup.DryRunForRepo(rp, s.Handlers, p, s.Blob, s.Meta)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -527,7 +527,7 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request, name stri
 		json.NewEncoder(w).Encode(result)
 		return
 	}
-	result, err := cleanup.RunForRepo(rp, p, s.Blob, s.Meta)
+	result, err := cleanup.RunForRepo(rp, s.Handlers, p, s.Blob, s.Meta)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -760,7 +760,7 @@ func (s *Server) handleRunPolicy(w http.ResponseWriter, r *http.Request, name st
 		}
 		start := time.Now()
 		if dry {
-			dr, derr := cleanup.DryRunForRepo(rp, p, s.Blob, s.Meta)
+			dr, derr := cleanup.DryRunForRepo(rp, s.Handlers, p, s.Blob, s.Meta)
 			if derr != nil {
 				continue
 			}
@@ -777,7 +777,7 @@ func (s *Server) handleRunPolicy(w http.ResponseWriter, r *http.Request, name st
 			})
 			continue
 		}
-		res, rerr := cleanup.RunForRepo(rp, p, s.Blob, s.Meta)
+		res, rerr := cleanup.RunForRepo(rp, s.Handlers, p, s.Blob, s.Meta)
 		if rerr != nil {
 			continue
 		}

@@ -275,6 +275,7 @@ func main() {
 
 	cleanupPolicies := cleanup.NewPolicyManager(metaStore)
 	cleanupScheduler := cleanup.NewScheduler(mgr, cleanupPolicies, blobStore, metaStore).
+		WithFormats(reg).
 		// Emit a cleanup.completed webhook after an automated run removes artifacts.
 		WithRunHook(func(ev cleanup.RunEvent) {
 			webhookEngine.EmitCleanupCompleted(context.Background(),

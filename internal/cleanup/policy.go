@@ -126,7 +126,7 @@ func Reclaimable(pm *PolicyManager, repos *repo.Manager, b blob.Store, m meta.St
 		if err != nil || !ok {
 			continue
 		}
-		result, err := DryRunForRepo(r, np.ToCleanupPolicy(), b, m)
+		result, err := DryRunForRepo(r, nil, np.ToCleanupPolicy(), b, m)
 		if err != nil {
 			continue
 		}

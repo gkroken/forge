@@ -43,7 +43,7 @@ type cranRec struct {
 
 func seedCRAN(t *testing.T, b blob.Store, m meta.Store, repoName string, recs []cranRec) {
 	t.Helper()
-	ns := repoName + ":cran"
+	ns := repoName + "+cran" // the namespace the cran handler actually writes
 	for _, r := range recs {
 		putBlob(t, b, repoName+"/src/contrib/"+r.Package+"_"+r.Version+".tar.gz")
 		if err := m.PutJSON(ns, r.Package+"_"+r.Version, r); err != nil {
@@ -58,7 +58,7 @@ func TestCRAN_NoPolicy(t *testing.T) {
 		{Package: "ggplot2", Version: "3.0.0"},
 		{Package: "ggplot2", Version: "3.1.0"},
 	})
-	res, err := cleanup.Run("cran", "cran", nil, b, m)
+	res, err := cleanup.Run(rp("cran", "cran"), formats(), nil, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestCRAN_KeepVersions(t *testing.T) {
 		{Package: "ggplot2", Version: "2.0.0"},
 		{Package: "ggplot2", Version: "3.0.0"},
 	})
-	res, err := cleanup.Run("cran", "cran", &repo.CleanupPolicy{KeepVersions: 2}, b, m)
+	res, err := cleanup.Run(rp("cran", "cran"), formats(), &repo.CleanupPolicy{KeepVersions: 2}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestCRAN_KeepVersions_SemverSort(t *testing.T) {
 		{Package: "data.table", Version: "1.9.0"},
 		{Package: "data.table", Version: "1.10.0"},
 	})
-	res, err := cleanup.Run("cran", "cran", &repo.CleanupPolicy{KeepVersions: 2}, b, m)
+	res, err := cleanup.Run(rp("cran", "cran"), formats(), &repo.CleanupPolicy{KeepVersions: 2}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestCRAN_DeleteOlderThanDays(t *testing.T) {
 		{Package: "dplyr", Version: "2.0.0"}, // no timestamp → skipped
 		{Package: "dplyr", Version: "3.0.0", UploadedAt: time.Now().UTC()},
 	})
-	res, err := cleanup.Run("cran", "cran", &repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m)
+	res, err := cleanup.Run(rp("cran", "cran"), formats(), &repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestHelm_KeepVersions(t *testing.T) {
 		{Name: "myapp", Version: "0.2.0"},
 		{Name: "myapp", Version: "0.3.0"},
 	})
-	res, err := cleanup.Run("helm", "helm", &repo.CleanupPolicy{KeepVersions: 1}, b, m)
+	res, err := cleanup.Run(rp("helm", "helm"), formats(), &repo.CleanupPolicy{KeepVersions: 1}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestMaven_KeepReleasesOnly(t *testing.T) {
 	putBlob(t, b, "mvn/com/acme/lib/1.0.0/lib-1.0.0.jar")
 	putBlob(t, b, "mvn/com/acme/lib/2.0.0-SNAPSHOT/lib-2.0.0-SNAPSHOT.jar")
 
-	res, err := cleanup.Run("mvn", "maven", &repo.CleanupPolicy{KeepReleasesOnly: true}, b, m)
+	res, err := cleanup.Run(rp("mvn", "maven"), formats(), &repo.CleanupPolicy{KeepReleasesOnly: true}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +248,7 @@ func TestNPM_KeepVersions(t *testing.T) {
 		{Package: "lodash", Version: "2.0.0"},
 		{Package: "lodash", Version: "3.0.0"},
 	})
-	res, err := cleanup.Run("npm", "npm", &repo.CleanupPolicy{KeepVersions: 2}, b, m)
+	res, err := cleanup.Run(rp("npm", "npm"), formats(), &repo.CleanupPolicy{KeepVersions: 2}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +268,7 @@ func TestNPM_KeepReleasesOnly(t *testing.T) {
 		{Package: "react", Version: "19.0.0-beta"},
 		{Package: "react", Version: "19.0.0-rc"},
 	})
-	res, err := cleanup.Run("npm", "npm", &repo.CleanupPolicy{KeepReleasesOnly: true}, b, m)
+	res, err := cleanup.Run(rp("npm", "npm"), formats(), &repo.CleanupPolicy{KeepReleasesOnly: true}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}

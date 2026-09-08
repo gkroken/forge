@@ -14,12 +14,14 @@
 package cleanup
 
 import (
+	"errors"
+	"fmt"
+	"forge/internal/format"
 	"strconv"
 	"strings"
 	"time"
 
 	"forge/internal/blob"
-	"forge/internal/ledger"
 	"forge/internal/meta"
 	"forge/internal/repo"
 )
@@ -32,198 +34,35 @@ type Result struct {
 
 // Run applies p against repoName's blob and meta stores. Returns an empty
 // result immediately if p is nil.
-func Run(repoName, format string, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (Result, error) {
+func Run(r repo.Repository, res Resolver, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (Result, error) {
 	if p == nil {
 		return Result{}, nil
 	}
-	switch format {
-	case "maven":
-		return runMaven(repoName, p, b, m)
-	case "cran":
-		return runCRAN(repoName, p, b, m)
-	case "helm":
-		return runHelm(repoName, p, b, m)
-	case "npm":
-		return runNPM(repoName, p, b, m)
-	case "oci":
-		return runOCI(repoName, p, b, m)
+	h, c, ok := resolve(r, res, b, m)
+	if ok {
+		if out, err := runGeneric(h, c, p, b, m); !errors.Is(err, format.ErrNotSupported) {
+			return out, err
+		}
 	}
-	return Result{}, nil
+	return Result{}, fmt.Errorf("cleanup: no retention for format %q", r.Format)
+}
+
+// resolve builds the handler + context retention needs, when one is available.
+func resolve(r repo.Repository, res Resolver, b blob.Store, m meta.Store) (format.Handler, *format.Context, bool) {
+	if res == nil {
+		return nil, nil, false
+	}
+	h, ok := res.For(r.Format)
+	if !ok {
+		return nil, nil, false
+	}
+	return h, &format.Context{Repo: r, Blob: b, Meta: m}, true
 }
 
 // ── Maven ─────────────────────────────────────────────────────────────────────
 
-func runMaven(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (Result, error) {
-	keys, err := b.List(repoName + "/")
-	if err != nil {
-		return Result{}, err
-	}
-
-	// Group blob keys by {groupId}/{artifactId}: the path up to (not including)
-	// the version directory (second-to-last path component).
-	type artifact struct {
-		version string
-		keys    []string // all blob keys in this version directory
-	}
-	byGA := map[string][]artifact{} // ga → []artifact
-	gaVer := map[string]map[string]*artifact{}
-
-	prefix := repoName + "/"
-	for _, k := range keys {
-		rel := strings.TrimPrefix(k, prefix)
-		parts := strings.Split(rel, "/")
-		if len(parts) < 3 {
-			continue // need at least groupId/artifactId/version
-		}
-		version := parts[len(parts)-2]
-		ga := strings.Join(parts[:len(parts)-2], "/")
-
-		if gaVer[ga] == nil {
-			gaVer[ga] = map[string]*artifact{}
-		}
-		if gaVer[ga][version] == nil {
-			a := &artifact{version: version}
-			gaVer[ga][version] = a
-			byGA[ga] = append(byGA[ga], *a)
-		}
-		gaVer[ga][version].keys = append(gaVer[ga][version].keys, k)
-	}
-
-	// Rebuild byGA from gaVer (pointer indirection fix).
-	byGA = map[string][]artifact{}
-	for ga, vers := range gaVer {
-		for ver, a := range vers {
-			_ = ver
-			byGA[ga] = append(byGA[ga], *a)
-		}
-	}
-
-	var res Result
-	snapNS := repoName + ":maven:snap:v"
-	pub := ledger.Load(m, repoName)
-	// mavenUploadTime prefers the snapshot record's own timestamp (which carries
-	// the real deploy time for a timestamped snapshot) and falls back to the
-	// publish ledger, which is the only source releases have.
-	mavenUploadTime := func(ga, version string, keys []string) time.Time {
-		return ledger.Resolve(mavenSnapUploadTime(snapNS, version, keys, m), pub, ga, version)
-	}
-
-	for ga, arts := range byGA {
-		// Apply KeepReleasesOnly: collect SNAPSHOT versions to delete.
-		var toDelete []artifact
-		var kept []artifact
-		for _, a := range arts {
-			if p.KeepReleasesOnly && isSnapshotVersion(a.version) {
-				toDelete = append(toDelete, a)
-			} else {
-				kept = append(kept, a)
-			}
-		}
-		arts = kept
-
-		// Apply DeleteSnapshotsDays: delete old SNAPSHOT versions.
-		if p.DeleteSnapshotsDays > 0 {
-			cutoff := time.Now().UTC().AddDate(0, 0, -p.DeleteSnapshotsDays)
-			var remaining []artifact
-			for _, a := range arts {
-				if !isSnapshotVersion(a.version) {
-					remaining = append(remaining, a)
-					continue
-				}
-				// Look up upload time from any snap record for this version.
-				snapTime := mavenUploadTime(ga, a.version, a.keys)
-				if !snapTime.IsZero() && snapTime.Before(cutoff) {
-					toDelete = append(toDelete, a)
-				} else {
-					remaining = append(remaining, a)
-				}
-			}
-			arts = remaining
-		}
-
-		// Apply DeleteOlderThanDays: same logic but for all artifact types.
-		if p.DeleteOlderThanDays > 0 {
-			cutoff := time.Now().UTC().AddDate(0, 0, -p.DeleteOlderThanDays)
-			var remaining []artifact
-			for _, a := range arts {
-				snapTime := mavenUploadTime(ga, a.version, a.keys)
-				if !snapTime.IsZero() && snapTime.Before(cutoff) {
-					toDelete = append(toDelete, a)
-				} else {
-					remaining = append(remaining, a)
-				}
-			}
-			arts = remaining
-		}
-
-		// Apply LastDownloadedDays: delete versions whose last download (or
-		// upload time when never downloaded) is older than the cutoff.
-		if p.LastDownloadedDays > 0 {
-			cutoff := time.Now().UTC().AddDate(0, 0, -p.LastDownloadedDays)
-			var remaining []artifact
-			for _, a := range arts {
-				eff := effectiveDownloadTime(
-					lastDownloadTime(m, a.keys...),
-					mavenUploadTime(ga, a.version, a.keys),
-				)
-				if !eff.IsZero() && eff.Before(cutoff) {
-					toDelete = append(toDelete, a)
-				} else {
-					remaining = append(remaining, a)
-				}
-			}
-			arts = remaining
-		}
-
-		// Apply KeepVersions: sort remaining versions and drop oldest.
-		if p.KeepVersions > 0 && len(arts) > p.KeepVersions {
-			sorted := make([]artifact, len(arts))
-			copy(sorted, arts)
-			for i := 1; i < len(sorted); i++ {
-				for j := i; j > 0 && compareVersions(sorted[j].version, sorted[j-1].version) < 0; j-- {
-					sorted[j], sorted[j-1] = sorted[j-1], sorted[j]
-				}
-			}
-			toDelete = append(toDelete, sorted[:len(sorted)-p.KeepVersions]...)
-		}
-
-		// Execute deletions.
-		for _, a := range toDelete {
-			for _, k := range a.keys {
-				info, exists, _ := b.Stat(k)
-				if exists {
-					res.FreedBytes += info.Size
-					b.Delete(k) //nolint:errcheck
-					res.Deleted++
-				}
-			}
-			ledger.Forget(m, repoName, ga, a.version)
-		}
-	}
-	return res, nil
-}
-
 // mavenSnapUploadTime returns the earliest UploadedAt timestamp found in snap
 // meta records for the given SNAPSHOT version path prefix.
-func mavenSnapUploadTime(snapNS, version string, blobKeys []string, m meta.Store) time.Time {
-	_ = version
-	allKeys, _ := m.List(snapNS)
-	for _, k := range blobKeys {
-		prefix := strings.TrimPrefix(k, "/")
-		// key format: "{snapshotPath}:{ext}:"
-		for _, mk := range allKeys {
-			if strings.HasPrefix(mk, prefix+":") {
-				var rec struct {
-					UploadedAt time.Time `json:"uploadedAt"`
-				}
-				if ok, _ := m.GetJSON(snapNS, mk, &rec); ok && !rec.UploadedAt.IsZero() {
-					return rec.UploadedAt
-				}
-			}
-		}
-	}
-	return time.Time{}
-}
 
 // ── CRAN ──────────────────────────────────────────────────────────────────────
 
@@ -231,49 +70,6 @@ type cranRecord struct {
 	Package    string    `json:"package"`
 	Version    string    `json:"version"`
 	UploadedAt time.Time `json:"uploadedAt,omitempty"`
-}
-
-func runCRAN(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (Result, error) {
-	ns := repoName + ":cran"
-	keys, err := m.List(ns)
-	if err != nil {
-		return Result{}, err
-	}
-
-	byPkg := map[string][]cranRecord{}
-	for _, k := range keys {
-		var rec cranRecord
-		if ok, _ := m.GetJSON(ns, k, &rec); !ok {
-			continue
-		}
-		byPkg[rec.Package] = append(byPkg[rec.Package], rec)
-	}
-
-	pub := ledger.Load(m, repoName)
-	var res Result
-	for _, recs := range byPkg {
-		toDelete := applyPolicies(p, recs,
-			func(r cranRecord) string { return r.Version },
-			func(r cranRecord) time.Time {
-				return ledger.Resolve(r.UploadedAt, pub, r.Package, r.Version)
-			},
-			func(r cranRecord) time.Time {
-				return lastDownloadTime(m, repoName+"/src/contrib/"+r.Package+"_"+r.Version+".tar.gz")
-			},
-		)
-		for _, rec := range toDelete {
-			blobKey := repoName + "/src/contrib/" + rec.Package + "_" + rec.Version + ".tar.gz"
-			info, exists, _ := b.Stat(blobKey)
-			if exists {
-				res.FreedBytes += info.Size
-				b.Delete(blobKey) //nolint:errcheck
-			}
-			m.Delete(ns, rec.Package+"_"+rec.Version) //nolint:errcheck
-			ledger.Forget(m, repoName, rec.Package, rec.Version)
-			res.Deleted++
-		}
-	}
-	return res, nil
 }
 
 // ── Helm ──────────────────────────────────────────────────────────────────────
@@ -285,109 +81,12 @@ type helmRecord struct {
 	UploadedAt time.Time `json:"uploadedAt,omitempty"`
 }
 
-func runHelm(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (Result, error) {
-	ns := repoName + ":helm"
-	keys, err := m.List(ns)
-	if err != nil {
-		return Result{}, err
-	}
-
-	byChart := map[string][]helmRecord{}
-	for _, k := range keys {
-		var rec helmRecord
-		if ok, _ := m.GetJSON(ns, k, &rec); !ok {
-			continue
-		}
-		byChart[rec.Name] = append(byChart[rec.Name], rec)
-	}
-
-	pub := ledger.Load(m, repoName)
-	var res Result
-	for _, recs := range byChart {
-		toDelete := applyPolicies(p, recs,
-			func(r helmRecord) string { return r.Version },
-			func(r helmRecord) time.Time {
-				return ledger.Resolve(r.UploadedAt, pub, r.Name, r.Version)
-			},
-			func(r helmRecord) time.Time { return lastDownloadTime(m, repoName+"/"+r.Filename) },
-		)
-		for _, rec := range toDelete {
-			blobKey := repoName + "/" + rec.Filename
-			info, exists, _ := b.Stat(blobKey)
-			if exists {
-				res.FreedBytes += info.Size
-				b.Delete(blobKey) //nolint:errcheck
-			}
-			m.Delete(ns, rec.Name+"-"+rec.Version) //nolint:errcheck
-			ledger.Forget(m, repoName, rec.Name, rec.Version)
-			res.Deleted++
-		}
-	}
-	return res, nil
-}
-
 // ── npm ───────────────────────────────────────────────────────────────────────
 
 type npmVersionRecord struct {
 	Package    string    `json:"name"`
 	Version    string    `json:"version"`
 	UploadedAt time.Time `json:"uploadedAt,omitempty"`
-}
-
-func runNPM(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (Result, error) {
-	versNS := repoName + ":npm:v"
-	pkgNS := repoName + ":npm"
-
-	keys, err := m.List(versNS)
-	if err != nil {
-		return Result{}, err
-	}
-
-	// Keys are "{pkg}:{version}".
-	byPkg := map[string][]npmVersionRecord{}
-	for _, k := range keys {
-		pkg, ver, ok := strings.Cut(k, ":")
-		if !ok {
-			continue
-		}
-		byPkg[pkg] = append(byPkg[pkg], npmVersionRecord{Package: pkg, Version: ver})
-	}
-
-	pub := ledger.Load(m, repoName)
-	var res Result
-	for _, recs := range byPkg {
-		toDelete := applyPolicies(p, recs,
-			func(r npmVersionRecord) string { return r.Version },
-			func(r npmVersionRecord) time.Time {
-				return ledger.Resolve(r.UploadedAt, pub, r.Package, r.Version)
-			},
-			func(r npmVersionRecord) time.Time {
-				return lastDownloadTime(m, repoName+"/"+r.Package+"/-/"+r.Package+"-"+r.Version+".tgz")
-			},
-		)
-		for _, rec := range toDelete {
-			blobKey := repoName + "/" + rec.Package + "/-/" + rec.Package + "-" + rec.Version + ".tgz"
-			info, exists, _ := b.Stat(blobKey)
-			if exists {
-				res.FreedBytes += info.Size
-				b.Delete(blobKey) //nolint:errcheck
-			}
-			m.Delete(versNS, rec.Package+":"+rec.Version) //nolint:errcheck
-			ledger.Forget(m, repoName, rec.Package, rec.Version)
-
-			// Remove the version from the packument.
-			var packument map[string]any
-			if ok, _ := m.GetJSON(pkgNS, rec.Package, &packument); ok {
-				if vers, ok := packument["versions"].(map[string]any); ok {
-					delete(vers, rec.Version)
-					packument["versions"] = vers
-				}
-				m.PutJSON(pkgNS, rec.Package, packument) //nolint:errcheck
-			}
-			res.Deleted++
-		}
-	}
-	return res, nil
 }
 
 // ── shared policy helpers ─────────────────────────────────────────────────────

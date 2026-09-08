@@ -14,12 +14,14 @@ func TestDeleteVersion_Maven(t *testing.T) {
 	putBlob(t, b, "maven-hosted/com/example/app/1.0.0/app-1.0.0.pom")
 	putBlob(t, b, "maven-hosted/com/example/app/2.0.0/app-2.0.0.jar")
 
-	res, err := cleanup.DeleteVersion("maven-hosted", "maven", "com.example:app", "1.0.0", b, m)
+	res, err := cleanup.DeleteVersion(rp("maven-hosted", "maven"), formats(), "com.example:app", "1.0.0", b, m)
 	if err != nil {
 		t.Fatalf("DeleteVersion: %v", err)
 	}
-	if res.Deleted != 2 {
-		t.Errorf("deleted = %d, want 2 (jar+pom)", res.Deleted)
+	// Deleted counts VERSIONS, not files. It used to mean files for maven and
+	// versions for every other format; the generic path makes it uniform.
+	if res.Deleted != 1 {
+		t.Errorf("deleted = %d, want 1 version", res.Deleted)
 	}
 	// 1.0.0 gone, 2.0.0 retained.
 	if _, ok, _ := b.Stat("maven-hosted/com/example/app/1.0.0/app-1.0.0.jar"); ok {
@@ -37,7 +39,7 @@ func TestDeleteVersion_NPM(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := cleanup.DeleteVersion("npm-hosted", "npm", "leftpad", "1.0.0", b, m)
+	res, err := cleanup.DeleteVersion(rp("npm-hosted", "npm"), formats(), "leftpad", "1.0.0", b, m)
 	if err != nil {
 		t.Fatalf("DeleteVersion: %v", err)
 	}
@@ -51,7 +53,7 @@ func TestDeleteVersion_NPM(t *testing.T) {
 
 func TestDeleteVersion_NotFound(t *testing.T) {
 	b, m := stores(t)
-	_, err := cleanup.DeleteVersion("maven-hosted", "maven", "com.example:app", "9.9.9", b, m)
+	_, err := cleanup.DeleteVersion(rp("maven-hosted", "maven"), formats(), "com.example:app", "9.9.9", b, m)
 	if err == nil {
 		t.Fatal("expected error for missing version")
 	}
@@ -62,10 +64,10 @@ func TestDeleteVersion_NotFound(t *testing.T) {
 
 func TestDeleteVersion_Validation(t *testing.T) {
 	b, m := stores(t)
-	if _, err := cleanup.DeleteVersion("r", "maven", "", "1.0.0", b, m); err == nil {
+	if _, err := cleanup.DeleteVersion(rp("r", "maven"), formats(), "", "1.0.0", b, m); err == nil {
 		t.Error("expected error for empty component")
 	}
-	if _, err := cleanup.DeleteVersion("r", "weird", "x", "1.0.0", b, m); err == nil {
+	if _, err := cleanup.DeleteVersion(rp("r", "weird"), formats(), "x", "1.0.0", b, m); err == nil {
 		t.Error("expected error for unsupported format")
 	}
 }

@@ -82,7 +82,7 @@ func TestRunForRepo_Dispatch(t *testing.T) {
 
 	// Hosted: keep-2 retention deletes the lowest version.
 	hosted := repo.Repository{Name: "h", Format: "helm", Kind: repo.Hosted}
-	res, err := RunForRepo(hosted, &repo.CleanupPolicy{KeepVersions: 2}, b, m)
+	res, err := RunForRepo(hosted, testFormats(), &repo.CleanupPolicy{KeepVersions: 2}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestRunForRepo_Dispatch(t *testing.T) {
 
 	// Proxy: keep-2 is ignored (cache), nothing deleted.
 	proxy := repo.Repository{Name: "h", Format: "helm", Kind: repo.Proxy}
-	res, err = RunForRepo(proxy, &repo.CleanupPolicy{KeepVersions: 2}, b, m)
+	res, err = RunForRepo(proxy, testFormats(), &repo.CleanupPolicy{KeepVersions: 2}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}

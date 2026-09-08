@@ -12,7 +12,7 @@ func TestDryRun_NoPolicy(t *testing.T) {
 	seedCRAN(t, b, m, "cran", []cranRec{
 		{Package: "ggplot2", Version: "1.0.0"},
 	})
-	result, err := cleanup.DryRun("cran", "cran", nil, b, m)
+	result, err := cleanup.DryRun(rp("cran", "cran"), formats(), nil, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestDryRun_CRAN_KeepVersions(t *testing.T) {
 		{Package: "ggplot2", Version: "2.0.0"},
 		{Package: "ggplot2", Version: "3.0.0"},
 	})
-	result, err := cleanup.DryRun("cran", "cran", &repo.CleanupPolicy{KeepVersions: 1}, b, m)
+	result, err := cleanup.DryRun(rp("cran", "cran"), formats(), &repo.CleanupPolicy{KeepVersions: 1}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestDryRun_CRAN_KeepReleasesOnly(t *testing.T) {
 		{Package: "pkg", Version: "1.0.0"},
 		{Package: "pkg", Version: "2.0.0-beta"},
 	})
-	result, err := cleanup.DryRun("cran", "cran", &repo.CleanupPolicy{KeepReleasesOnly: true}, b, m)
+	result, err := cleanup.DryRun(rp("cran", "cran"), formats(), &repo.CleanupPolicy{KeepReleasesOnly: true}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestDryRun_Helm_KeepVersions(t *testing.T) {
 		{Name: "app", Version: "0.1.0"},
 		{Name: "app", Version: "0.2.0"},
 	})
-	result, err := cleanup.DryRun("helm", "helm", &repo.CleanupPolicy{KeepVersions: 1}, b, m)
+	result, err := cleanup.DryRun(rp("helm", "helm"), formats(), &repo.CleanupPolicy{KeepVersions: 1}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestDryRun_NPM_KeepVersions(t *testing.T) {
 		{Package: "express", Version: "4.0.0"},
 		{Package: "express", Version: "5.0.0"},
 	})
-	result, err := cleanup.DryRun("npm", "npm", &repo.CleanupPolicy{KeepVersions: 1}, b, m)
+	result, err := cleanup.DryRun(rp("npm", "npm"), formats(), &repo.CleanupPolicy{KeepVersions: 1}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestDryRun_Maven_KeepVersions(t *testing.T) {
 	putBlob(t, b, "mvn/com/acme/lib/1.0.0/lib-1.0.0.jar")
 	putBlob(t, b, "mvn/com/acme/lib/2.0.0/lib-2.0.0.jar")
 
-	result, err := cleanup.DryRun("mvn", "maven", &repo.CleanupPolicy{KeepVersions: 1}, b, m)
+	result, err := cleanup.DryRun(rp("mvn", "maven"), formats(), &repo.CleanupPolicy{KeepVersions: 1}, b, m)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,7 +12,7 @@ import (
 // RunForRepo applies p to r using the strategy appropriate to its kind:
 // format-aware version retention for hosted repos, blob-TTL cache eviction for
 // proxy repos. Group repos own no storage and are a no-op.
-func RunForRepo(r repo.Repository, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (Result, error) {
+func RunForRepo(r repo.Repository, res Resolver, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (Result, error) {
 	// An immutable hosted repo is write-once: retaining N versions or deleting
 	// aged artifacts would mutate a released store, so cleanup does nothing.
 	if r.IsImmutable() {
@@ -22,13 +22,13 @@ func RunForRepo(r repo.Repository, p *repo.CleanupPolicy, b blob.Store, m meta.S
 	case repo.Proxy:
 		return EvictProxyCache(r.Name, p, b, m)
 	case repo.Hosted:
-		return Run(r.Name, r.Format, p, b, m)
+		return Run(r, res, p, b, m)
 	}
 	return Result{}, nil
 }
 
 // DryRunForRepo previews RunForRepo without deleting anything.
-func DryRunForRepo(r repo.Repository, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (DryRunResult, error) {
+func DryRunForRepo(r repo.Repository, res Resolver, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (DryRunResult, error) {
 	if r.IsImmutable() {
 		return DryRunResult{Candidates: []Candidate{}}, nil
 	}
@@ -36,7 +36,7 @@ func DryRunForRepo(r repo.Repository, p *repo.CleanupPolicy, b blob.Store, m met
 	case repo.Proxy:
 		return EvictProxyCacheDryRun(r.Name, p, b, m)
 	case repo.Hosted:
-		return DryRun(r.Name, r.Format, p, b, m)
+		return DryRun(r, res, p, b, m)
 	}
 	return DryRunResult{Candidates: []Candidate{}}, nil
 }

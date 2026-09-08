@@ -1,11 +1,12 @@
 package cleanup
 
 import (
-	"strings"
+	"errors"
+	"fmt"
+	"forge/internal/format"
 	"time"
 
 	"forge/internal/blob"
-	"forge/internal/ledger"
 	"forge/internal/meta"
 	"forge/internal/repo"
 )
@@ -39,23 +40,17 @@ type DryRunResult struct {
 
 // DryRun applies p against repoName's stores and returns what would be deleted,
 // without performing any deletions. Returns an empty result if p is nil.
-func DryRun(repoName, format string, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (DryRunResult, error) {
+func DryRun(r repo.Repository, res Resolver, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (DryRunResult, error) {
 	if p == nil {
 		return DryRunResult{Candidates: []Candidate{}}, nil
 	}
-	switch format {
-	case "cran":
-		return dryRunCRAN(repoName, p, b, m)
-	case "helm":
-		return dryRunHelm(repoName, p, b, m)
-	case "npm":
-		return dryRunNPM(repoName, p, b, m)
-	case "maven":
-		return dryRunMaven(repoName, p, b, m)
-	case "oci":
-		return dryRunOCI(repoName, p, b, m)
+	h, c, ok := resolve(r, res, b, m)
+	if ok {
+		if out, err := dryRunGeneric(h, c, p, b, m); !errors.Is(err, format.ErrNotSupported) {
+			return out, err
+		}
 	}
-	return DryRunResult{Candidates: []Candidate{}}, nil
+	return DryRunResult{}, fmt.Errorf("cleanup: no retention for format %q", r.Format)
 }
 
 // tagged pairs a record with the rule that triggered its selection.
@@ -152,223 +147,8 @@ func statSize(b blob.Store, key string) int64 {
 
 // ── CRAN ──────────────────────────────────────────────────────────────────────
 
-func dryRunCRAN(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (DryRunResult, error) {
-	ns := repoName + ":cran"
-	keys, err := m.List(ns)
-	if err != nil {
-		return DryRunResult{}, err
-	}
-
-	byPkg := map[string][]cranRecord{}
-	for _, k := range keys {
-		var rec cranRecord
-		if ok, _ := m.GetJSON(ns, k, &rec); !ok {
-			continue
-		}
-		byPkg[rec.Package] = append(byPkg[rec.Package], rec)
-	}
-
-	pub := ledger.Load(m, repoName)
-	var result DryRunResult
-	for _, recs := range byPkg {
-		cands, skipped := applyPoliciesTagged(p, recs,
-			func(r cranRecord) string { return r.Version },
-			func(r cranRecord) time.Time {
-				return ledger.Resolve(r.UploadedAt, pub, r.Package, r.Version)
-			},
-			func(r cranRecord) time.Time {
-				return lastDownloadTime(m, repoName+"/src/contrib/"+r.Package+"_"+r.Version+".tar.gz")
-			},
-		)
-		for _, r := range skipped {
-			result.Unevaluable = append(result.Unevaluable, Unevaluable{
-				Component: r.Package, Version: r.Version, Rule: "delete_older_than_days",
-			})
-		}
-		for _, t := range cands {
-			blobKey := repoName + "/src/contrib/" + t.rec.Package + "_" + t.rec.Version + ".tar.gz"
-			result.Candidates = append(result.Candidates, Candidate{
-				Component: t.rec.Package,
-				Version:   t.rec.Version,
-				SizeBytes: statSize(b, blobKey),
-				AgeDays:   blobAgeDays(t.at),
-				Reason:    t.reason,
-			})
-		}
-	}
-	return result, nil
-}
-
 // ── Helm ──────────────────────────────────────────────────────────────────────
-
-func dryRunHelm(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (DryRunResult, error) {
-	ns := repoName + ":helm"
-	keys, err := m.List(ns)
-	if err != nil {
-		return DryRunResult{}, err
-	}
-
-	byChart := map[string][]helmRecord{}
-	for _, k := range keys {
-		var rec helmRecord
-		if ok, _ := m.GetJSON(ns, k, &rec); !ok {
-			continue
-		}
-		byChart[rec.Name] = append(byChart[rec.Name], rec)
-	}
-
-	pub := ledger.Load(m, repoName)
-	var result DryRunResult
-	for _, recs := range byChart {
-		cands, skipped := applyPoliciesTagged(p, recs,
-			func(r helmRecord) string { return r.Version },
-			func(r helmRecord) time.Time {
-				return ledger.Resolve(r.UploadedAt, pub, r.Name, r.Version)
-			},
-			func(r helmRecord) time.Time { return lastDownloadTime(m, repoName+"/"+r.Filename) },
-		)
-		for _, r := range skipped {
-			result.Unevaluable = append(result.Unevaluable, Unevaluable{
-				Component: r.Name, Version: r.Version, Rule: "delete_older_than_days",
-			})
-		}
-		for _, t := range cands {
-			blobKey := repoName + "/" + t.rec.Filename
-			result.Candidates = append(result.Candidates, Candidate{
-				Component: t.rec.Name,
-				Version:   t.rec.Version,
-				SizeBytes: statSize(b, blobKey),
-				AgeDays:   blobAgeDays(t.at),
-				Reason:    t.reason,
-			})
-		}
-	}
-	return result, nil
-}
 
 // ── npm ───────────────────────────────────────────────────────────────────────
 
-func dryRunNPM(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (DryRunResult, error) {
-	versNS := repoName + ":npm:v"
-	keys, err := m.List(versNS)
-	if err != nil {
-		return DryRunResult{}, err
-	}
-
-	byPkg := map[string][]npmVersionRecord{}
-	for _, k := range keys {
-		pkg, ver, ok := strings.Cut(k, ":")
-		if !ok {
-			continue
-		}
-		byPkg[pkg] = append(byPkg[pkg], npmVersionRecord{Package: pkg, Version: ver})
-	}
-
-	pub := ledger.Load(m, repoName)
-	var result DryRunResult
-	for _, recs := range byPkg {
-		cands, skipped := applyPoliciesTagged(p, recs,
-			func(r npmVersionRecord) string { return r.Version },
-			func(r npmVersionRecord) time.Time {
-				return ledger.Resolve(r.UploadedAt, pub, r.Package, r.Version)
-			},
-			func(r npmVersionRecord) time.Time {
-				return lastDownloadTime(m, repoName+"/"+r.Package+"/-/"+r.Package+"-"+r.Version+".tgz")
-			},
-		)
-		for _, r := range skipped {
-			result.Unevaluable = append(result.Unevaluable, Unevaluable{
-				Component: r.Package, Version: r.Version, Rule: "delete_older_than_days",
-			})
-		}
-		for _, t := range cands {
-			blobKey := repoName + "/" + t.rec.Package + "/-/" + t.rec.Package + "-" + t.rec.Version + ".tgz"
-			result.Candidates = append(result.Candidates, Candidate{
-				Component: t.rec.Package,
-				Version:   t.rec.Version,
-				SizeBytes: statSize(b, blobKey),
-				AgeDays:   blobAgeDays(t.at),
-				Reason:    t.reason,
-			})
-		}
-	}
-	return result, nil
-}
-
 // ── Maven ─────────────────────────────────────────────────────────────────────
-
-func dryRunMaven(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (DryRunResult, error) {
-	keys, err := b.List(repoName + "/")
-	if err != nil {
-		return DryRunResult{}, err
-	}
-
-	type mavenArtifact struct {
-		ga       string
-		version  string
-		blobKeys []string
-	}
-
-	gaVer := map[string]map[string]*mavenArtifact{}
-	prefix := repoName + "/"
-	for _, k := range keys {
-		rel := strings.TrimPrefix(k, prefix)
-		parts := strings.Split(rel, "/")
-		if len(parts) < 3 {
-			continue
-		}
-		version := parts[len(parts)-2]
-		ga := strings.Join(parts[:len(parts)-2], "/")
-		if gaVer[ga] == nil {
-			gaVer[ga] = map[string]*mavenArtifact{}
-		}
-		if gaVer[ga][version] == nil {
-			gaVer[ga][version] = &mavenArtifact{ga: ga, version: version}
-		}
-		gaVer[ga][version].blobKeys = append(gaVer[ga][version].blobKeys, k)
-	}
-
-	// Flatten per-GA slices for applyPoliciesTagged.
-	byGA := map[string][]mavenArtifact{}
-	for ga, vers := range gaVer {
-		for _, a := range vers {
-			byGA[ga] = append(byGA[ga], *a)
-		}
-	}
-
-	// The real run resolves a maven version's publish time from the snapshot
-	// record, falling back to the publish ledger. The dry run used a hardcoded
-	// zero here, so age rules silently never fired in a preview even where the
-	// real run would have deleted. Use the same resolution in both.
-	snapNS := repoName + ":maven:snap:v"
-	pub := ledger.Load(m, repoName)
-	var result DryRunResult
-	for _, arts := range byGA {
-		cands, skipped := applyPoliciesTagged(p, arts,
-			func(a mavenArtifact) string { return a.version },
-			func(a mavenArtifact) time.Time {
-				return ledger.Resolve(mavenSnapUploadTime(snapNS, a.version, a.blobKeys, m), pub, a.ga, a.version)
-			},
-			func(a mavenArtifact) time.Time { return lastDownloadTime(m, a.blobKeys...) },
-		)
-		for _, a := range skipped {
-			result.Unevaluable = append(result.Unevaluable, Unevaluable{
-				Component: a.ga, Version: a.version, Rule: "delete_older_than_days",
-			})
-		}
-		for _, t := range cands {
-			var size int64
-			for _, k := range t.rec.blobKeys {
-				size += statSize(b, k)
-			}
-			result.Candidates = append(result.Candidates, Candidate{
-				Component: t.rec.ga,
-				Version:   t.rec.version,
-				SizeBytes: size,
-				AgeDays:   blobAgeDays(t.at),
-				Reason:    t.reason,
-			})
-		}
-	}
-	return result, nil
-}

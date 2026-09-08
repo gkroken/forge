@@ -60,7 +60,7 @@ func TestScheduler_StartsAndStops(t *testing.T) {
 	pm := cleanup.NewPolicyManager(m)
 	b, _ := stores(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	cleanup.NewScheduler(mgr, pm, b, m).Start(ctx)
+	cleanup.NewScheduler(mgr, pm, b, m).WithFormats(formats()).Start(ctx)
 	cancel()
 }
 
@@ -72,7 +72,7 @@ func TestScheduler_RunDue_SkipsNoPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	// No CleanupPolicyName set — RunDue should be a no-op (no panic, no error).
-	cleanup.NewScheduler(mgr, pm, b, m).RunDue(time.Now(), map[string]time.Time{})
+	cleanup.NewScheduler(mgr, pm, b, m).WithFormats(formats()).RunDue(time.Now(), map[string]time.Time{})
 }
 
 func TestScheduler_RunDue_SkipsBeforeInterval(t *testing.T) {
@@ -90,7 +90,7 @@ func TestScheduler_RunDue_SkipsBeforeInterval(t *testing.T) {
 	}
 	now := time.Now()
 	lastRun := map[string]time.Time{"r": now.Add(-30 * time.Minute)} // not yet due
-	cleanup.NewScheduler(mgr, pm, b, m).RunDue(now, lastRun)
+	cleanup.NewScheduler(mgr, pm, b, m).WithFormats(formats()).RunDue(now, lastRun)
 	// lastRun should be unchanged since we didn't fire.
 	if !lastRun["r"].Equal(now.Add(-30 * time.Minute)) {
 		t.Fatal("lastRun should not have been updated")
@@ -112,7 +112,7 @@ func TestScheduler_RunDue_FiresWhenDue(t *testing.T) {
 	}
 	now := time.Now()
 	lastRun := map[string]time.Time{"r": now.Add(-2 * time.Hour)} // overdue
-	cleanup.NewScheduler(mgr, pm, b, m).RunDue(now, lastRun)
+	cleanup.NewScheduler(mgr, pm, b, m).WithFormats(formats()).RunDue(now, lastRun)
 	// lastRun should be updated to now.
 	if !lastRun["r"].Equal(now) {
 		t.Fatalf("lastRun not updated: got %v, want %v", lastRun["r"], now)
@@ -123,7 +123,7 @@ func TestScheduler_LastRuns_Empty(t *testing.T) {
 	b, m := stores(t)
 	mgr := repo.NewManager()
 	pm := cleanup.NewPolicyManager(m)
-	sched := cleanup.NewScheduler(mgr, pm, b, m)
+	sched := cleanup.NewScheduler(mgr, pm, b, m).WithFormats(formats())
 	if got := sched.LastRuns(); len(got) != 0 {
 		t.Errorf("want empty LastRuns, got %v", got)
 	}
@@ -146,7 +146,7 @@ func TestScheduler_RunDue_ProcessesProxyRepo(t *testing.T) {
 	}
 	now := time.Now()
 	lastRun := map[string]time.Time{"r": now.Add(-2 * time.Hour)}
-	cleanup.NewScheduler(mgr, pm, b, m).RunDue(now, lastRun)
+	cleanup.NewScheduler(mgr, pm, b, m).WithFormats(formats()).RunDue(now, lastRun)
 	if !lastRun["r"].Equal(now) {
 		t.Fatal("lastRun should be updated — proxy repos are now scheduled for cache eviction")
 	}
@@ -168,7 +168,7 @@ func TestScheduler_RunDue_SkipsGroupRepo(t *testing.T) {
 	}
 	now := time.Now()
 	lastRun := map[string]time.Time{"g": now.Add(-2 * time.Hour)}
-	cleanup.NewScheduler(mgr, pm, b, m).RunDue(now, lastRun)
+	cleanup.NewScheduler(mgr, pm, b, m).WithFormats(formats()).RunDue(now, lastRun)
 	if lastRun["g"].Equal(now) {
 		t.Fatal("lastRun was updated for a group repo — should have been skipped")
 	}
@@ -195,7 +195,7 @@ func TestScheduler_RunHook_FiresOnDeletion(t *testing.T) {
 	})
 
 	var got []cleanup.RunEvent
-	sched := cleanup.NewScheduler(mgr, pm, b, m).
+	sched := cleanup.NewScheduler(mgr, pm, b, m).WithFormats(formats()).
 		WithRunHook(func(ev cleanup.RunEvent) { got = append(got, ev) })
 
 	now := time.Now()

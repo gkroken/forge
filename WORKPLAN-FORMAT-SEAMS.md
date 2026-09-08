@@ -53,7 +53,7 @@ Callers stop type-asserting and start calling. `ErrNotSupported` surfaces as a
 |---|---|---|---|
 | P0 | Break the `format` → `cleanup` import cycle | prerequisite for P2 | ✅ done |
 | P1 | Fold the 8 optional interfaces into `Handler` + `Unsupported` | **yes — ships alone** | ✅ done |
-| P2 | Retention: 4 switch families → `ListVersions`/`DeleteVersion` | needs P0, P1 | **high** |
+| P2 | Retention: 3 switch families → `ListVersions`/`DeleteVersion` | needs P0, P1 | ✅ done |
 | P3 | Promote / migration / browser-upload switches | needs P1 | medium |
 | P4 | Residual test for what no compiler can check | needs P1 | low |
 | P5 | PyPI against the finished shape — the capstone proof | needs P1 (P2/P3 ideally) | — |
@@ -108,7 +108,7 @@ method body breaks the build; `go vet ./...` clean.
       declined. A test stub in `webhooks_events_test.go` failed to compile until it
       embedded `Unsupported` — the mechanism working, on its first day.
 
-## Phase P2 — retention through the interface
+## Phase P2 — retention through the interface · ✅ COMPLETE
 
 The expensive one. ~900 lines of per-format enumeration currently live in
 `internal/cleanup/{cleanup,dryrun,delete,trash}.go` (maven 149, oci 77, npm 55,
@@ -119,16 +119,32 @@ The split that makes this shrink rather than move: **formats enumerate, cleanup
 decides.** Today each `runX` re-implements "list versions, apply rules, delete";
 only the listing and deleting are format-specific.
 
-- [ ] Define `format.Version{Component, Version string; SizeBytes int64;
-      PublishedAt time.Time; DownloadedAt time.Time}` and the two methods.
-- [ ] Implement `ListVersions`/`DeleteVersion` in each format, moving the bodies
-      out of `internal/cleanup`.
-- [ ] Collapse `run{Maven,NPM,Helm,CRAN,OCI}` into one generic runner; same for
-      dry-run, delete and trash. Expect a net **reduction** in total lines.
-- [ ] Keep OCI's scoped sweep as `DeleteVersion`'s own business — it is genuinely
-      format-specific (see `internal/cleanup/oci.go` on why the sweep is narrow).
-- [ ] Acceptance: every existing cleanup test passes untouched. They are the
-      contract; do not rewrite them to fit the new shape.
+- [x] Defined `format.Version{Component, Version, PublishedAt, BlobKeys}` plus
+      `ListVersions`/`DeleteVersion`. Size and last-download time are derived
+      generically from `BlobKeys`, and a zero `PublishedAt` is filled from the
+      ledger — so a new format implements neither.
+- [x] Implemented in all five formats as `internal/format/*/retention.go`.
+- [x] Collapsed run, dry-run and delete into one generic path each.
+      `internal/cleanup` went **4607 → 3781 lines** while the formats gained 454:
+      a net reduction of ~370, as predicted.
+- [x] **Trash left as a switch, deliberately.** Tombstone/restore is more than a
+      delete — it captures meta for later restoration — and its `default` already
+      errors loudly, so it is not a silent-absence seam. Recorded rather than
+      forced.
+- [x] OCI's scoped sweep moved intact into `internal/format/oci/retention.go`,
+      now per-tag rather than per-run: after removing a tag it checks whether any
+      other tag still points at that manifest before sweeping.
+- [x] Acceptance: every cleanup test passes. Three were changed, each for a real
+      reason rather than to fit the new shape — see the two bugs below.
+- [x] **Bug found: CRAN retention never worked.** The handler writes records to
+      `{repo}+cran`; `internal/cleanup` read `{repo}:cran` in four places (run,
+      dry-run, delete, trash). The tests passed only because they seeded the
+      namespace cleanup expected. Verified against a real publish. Dispatching
+      through the handler fixes run/dry-run/delete; trash's literal was corrected
+      in place.
+- [x] **Inconsistency found: `Result.Deleted` counted different things.** Maven
+      counted files, every other format counted versions. It is now uniformly
+      versions, which is what the UI and history mean by "deleted N".
 
 ## Phase P3 — the remaining switches
 

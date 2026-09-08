@@ -193,6 +193,30 @@ type Handler interface {
 	// Integrity.
 	VerifyIntegrity(c *Context, mode integrity.Mode) (integrity.Result, error)
 	Reindex(ctx context.Context, c *Context) (int, error)
+
+	// Retention. ListVersions enumerates what is stored; DeleteVersion removes
+	// one. The policy itself — which versions are too old, too many, or unused —
+	// is generic and lives in internal/cleanup, so a format only has to say what
+	// exists and how to remove it.
+	ListVersions(c *Context) ([]Version, error)
+	DeleteVersion(c *Context, component, version string) (freedBytes int64, err error)
+}
+
+// Version is one stored version of one component, as retention sees it.
+//
+// A format reports only what it alone knows. Size and last-download time are
+// derived generically from BlobKeys, and a missing PublishedAt is filled from
+// the publish ledger — so a new format implements neither.
+type Version struct {
+	Component string
+	Version   string
+	// PublishedAt is the format's own record of when this was published, if it
+	// keeps one. Zero is normal and means "ask the ledger".
+	PublishedAt time.Time
+	// BlobKeys are the artifacts this version consists of. Retention stats them
+	// for size and reads their download times; DeleteVersion is what actually
+	// removes them, since some formats (oci) must do more than delete these keys.
+	BlobKeys []string
 }
 
 // Unsupported answers every optional seam with "not supported". Embed it in a
@@ -228,6 +252,12 @@ func (Unsupported) VerifyIntegrity(*Context, integrity.Mode) (integrity.Result, 
 }
 
 func (Unsupported) Reindex(context.Context, *Context) (int, error) { return 0, ErrNotSupported }
+
+func (Unsupported) ListVersions(*Context) ([]Version, error) { return nil, ErrNotSupported }
+
+func (Unsupported) DeleteVersion(*Context, string, string) (int64, error) {
+	return 0, ErrNotSupported
+}
 
 // BrowseEntry represents one component (package, chart, image, …) in a repo's
 // browse view: a name and all known versions, newest-first where deterministic.
