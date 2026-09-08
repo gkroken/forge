@@ -6,6 +6,8 @@ package blobtest
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"sort"
 	"strings"
@@ -146,6 +148,40 @@ func RunContract(t *testing.T, s blob.Store) {
 		}
 		if !bytes.Equal(got, data) {
 			t.Fatalf("large stream mismatch: got %d bytes, want %d", len(got), len(data))
+		}
+	})
+
+	// S3 uploads stream with an unknown length, which makes the client split the
+	// body into multipart chunks. Checksums are computed from a TeeReader as
+	// those bytes go past, so a payload large enough to be split is the case
+	// that would catch the digests being taken from only one part.
+	t.Run("MultipartStreamChecksums", func(t *testing.T) {
+		const size = 20 << 20 // 20 MiB — above the client's default part size
+		data := bytes.Repeat([]byte("multipart-forge-"), size/16)
+		want := sha256.Sum256(data)
+
+		info, err := s.Put("large/multipart", bytes.NewReader(data))
+		if err != nil {
+			t.Fatalf("put multipart: %v", err)
+		}
+		if info.Size != int64(len(data)) {
+			t.Fatalf("size: got %d want %d", info.Size, len(data))
+		}
+		if info.SHA256 != hex.EncodeToString(want[:]) {
+			t.Fatalf("sha256 over a multipart upload is wrong:\n got %s\nwant %s",
+				info.SHA256, hex.EncodeToString(want[:]))
+		}
+		rc, err := s.Get("large/multipart")
+		if err != nil {
+			t.Fatalf("get multipart: %v", err)
+		}
+		defer rc.Close()
+		back, err := io.ReadAll(rc)
+		if err != nil {
+			t.Fatalf("read multipart: %v", err)
+		}
+		if !bytes.Equal(back, data) {
+			t.Fatalf("multipart round-trip mismatch: got %d bytes, want %d", len(back), len(data))
 		}
 	})
 }

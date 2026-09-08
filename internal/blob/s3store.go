@@ -1,7 +1,6 @@
 package blob
 
 import (
-	"bytes"
 	"context"
 	"crypto/md5"  // #nosec G501 -- MD5/SHA1 required by Maven/npm protocol specs
 	"crypto/sha1" // #nosec G505
@@ -52,27 +51,30 @@ func NewS3(cfg S3Config) (*S3, error) {
 }
 
 func (s *S3) Put(key string, r io.Reader) (Info, error) {
-	// Buffer so we can compute checksums and supply a known size to PutObject.
-	// TODO: replace with streaming multipart upload for large artifacts.
-	var buf bytes.Buffer
+	// Stream straight through to S3, hashing as the bytes go past, rather than
+	// buffering the whole artifact to learn its size first: a multi-gigabyte
+	// container layer or fat jar would otherwise be held entirely in memory,
+	// and several concurrent uploads would exhaust the process.
+	//
+	// Size -1 tells minio-go the length is unknown, which makes it choose a
+	// multipart upload and stream the parts. The TeeReader feeds every byte to
+	// the checksum hashes on its way into that upload, so the digests are
+	// complete exactly when the upload is.
 	hSHA256 := sha256.New()
 	hSHA1 := sha1.New() // #nosec G401
 	hMD5 := md5.New()   // #nosec G401
-	mw := io.MultiWriter(&buf, hSHA256, hSHA1, hMD5)
-	n, err := io.Copy(mw, r)
-	if err != nil {
-		return Info{}, err
-	}
-	_, err = s.client.PutObject(
+	tee := io.TeeReader(r, io.MultiWriter(hSHA256, hSHA1, hMD5))
+
+	info, err := s.client.PutObject(
 		context.Background(), s.bucket, key,
-		bytes.NewReader(buf.Bytes()), n,
+		tee, -1,
 		minio.PutObjectOptions{},
 	)
 	if err != nil {
 		return Info{}, err
 	}
 	return Info{
-		Size:   n,
+		Size:   info.Size,
 		SHA256: hex.EncodeToString(hSHA256.Sum(nil)),
 		SHA1:   hex.EncodeToString(hSHA1.Sum(nil)),
 		MD5:    hex.EncodeToString(hMD5.Sum(nil)),
