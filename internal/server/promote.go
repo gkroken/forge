@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"forge/internal/format"
+	"forge/internal/format/pypi"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"strings"
 	"time"
@@ -94,6 +96,7 @@ func (s *Server) promoteStrategies() map[string]promoteStrategy {
 		"helm":  s.promoteHelm,
 		"npm":   s.promoteNPM,
 		"oci":   s.promoteOCI,
+		"pypi":  s.promotePyPI,
 	}
 }
 
@@ -433,6 +436,73 @@ func (s *Server) promoteCRAN(ctx context.Context, src, tgt repo.Repository, comp
 		return "", 0, rec.err()
 	}
 	return digest, int64(len(data)), nil
+}
+
+// promotePyPI replays each of a release's artifacts as a twine upload against
+// the target, so the target builds its own records and simple index rather than
+// having them copied in. A release is several files — wheels plus an sdist — and
+// promoting half of it would leave pip resolving to something it cannot install.
+func (s *Server) promotePyPI(ctx context.Context, src, tgt repo.Repository, component, version, publicBase string) (string, int64, error) {
+	project := pypi.Normalize(component)
+	keys, err := s.Meta.List(src.Name + ":pypi")
+	if err != nil {
+		return "", 0, err
+	}
+	prefix := project + "/" + version + "/"
+
+	var lastDigest string
+	var total int64
+	for _, k := range keys {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		filename := strings.TrimPrefix(k, prefix)
+		data, digest, err := s.readBlob(src.Name + "/packages/" + project + "/" + filename)
+		if err != nil {
+			return "", 0, promoteErr(http.StatusNotFound, "%s@%s (%s) not found in %s: %v",
+				component, version, filename, src.Name, err)
+		}
+		body, contentType, err := twineForm(project, version, filename, data)
+		if err != nil {
+			return "", 0, err
+		}
+		hdr := http.Header{"Content-Type": []string{contentType}}
+		rec := s.internalServe(ctx, http.MethodPost, tgt.Name, "", "", body, hdr, publicBase)
+		if !rec.ok() {
+			return "", 0, rec.err()
+		}
+		lastDigest = digest
+		total += int64(len(data))
+	}
+	if total == 0 {
+		return "", 0, promoteErr(http.StatusNotFound, "%s@%s not found in %s", component, version, src.Name)
+	}
+	return lastDigest, total, nil
+}
+
+// twineForm builds the multipart body twine sends, which is what the pypi
+// handler's upload path accepts.
+func twineForm(project, version, filename string, data []byte) (*bytes.Buffer, string, error) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	for field, value := range map[string]string{
+		":action": "file_upload", "name": project, "version": version,
+	} {
+		if err := w.WriteField(field, value); err != nil {
+			return nil, "", err
+		}
+	}
+	fw, err := w.CreateFormFile("content", filename)
+	if err != nil {
+		return nil, "", err
+	}
+	if _, err := fw.Write(data); err != nil {
+		return nil, "", err
+	}
+	if err := w.Close(); err != nil {
+		return nil, "", err
+	}
+	return &buf, w.FormDataContentType(), nil
 }
 
 // helmFilename resolves the stored tgz filename for a chart version (falling

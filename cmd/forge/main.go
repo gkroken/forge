@@ -24,12 +24,7 @@ import (
 	"forge/internal/blob"
 	"forge/internal/cleanup"
 	"forge/internal/config"
-	"forge/internal/format"
-	"forge/internal/format/cran"
-	"forge/internal/format/helm"
-	"forge/internal/format/maven"
-	"forge/internal/format/npm"
-	"forge/internal/format/oci"
+	"forge/internal/formats"
 	"forge/internal/ldap"
 	"forge/internal/meta"
 	"forge/internal/obs"
@@ -173,12 +168,7 @@ func main() {
 	}
 
 	// Register one handler per format. This is the entire extension surface.
-	reg := format.NewRegistry()
-	reg.Register(maven.New())
-	reg.Register(npm.New())
-	reg.Register(helm.New())
-	reg.Register(cran.New())
-	reg.Register(oci.New())
+	reg := formats.Registry()
 
 	// Repository manager: load persisted repos from the meta store, then seed
 	// defaults on first run (when the store is empty). Skipped when -config is

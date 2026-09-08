@@ -32,6 +32,7 @@ var expected = map[string]coverage{
 	"helm":  {retention: true, trash: true},
 	"cran":  {retention: true, trash: true},
 	"oci":   {retention: true},
+	"pypi":  {retention: true, trash: true},
 }
 
 // TestFormatCoverage_RollCall — every registered format must be declared above.

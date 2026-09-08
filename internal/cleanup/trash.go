@@ -116,6 +116,8 @@ func TrashVersion(repoName, format, component, version, deletedBy string, b blob
 		err = trashHelm(ts, repoName, component, version, b, m)
 	case "npm":
 		err = trashNPM(ts, repoName, component, version, b, m)
+	case "pypi":
+		err = trashPyPI(ts, repoName, component, version, b, m)
 	default:
 		return nil, fmt.Errorf("cleanup: unsupported format %q", format)
 	}
@@ -352,4 +354,29 @@ func PurgeExpired(m meta.Store, b blob.Store, retention time.Duration) (int, int
 		freed += f
 	}
 	return purged, freed, nil
+}
+
+// trashPyPI moves every artifact of a release — a release usually has both a
+// wheel and an sdist, and may have several wheels — plus the record describing
+// each, so a restore brings the whole release back rather than half of it.
+func trashPyPI(ts *Tombstone, repoName, project, version string, b blob.Store, m meta.Store) error {
+	ns := repoName + ":pypi"
+	keys, err := m.List(ns)
+	if err != nil {
+		return err
+	}
+	prefix := project + "/" + version + "/"
+	for _, k := range keys {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		filename := strings.TrimPrefix(k, prefix)
+		if err := ts.moveToTrash(b, repoName+"/packages/"+project+"/"+filename); err != nil {
+			return err
+		}
+		if err := ts.captureMeta(m, ns, k); err != nil {
+			return err
+		}
+	}
+	return nil
 }

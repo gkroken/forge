@@ -11,11 +11,7 @@ import (
 
 	"forge/internal/blob"
 	"forge/internal/format"
-	"forge/internal/format/cran"
-	"forge/internal/format/helm"
-	"forge/internal/format/maven"
-	"forge/internal/format/npm"
-	"forge/internal/format/oci"
+	"forge/internal/formats"
 	"forge/internal/meta"
 	"forge/internal/repo"
 )
@@ -45,6 +41,7 @@ var serverExpected = map[string]serverCoverage{
 	"helm":  {promote: true, upload: true},
 	"cran":  {promote: true, upload: true},
 	"oci":   {promote: true, upload: false}, // pushed with docker/crane, not a form
+	"pypi":  {promote: true, upload: true},
 }
 
 func coverageServer(t *testing.T) *Server {
@@ -60,7 +57,8 @@ func coverageServer(t *testing.T) *Server {
 	}
 	mgr := repo.NewManager()
 	reg := format.NewRegistry()
-	for _, h := range []format.Handler{maven.New(), npm.New(), helm.New(), cran.New(), oci.New()} {
+	// The shared list, so this cannot silently miss a format main.go serves.
+	for _, h := range formats.All() {
 		reg.Register(h)
 		for _, suffix := range []string{"-src", "-dst"} {
 			if err := mgr.Add(repo.Repository{

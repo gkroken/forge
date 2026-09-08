@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"forge/internal/format/pypi"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -89,6 +90,8 @@ func (s *Server) processUpload(w http.ResponseWriter, r *http.Request, rp repo.R
 		uploadErr = s.uploadCRAN(r, rp, hdr.Filename, data)
 	case "npm":
 		uploadErr = s.uploadNPM(r, rp, data)
+	case "pypi":
+		uploadErr = s.uploadPyPI(r, rp, hdr.Filename, data)
 	default:
 		page.Error = "browser upload not supported for " + rp.Format
 		render(w, tmplUpload, "admin_shell.html", page)
@@ -166,6 +169,46 @@ func (s *Server) uploadCRAN(origR *http.Request, rp repo.Repository, filename st
 	}
 	sub := "src/contrib/" + filename
 	return s.callHandler(origR, rp, http.MethodPut, sub, data, "application/octet-stream")
+}
+
+// uploadPyPI accepts a wheel or sdist from the browser and replays it as the
+// twine upload the handler expects. Project and version come out of the
+// filename, which is the only metadata a plain file upload carries.
+func (s *Server) uploadPyPI(origR *http.Request, rp repo.Repository, filename string, data []byte) error {
+	filename = filepath.Base(filename)
+	project, version, err := pypiNameVersion(filename)
+	if err != nil {
+		return err
+	}
+	body, contentType, err := twineForm(project, version, filename, data)
+	if err != nil {
+		return err
+	}
+	return s.callHandler(origR, rp, http.MethodPost, "", body.Bytes(), contentType)
+}
+
+// pypiNameVersion parses "{name}-{version}...whl" or "{name}-{version}.tar.gz".
+func pypiNameVersion(filename string) (string, string, error) {
+	base := filename
+	switch {
+	case strings.HasSuffix(base, ".whl"):
+		parts := strings.Split(strings.TrimSuffix(base, ".whl"), "-")
+		if len(parts) < 5 {
+			return "", "", fmt.Errorf("not a valid wheel filename: %q", filename)
+		}
+		return pypi.Normalize(parts[0]), parts[1], nil
+	case strings.HasSuffix(base, ".tar.gz"):
+		base = strings.TrimSuffix(base, ".tar.gz")
+	case strings.HasSuffix(base, ".zip"):
+		base = strings.TrimSuffix(base, ".zip")
+	default:
+		return "", "", fmt.Errorf("filename must be a .whl, .tar.gz or .zip (got %q)", filename)
+	}
+	i := strings.LastIndex(base, "-")
+	if i <= 0 {
+		return "", "", fmt.Errorf("cannot read name and version from %q", filename)
+	}
+	return pypi.Normalize(base[:i]), base[i+1:], nil
 }
 
 func (s *Server) uploadNPM(origR *http.Request, rp repo.Repository, data []byte) error {
