@@ -121,6 +121,56 @@ func (h *Handler) DeleteVersion(c *format.Context, image, tag string) (int64, er
 	return freed, nil
 }
 
+// DeleteVersions implements format.Handler: removes a batch of tags and sweeps
+// once, instead of recomputing which blobs are still reachable after every
+// single tag. Pruning a thousand tags off one image used to walk every surviving
+// manifest a thousand times.
+func (h *Handler) DeleteVersions(c *format.Context, versions []format.Version) (int64, error) {
+	if len(versions) == 0 {
+		return 0, nil
+	}
+
+	// Drop the tags first, so "still tagged" below reflects the whole batch.
+	doomed := map[string]bool{} // manifest digests whose tags are going
+	for _, v := range versions {
+		var dgst string
+		if ok, _ := c.Meta.GetJSON(h.ns(c), "tags/"+v.Component+"/"+v.Version, &dgst); !ok || dgst == "" {
+			continue
+		}
+		c.Meta.Delete(h.ns(c), "tags/"+v.Component+"/"+v.Version)      //nolint:errcheck
+		c.Meta.Delete(h.ns(c), "tag-times/"+v.Component+"/"+v.Version) //nolint:errcheck
+		doomed[dgst] = true
+	}
+	if len(doomed) == 0 {
+		return 0, nil
+	}
+
+	// One reachability pass for the whole batch. A manifest another tag still
+	// points at is not orphaned, however many tags of its own were removed.
+	surviving := h.taggedDigests(c)
+	keep := map[string]bool{}
+	for d := range surviving {
+		h.markReachable(c, d, keep)
+	}
+
+	var freed int64
+	for dgst := range doomed {
+		if surviving[dgst] || keep[dgst] {
+			continue
+		}
+		mk := h.manifestKey(c, dgst)
+		for _, ref := range h.manifestRefs(c, mk) {
+			if keep[ref] || doomed[ref] {
+				continue
+			}
+			freed += h.deleteBlobIfPresent(c, h.blobKey(c, ref))
+		}
+		freed += h.deleteBlobIfPresent(c, mk)
+		c.Meta.Delete(h.ns(c), "manifests/"+dgst) //nolint:errcheck
+	}
+	return freed, nil
+}
+
 // taggedDigests is the set of manifest digests any tag still points at.
 func (h *Handler) taggedDigests(c *format.Context) map[string]bool {
 	out := map[string]bool{}

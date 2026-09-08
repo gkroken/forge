@@ -278,9 +278,15 @@ code that needs it rather than in the formats.
 Historical cleanup-run records keep their old numbers, so a long history shows
 both. Not worth a migration; the new meaning is the one the UI always implied.
 
-**Known scaling limit — OCI's sweep is now per-tag rather than per-run.** Stated
-as a neutral "note" first time round, which was too soft: this is a real cost P2
-introduced, not a neutral observation. `DeleteVersion`
+**Fixed — OCI's sweep is batched again.** P2 made it per-tag, which was a real
+cost, not the neutral "note" it was first written down as. `Handler` gained
+`DeleteVersions`, answering `ErrNotSupported` from `Unsupported` so retention
+falls back to looping `DeleteVersion` — right for a format whose versions own
+their bytes outright. The loop lives in the caller because an embedded
+`Unsupported` cannot call the outer type's `DeleteVersion`. OCI overrides it and
+decides reachability once for the whole batch. Measured on a 30-tag prune:
+**526 manifest reads before, 62 after**, with the guard failing when the batch
+path is disabled. `DeleteVersion`
 recomputes reachability for each tag it removes, where the old pass did it once.
 Correctness is unchanged and it is simpler to reason about, but pruning many tags
 from one image is O(tags x manifests). Revisit if OCI retention is ever used on a

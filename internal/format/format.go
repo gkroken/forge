@@ -200,6 +200,15 @@ type Handler interface {
 	// exists and how to remove it.
 	ListVersions(c *Context) ([]Version, error)
 	DeleteVersion(c *Context, component, version string) (freedBytes int64, err error)
+	// DeleteVersions removes several versions at once, for a format where
+	// deleting one at a time repeats work — oci recomputes which blobs are still
+	// reachable after every tag it drops. Answer ErrNotSupported (which
+	// Unsupported does) and retention loops DeleteVersion instead, which is
+	// right for a format whose versions own their bytes outright.
+	//
+	// An embedded Unsupported cannot call the outer type's DeleteVersion, so the
+	// loop lives in the caller rather than in the default.
+	DeleteVersions(c *Context, versions []Version) (freedBytes int64, err error)
 }
 
 // Version is one stored version of one component, as retention sees it.
@@ -263,6 +272,10 @@ func (Unsupported) Reindex(context.Context, *Context) (int, error) { return 0, E
 func (Unsupported) ListVersions(*Context) ([]Version, error) { return nil, ErrNotSupported }
 
 func (Unsupported) DeleteVersion(*Context, string, string) (int64, error) {
+	return 0, ErrNotSupported
+}
+
+func (Unsupported) DeleteVersions(*Context, []Version) (int64, error) {
 	return 0, ErrNotSupported
 }
 

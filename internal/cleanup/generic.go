@@ -1,6 +1,7 @@
 package cleanup
 
 import (
+	"errors"
 	"sort"
 	"time"
 
@@ -73,17 +74,38 @@ func runGeneric(h format.Handler, c *format.Context, p *repo.CleanupPolicy, b bl
 	if err != nil {
 		return Result{}, err
 	}
-	var res Result
+	// Decide everything first, then delete. A format that can reclaim a batch
+	// more cheaply than one at a time gets the whole set at once.
+	var doomed []format.Version
 	for _, component := range sortedKeys(byComponent) {
 		for _, vi := range applyPolicies(p, byComponent[component], viVersion, viPublished, viDownloaded) {
-			freed, err := h.DeleteVersion(c, vi.v.Component, vi.v.Version)
+			doomed = append(doomed, vi.v)
+		}
+	}
+	if len(doomed) == 0 {
+		return Result{}, nil
+	}
+
+	var res Result
+	freed, err := h.DeleteVersions(c, doomed)
+	switch {
+	case err == nil:
+		res.FreedBytes = freed
+		res.Deleted = len(doomed)
+	case errors.Is(err, format.ErrNotSupported):
+		for _, v := range doomed {
+			f, err := h.DeleteVersion(c, v.Component, v.Version)
 			if err != nil {
 				return res, err
 			}
-			ledger.Forget(m, c.Repo.Name, vi.v.Component, vi.v.Version)
-			res.FreedBytes += freed
+			res.FreedBytes += f
 			res.Deleted++
 		}
+	default:
+		return res, err
+	}
+	for _, v := range doomed {
+		ledger.Forget(m, c.Repo.Name, v.Component, v.Version)
 	}
 	return res, nil
 }

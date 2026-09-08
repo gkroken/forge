@@ -3,6 +3,7 @@ package cleanup_test
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -265,4 +266,54 @@ func TestOCI_DryRunSizeExcludesSharedLayers(t *testing.T) {
 	if !exists(t, b, "docker/blobs/sha256:shared") {
 		t.Error("shared layer was deleted")
 	}
+}
+
+// TestOCI_BatchDeleteSweepsOnce — pruning many tags off one image used to walk
+// every surviving manifest once per deleted tag. The batch path decides
+// reachability once. This measures the work rather than trusting the shape: the
+// blob store counts how many times a manifest is read.
+func TestOCI_BatchDeleteSweepsOnce(t *testing.T) {
+	b, m := stores(t)
+	counting := &countingBlobStore{Store: b}
+
+	old := time.Now().UTC().AddDate(0, 0, -60)
+	for i := 0; i < 30; i++ {
+		tag := fmt.Sprintf("v%02d", i)
+		pushImage(t, counting, m, "docker", "acme/api", tag,
+			[]string{"sha256:shared", "sha256:only-" + tag}, old)
+	}
+	// One recent tag survives, so there is always something to keep reachable.
+	pushImage(t, counting, m, "docker", "acme/api", "latest",
+		[]string{"sha256:shared"}, time.Now().UTC())
+
+	counting.reads = 0
+	res, err := cleanup.Run(rp("docker", "oci"), formats(),
+		&repo.CleanupPolicy{DeleteOlderThanDays: 30}, counting, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Deleted != 30 {
+		t.Fatalf("deleted = %d, want 30", res.Deleted)
+	}
+	if !exists(t, b, "docker/blobs/sha256:shared") {
+		t.Error("the layer the surviving tag needs was deleted")
+	}
+	// Per-tag sweeping would be ~30 x 31 manifest reads. One pass is ~60.
+	if counting.reads > 200 {
+		t.Errorf("manifest reads = %d — the sweep is still running per tag", counting.reads)
+	}
+	t.Logf("manifest reads for a 30-tag prune: %d", counting.reads)
+}
+
+// countingBlobStore counts manifest reads so a complexity claim can be measured.
+type countingBlobStore struct {
+	blob.Store
+	reads int
+}
+
+func (c *countingBlobStore) Get(key string) (io.ReadCloser, error) {
+	if strings.Contains(key, "/manifests/") {
+		c.reads++
+	}
+	return c.Store.Get(key)
 }
