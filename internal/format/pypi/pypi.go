@@ -109,12 +109,19 @@ func validFilename(name string) bool {
 // --- Serve ------------------------------------------------------------------
 
 func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Context) {
+	// Hosted-only, said once and up front. Without this a proxy or group repo
+	// of this format would answer /simple/ with an empty but perfectly valid
+	// index: pip resolves nothing and reports only "no matching distribution",
+	// giving no hint that the repository kind is the problem. Refusing is the
+	// difference between a five-minute fix and an afternoon.
+	if c.Repo.Kind != repo.Hosted {
+		http.Error(w, "pypi repositories are hosted-only: forge has no proxy or group path for this format",
+			http.StatusNotImplemented)
+		return
+	}
+
 	switch {
 	case r.Method == http.MethodPost && (c.Sub == "" || c.Sub == "/"):
-		if c.Repo.Kind != repo.Hosted {
-			http.Error(w, "cannot publish to non-hosted repo", http.StatusMethodNotAllowed)
-			return
-		}
 		h.upload(w, r, c)
 
 	case r.Method == http.MethodGet && (c.Sub == "simple" || c.Sub == "simple/"):
@@ -128,10 +135,6 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 		h.download(w, c)
 
 	case r.Method == http.MethodDelete && strings.HasPrefix(c.Sub, "packages/"):
-		if c.Repo.Kind != repo.Hosted {
-			http.Error(w, "cannot delete from non-hosted repository", http.StatusMethodNotAllowed)
-			return
-		}
 		h.deleteFile(w, c)
 
 	default:

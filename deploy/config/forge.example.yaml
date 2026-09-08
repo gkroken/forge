@@ -55,6 +55,17 @@ repositories:
     enabled: true
     anonymousRead: false
 
+  # PyPI is hosted-only: forge has no proxy or group path for this format yet.
+  # Config does not validate format against kind, so a `kind: proxy` pypi entry
+  # here would load without complaint — but every request to that repo answers
+  # 501, so pip would fail at install time rather than at boot.
+  - name: pypi-hosted
+    format: pypi
+    kind: hosted
+    enabled: true
+    anonymousRead: false
+    securityPolicyName: warn-high
+
   - name: docker-hosted
     format: oci
     kind: hosted

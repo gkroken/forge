@@ -135,3 +135,22 @@ func TestSimplePages_EscapeStoredValues(t *testing.T) {
 		}
 	}
 }
+
+// TestNonHostedKindsRefused — a proxy or group pypi repo would otherwise answer
+// /simple/ with an empty but valid index, and pip would report only "no matching
+// distribution": a silent failure with no hint that the repo kind is the cause.
+func TestNonHostedKindsRefused(t *testing.T) {
+	for _, kind := range []repo.Kind{repo.Proxy, repo.Group} {
+		h, c := New(), securityCtx(t)
+		c.Repo.Kind = kind
+		for _, sub := range []string{"", "simple", "simple/anything", "packages/x/y-1.0.whl"} {
+			w := httptest.NewRecorder()
+			c.Sub = sub
+			h.Serve(w, httptest.NewRequest("GET", "/", nil), c)
+			if w.Code != 501 {
+				t.Errorf("kind=%s sub=%q: got %d, want 501 — an unsupported kind must say so, not serve an empty index",
+					kind, sub, w.Code)
+			}
+		}
+	}
+}
