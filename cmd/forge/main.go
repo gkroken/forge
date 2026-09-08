@@ -198,6 +198,8 @@ func main() {
 				Upstream: cranProxyUpstream(), AnonymousRead: true},
 			{Name: "helm-proxy", Format: "helm", Kind: repo.Proxy,
 				Upstream: "https://charts.bitnami.com/bitnami", AnonymousRead: true},
+			{Name: "pypi-proxy", Format: "pypi", Kind: repo.Proxy,
+				Upstream: "https://pypi.org", AnonymousRead: true},
 			// OCI / Docker
 			{Name: "docker-hosted", Format: "oci", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
 			// Group: merged read-only views (hosted first so internal artifacts shadow upstream).

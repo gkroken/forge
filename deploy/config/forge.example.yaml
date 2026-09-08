@@ -55,10 +55,6 @@ repositories:
     enabled: true
     anonymousRead: false
 
-  # PyPI is hosted-only: forge has no proxy or group path for this format yet.
-  # Config does not validate format against kind, so a `kind: proxy` pypi entry
-  # here would load without complaint — but every request to that repo answers
-  # 501, so pip would fail at install time rather than at boot.
   - name: pypi-hosted
     format: pypi
     kind: hosted
@@ -87,6 +83,17 @@ repositories:
     enabled: true
     anonymousRead: true
     upstream: https://registry.npmjs.org
+
+  # The upstream is the index host; PyPI serves files from a different host
+  # (files.pythonhosted.org), and forge follows the links the index hands it.
+  # Note there is no pypi group below: group is the one kind this format does
+  # not implement yet, and a `kind: group` pypi repo answers 501.
+  - name: pypi-proxy
+    format: pypi
+    kind: proxy
+    enabled: true
+    anonymousRead: true
+    upstream: https://pypi.org
 
   # ── group ─────────────────────────────────────────────────────────────────
   # Members are searched in order; the first hit wins. Point builds at the

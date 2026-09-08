@@ -7,11 +7,9 @@
 //	GET  /simple/{project}/        -> PEP 503 links to that project's files
 //	GET  /packages/{filename}      -> the artifact itself
 //
-// HOSTED ONLY for now. Proxying pypi.org needs the simple pages fetched, their
-// file links rewritten to point back at forge, and the artifacts cached on
-// first fetch; none of that is implemented, and Serve refuses anything it does
-// not recognise rather than pretending. A proxy repo of this format will not
-// serve.
+// Hosted and proxy are both implemented; see proxy.go for how a proxied index
+// is rewritten and why the upstream root index is refused. Group is not
+// implemented, and says so with a 501 rather than serving an empty index.
 //
 // Naming is the part that bites. PEP 503 says "Foo.Bar", "foo-bar" and
 // "foo_bar" are the same project, so every identity forge keeps — the meta
@@ -109,14 +107,18 @@ func validFilename(name string) bool {
 // --- Serve ------------------------------------------------------------------
 
 func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Context) {
-	// Hosted-only, said once and up front. Without this a proxy or group repo
-	// of this format would answer /simple/ with an empty but perfectly valid
+	// Group is the one kind with no path here yet. Said up front, because the
+	// alternative is answering /simple/ with an empty but perfectly valid
 	// index: pip resolves nothing and reports only "no matching distribution",
-	// giving no hint that the repository kind is the problem. Refusing is the
-	// difference between a five-minute fix and an afternoon.
-	if c.Repo.Kind != repo.Hosted {
-		http.Error(w, "pypi repositories are hosted-only: forge has no proxy or group path for this format",
+	// with no hint that the repository kind is the cause.
+	if c.Repo.Kind == repo.Group {
+		http.Error(w, "pypi groups are not implemented: use the hosted or proxy repository directly",
 			http.StatusNotImplemented)
+		return
+	}
+
+	if c.Repo.Kind == repo.Proxy {
+		h.serveProxy(w, r, c)
 		return
 	}
 
@@ -136,6 +138,41 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 
 	case r.Method == http.MethodDelete && strings.HasPrefix(c.Sub, "packages/"):
 		h.deleteFile(w, c)
+
+	default:
+		http.Error(w, "unsupported pypi request", http.StatusNotFound)
+	}
+}
+
+// serveProxy handles the read-only surface of a proxy repository. Publishing
+// and deleting belong to the hosted repo the proxy caches from, not here.
+func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, c *format.Context) {
+	switch {
+	case r.Method != http.MethodGet && r.Method != http.MethodHead:
+		http.Error(w, "proxy repositories are read-only", http.StatusMethodNotAllowed)
+
+	case c.Sub == "simple" || c.Sub == "simple/":
+		// The upstream root index is 45 MB naming ~600k projects, and the
+		// shared fetcher buffers whole bodies in memory. pip never reads it to
+		// install anything, so refusing beats an allocation that size per miss.
+		http.Error(w, "the root simple index is not proxied — request a project directly, e.g. /simple/requests/",
+			http.StatusNotImplemented)
+
+	case strings.HasPrefix(c.Sub, "simple/"):
+		project := Normalize(strings.Trim(strings.TrimPrefix(c.Sub, "simple/"), "/"))
+		if project == "" {
+			http.NotFound(w, nil)
+			return
+		}
+		h.proxySimpleProject(w, r, c, project)
+
+	case strings.HasPrefix(c.Sub, "packages/"):
+		project, filename, ok := artifactPath(c.Sub)
+		if !ok {
+			http.NotFound(w, nil)
+			return
+		}
+		h.proxyFile(w, c, project, filename)
 
 	default:
 		http.Error(w, "unsupported pypi request", http.StatusNotFound)
@@ -342,7 +379,13 @@ func (h *Handler) releaseHasFiles(c *format.Context, project, version string) bo
 
 // --- record access ----------------------------------------------------------
 
+// records is the one source every seam reads. A hosted repo owns its records; a
+// proxy has none of its own and answers with what it has actually cached, so
+// browse, inspect and retention describe a proxy honestly instead of empty.
 func (h *Handler) records(c *format.Context) ([]fileRecord, error) {
+	if isProxy(c) {
+		return h.cachedRecords(c)
+	}
 	keys, err := c.Meta.List(h.ns(c))
 	if err != nil {
 		return nil, err

@@ -104,3 +104,52 @@ echo "sdist download: OK"
 echo "All PyPI conformance checks passed"
 `, repo))
 }
+
+// TestPyPI_Proxy_Pip_Install drives real pip against a proxy repo pointed at
+// pypi.org. The index and the files live on different hosts upstream, so the
+// thing worth proving is that pip follows forge's rewritten links, gets real
+// bytes back, and that the second install is served from cache.
+func TestPyPI_Proxy_Pip_Install(t *testing.T) {
+	srv := conformance.StartForge(t)
+	repo := srv.ContainerRepo("pypi-proxy")
+
+	conformance.RunScript(t, "python:3-slim", fmt.Sprintf(`
+set -e
+REPO="%s"
+PIP="pip install --quiet --disable-pip-version-check --trusted-host host.docker.internal --index-url ${REPO}simple/"
+
+python3 - <<PYEOF
+import urllib.request
+page = urllib.request.urlopen("${REPO}simple/six/").read().decode()
+assert "six-" in page, "no files listed for six"
+# Every link must come back through forge, or pip downloads around the cache
+# and the proxy is decorative.
+assert "files.pythonhosted.org" not in page, "rewritten page still points at upstream"
+assert "/repository/pypi-proxy/packages/six/" in page, f"links not rewritten:\n{page[:400]}"
+print("proxied index rewritten: OK")
+PYEOF
+
+# First install: cold cache, forge fetches from pypi.org.
+$PIP --target /tmp/a six==1.16.0
+python3 -c "import sys; sys.path.insert(0, '/tmp/a'); import six; print('import six:', six.__version__)"
+
+# Second install: the bytes now come from forge's cache.
+$PIP --target /tmp/b six==1.16.0
+test -f /tmp/b/six.py
+echo "second install (cached): OK"
+
+# The 45 MB root index is deliberately refused rather than proxied.
+code=$(python3 -c "
+import urllib.request, urllib.error
+try:
+    urllib.request.urlopen('${REPO}simple/')
+    print(200)
+except urllib.error.HTTPError as e:
+    print(e.code)
+")
+test "$code" = "501" || { echo "root index returned $code, want 501"; exit 1; }
+echo "root index refused: OK"
+
+echo "All PyPI proxy conformance checks passed"
+`, repo))
+}

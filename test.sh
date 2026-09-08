@@ -134,6 +134,25 @@ check "simple page carries requires-python" "$PROJ" "data-requires-python"
 curl -s -o /tmp/dl.whl $BASE/repository/pypi-hosted/packages/my-package/my_package-1.0.0-py3-none-any.whl
 check "wheel downloads byte-identical" "$(cat /tmp/dl.whl)" "wheel-bytes-not-a-real-zip"
 
+echo "== PYPI proxy (LIVE upstream pypi.org) =="
+# The index is on pypi.org but the files are on files.pythonhosted.org, so the
+# real check is that the rewritten links point back at forge and a download
+# through them works.
+PPROJ=$(curl -s $BASE/repository/pypi-proxy/simple/six/)
+if echo "$PPROJ" | grep -q "six-"; then
+  check "proxied simple page fetched" "$PPROJ" "six-"
+  check "proxy rewrote file links" "$PPROJ" "repository/pypi-proxy/packages/six/"
+  check "proxy did not leak upstream host" "$(echo "$PPROJ" | grep -c files.pythonhosted.org)" "^0$"
+  # Pull one real wheel through the rewritten link and confirm it is a zip.
+  PWHL=$(echo "$PPROJ" | grep -o "/repository/pypi-proxy/packages/six/[^\"#]*\.whl" | head -1)
+  curl -s -o /tmp/six.whl "$BASE$PWHL"
+  check "proxied wheel is a zip" "$(file /tmp/six.whl)" "Zip archive"
+  # The 45 MB root index is deliberately not proxied.
+  check "root simple index refused" "$(curl -s -o /dev/null -w '%{http_code}' $BASE/repository/pypi-proxy/simple/)" "501"
+else
+  echo "  SKIP: upstream pypi.org not reachable from this network"
+fi
+
 echo
 echo "==================== RESULTS: $PASS passed, $FAIL failed ===================="
 exit $FAIL

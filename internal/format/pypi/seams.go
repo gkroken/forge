@@ -132,6 +132,11 @@ func (h *Handler) OwnsComponent(c *format.Context, component string) bool {
 // that every record has its file and every file has a record; the simple pages
 // are generated per request, so there is no index that can drift.
 func (h *Handler) VerifyIntegrity(c *format.Context, mode integrity.Mode) (integrity.Result, error) {
+	// A proxy owns no records — its truth is the shared cache convention
+	// (blob bytes plus a CacheEntry beside them), checked in one place.
+	if isProxy(c) {
+		return integrity.VerifyProxyCache(c.Repo.Name, c.Blob, c.Meta)
+	}
 	var res integrity.Result
 	recs, err := h.records(c)
 	if err != nil {
@@ -146,18 +151,29 @@ func (h *Handler) VerifyIntegrity(c *format.Context, mode integrity.Mode) (integ
 	for _, rec := range recs {
 		res.MetaChecked++
 		key := h.fileKey(c, rec.Project, rec.Filename)
-		info, exists, _ := c.Blob.Stat(key)
+		_, exists, _ := c.Blob.Stat(key)
 		if !exists {
 			res.Add(integrity.KindMissing, key, rec.Project, rec.Version,
 				"record exists but the file is gone — pip will 404 on a link the index still advertises")
 			continue
 		}
 		delete(onDisk, key)
-		res.BytesRead += info.Size
-		if mode == integrity.ModeFull && rec.SHA256 != "" && info.SHA256 != rec.SHA256 {
-			res.Add(integrity.KindMismatch, key, rec.Project, rec.Version,
-				"file hashes to "+info.SHA256+" but the index advertises "+rec.SHA256+
-					" — pip will reject the download")
+		// Stat does not hash — the digest has to be re-read from the bytes, and
+		// only full mode pays for that. Comparing against Stat's empty SHA256
+		// reported every file in the repository as corrupt.
+		if mode == integrity.ModeFull && rec.SHA256 != "" {
+			hs, herr := integrity.HashBlob(c.Blob, key)
+			if herr != nil {
+				res.Add(integrity.KindMismatch, key, rec.Project, rec.Version,
+					"file unreadable: "+herr.Error())
+				continue
+			}
+			res.BytesRead += hs.Size
+			if !strings.EqualFold(hs.SHA256, rec.SHA256) {
+				res.Add(integrity.KindMismatch, key, rec.Project, rec.Version,
+					"file hashes to "+hs.SHA256+" but the index advertises "+rec.SHA256+
+						" — pip will reject the download")
+			}
 		}
 	}
 	for key := range onDisk {
@@ -208,6 +224,11 @@ func (h *Handler) ListVersions(c *format.Context) ([]format.Version, error) {
 // and the records describing them.
 func (h *Handler) DeleteVersion(c *format.Context, component, version string) (int64, error) {
 	project := Normalize(component)
+	// On a proxy this is cache eviction: the bytes go, the upstream mapping
+	// goes, and the next request re-fetches.
+	if isProxy(c) {
+		return h.deleteCached(c, project, version)
+	}
 	var freed int64
 	for _, rec := range h.mustRecords(c) {
 		if rec.Project != project || rec.Version != version {

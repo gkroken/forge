@@ -39,7 +39,7 @@ go build -o forge ./cmd/forge
 | npm    | ✅ | ✅ | ✅ | `npm`, `pnpm`, `yarn` |
 | Helm   | ✅ | — | ✅ | `helm` 3.x (repo + `oci://`) |
 | CRAN   | ✅ | ✅ | ✅ | `R` install.packages, `renv`, `pak` |
-| PyPI   | ✅ | — | — | `pip` 24.x, `twine` 5.x |
+| PyPI   | ✅ | ✅ | — | `pip` 24.x, `twine` 5.x |
 | OCI    | ✅ | — | — | `oras`, `crane`, `helm push oci://` |
 
 All clients are exercised by the conformance suite against a live forge instance
@@ -74,6 +74,8 @@ options(repos=c(forge="http://localhost:8080/repository/cran-public/"))
 # PyPI (Python)
 twine upload --repository-url http://localhost:8080/repository/pypi-hosted/ dist/*
 pip install --index-url http://localhost:8080/repository/pypi-hosted/simple/ mypkg
+# or through the pypi.org proxy:
+pip install --index-url http://localhost:8080/repository/pypi-proxy/simple/ six
 
 # OCI / Docker
 oras push localhost:8080/docker-hosted/myimage:v1 artifact.bin
@@ -361,7 +363,7 @@ internal/
                         deprecate, unpublish, audit bridge, login, group fan-out
   format/helm/          Helm repo: chart upload, index.yaml, chart API, OCI mode
   format/cran/          CRAN: DESCRIPTION parse, PACKAGES + PACKAGES.gz + PACKAGES.rds
-  format/pypi/          PyPI: twine upload, PEP 503 simple index (hosted only)
+  format/pypi/          PyPI: twine upload, PEP 503 simple index, pypi.org proxy
   format/oci/           OCI Distribution Spec v1.0: blobs, manifests, tags, uploads
   server/               HTTP router, auth middleware wiring, admin API, browse/search UI
   obs/                  Prometheus metrics, structured logging, audit log
