@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"forge/internal/blob"
+	"forge/internal/ledger"
 	"forge/internal/meta"
 	"forge/internal/repo"
 )
@@ -167,13 +168,13 @@ func dryRunCRAN(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Sto
 		byPkg[rec.Package] = append(byPkg[rec.Package], rec)
 	}
 
-	pub := PublishIndex(m, repoName)
+	pub := ledger.Load(m, repoName)
 	var result DryRunResult
 	for _, recs := range byPkg {
 		cands, skipped := applyPoliciesTagged(p, recs,
 			func(r cranRecord) string { return r.Version },
 			func(r cranRecord) time.Time {
-				return publishedAt(r.UploadedAt, pub, r.Package, r.Version)
+				return ledger.Resolve(r.UploadedAt, pub, r.Package, r.Version)
 			},
 			func(r cranRecord) time.Time {
 				return lastDownloadTime(m, repoName+"/src/contrib/"+r.Package+"_"+r.Version+".tar.gz")
@@ -216,13 +217,13 @@ func dryRunHelm(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Sto
 		byChart[rec.Name] = append(byChart[rec.Name], rec)
 	}
 
-	pub := PublishIndex(m, repoName)
+	pub := ledger.Load(m, repoName)
 	var result DryRunResult
 	for _, recs := range byChart {
 		cands, skipped := applyPoliciesTagged(p, recs,
 			func(r helmRecord) string { return r.Version },
 			func(r helmRecord) time.Time {
-				return publishedAt(r.UploadedAt, pub, r.Name, r.Version)
+				return ledger.Resolve(r.UploadedAt, pub, r.Name, r.Version)
 			},
 			func(r helmRecord) time.Time { return lastDownloadTime(m, repoName+"/"+r.Filename) },
 		)
@@ -263,13 +264,13 @@ func dryRunNPM(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Stor
 		byPkg[pkg] = append(byPkg[pkg], npmVersionRecord{Package: pkg, Version: ver})
 	}
 
-	pub := PublishIndex(m, repoName)
+	pub := ledger.Load(m, repoName)
 	var result DryRunResult
 	for _, recs := range byPkg {
 		cands, skipped := applyPoliciesTagged(p, recs,
 			func(r npmVersionRecord) string { return r.Version },
 			func(r npmVersionRecord) time.Time {
-				return publishedAt(r.UploadedAt, pub, r.Package, r.Version)
+				return ledger.Resolve(r.UploadedAt, pub, r.Package, r.Version)
 			},
 			func(r npmVersionRecord) time.Time {
 				return lastDownloadTime(m, repoName+"/"+r.Package+"/-/"+r.Package+"-"+r.Version+".tgz")
@@ -340,13 +341,13 @@ func dryRunMaven(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.St
 	// zero here, so age rules silently never fired in a preview even where the
 	// real run would have deleted. Use the same resolution in both.
 	snapNS := repoName + ":maven:snap:v"
-	pub := PublishIndex(m, repoName)
+	pub := ledger.Load(m, repoName)
 	var result DryRunResult
 	for _, arts := range byGA {
 		cands, skipped := applyPoliciesTagged(p, arts,
 			func(a mavenArtifact) string { return a.version },
 			func(a mavenArtifact) time.Time {
-				return publishedAt(mavenSnapUploadTime(snapNS, a.version, a.blobKeys, m), pub, a.ga, a.version)
+				return ledger.Resolve(mavenSnapUploadTime(snapNS, a.version, a.blobKeys, m), pub, a.ga, a.version)
 			},
 			func(a mavenArtifact) time.Time { return lastDownloadTime(m, a.blobKeys...) },
 		)

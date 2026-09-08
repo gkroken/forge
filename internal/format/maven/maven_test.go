@@ -513,7 +513,7 @@ func TestParseArtifactFilename(t *testing.T) {
 		{"lib-1.0-20240115.123456-1.jar", "lib", "jar", "1.0-20240115.123456-1", true},
 		{"lib-1.0-SNAPSHOT.jar", "lib", "jar", "1.0-SNAPSHOT", true},
 		{"other-1.0.jar", "lib", "", "", false}, // wrong prefix
-		{"lib.jar", "lib", "", "", false},        // no dash-version
+		{"lib.jar", "lib", "", "", false},       // no dash-version
 	}
 	for _, tc := range cases {
 		ext, val, ok := parseArtifactFilename(tc.filename, tc.artifactID)

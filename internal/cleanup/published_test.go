@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"forge/internal/cleanup"
+	"forge/internal/ledger"
 	"forge/internal/repo"
 )
 
@@ -20,7 +21,7 @@ func TestNPM_DeleteOlderThanDays_NowFires(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	cleanup.RecordPublishAt(m, "npm-hosted", "left-pad", "1.0.0",
+	ledger.RecordAt(m, "npm-hosted", "left-pad", "1.0.0",
 		time.Now().UTC().AddDate(0, 0, -60))
 
 	res, err := cleanup.Run("npm-hosted", "npm",
@@ -43,7 +44,7 @@ func TestNPM_RecentPublishSurvives(t *testing.T) {
 	if err := m.PutJSON("npm-hosted:npm:v", "fresh:1.0.0", map[string]any{}); err != nil {
 		t.Fatal(err)
 	}
-	cleanup.RecordPublishAt(m, "npm-hosted", "fresh", "1.0.0",
+	ledger.RecordAt(m, "npm-hosted", "fresh", "1.0.0",
 		time.Now().UTC().AddDate(0, 0, -2))
 
 	res, err := cleanup.Run("npm-hosted", "npm",
@@ -61,10 +62,10 @@ func TestNPM_RecentPublishSurvives(t *testing.T) {
 func TestMavenRelease_DeleteOlderThanDays_NowFires(t *testing.T) {
 	b, m := stores(t)
 	putBlob(t, b, "maven-hosted/com/acme/demo/1.0.0/demo-1.0.0.jar")
-	cleanup.RecordPublishFromMavenPath(m, "maven-hosted", "com/acme/demo/1.0.0/demo-1.0.0.jar")
+	ledger.RecordFromMavenPath(m, "maven-hosted", "com/acme/demo/1.0.0/demo-1.0.0.jar")
 	// Backdate it: RecordPublishFromMavenPath stamps "now".
-	cleanup.ForgetPublish(m, "maven-hosted", "com/acme/demo", "1.0.0")
-	cleanup.RecordPublishAt(m, "maven-hosted", "com/acme/demo", "1.0.0",
+	ledger.Forget(m, "maven-hosted", "com/acme/demo", "1.0.0")
+	ledger.RecordAt(m, "maven-hosted", "com/acme/demo", "1.0.0",
 		time.Now().UTC().AddDate(0, 0, -90))
 
 	res, err := cleanup.Run("maven-hosted", "maven",
@@ -81,9 +82,9 @@ func TestMavenRelease_DeleteOlderThanDays_NowFires(t *testing.T) {
 // the ledger component must equal the key maven's cleanup pass groups by.
 func TestLedgerKeyMatchesMavenGrouping(t *testing.T) {
 	_, m := stores(t)
-	cleanup.RecordPublishFromMavenPath(m, "r", "com/acme/deep/nested/demo/2.1.0/demo-2.1.0.jar")
-	idx := cleanup.PublishIndex(m, "r")
-	want := cleanup.PublishKey("com/acme/deep/nested/demo", "2.1.0")
+	ledger.RecordFromMavenPath(m, "r", "com/acme/deep/nested/demo/2.1.0/demo-2.1.0.jar")
+	idx := ledger.Load(m, "r")
+	want := ledger.Key("com/acme/deep/nested/demo", "2.1.0")
 	if _, ok := idx[want]; !ok {
 		t.Fatalf("ledger key %q not found; got %v", want, keysOf(idx))
 	}
@@ -94,10 +95,10 @@ func TestLedgerKeyMatchesMavenGrouping(t *testing.T) {
 func TestRecordPublishDoesNotOverwrite(t *testing.T) {
 	_, m := stores(t)
 	old := time.Now().UTC().AddDate(0, 0, -100)
-	cleanup.RecordPublishAt(m, "r", "pkg", "1.0.0", old)
-	cleanup.RecordPublish(m, "r", "pkg", "1.0.0") // would stamp "now"
+	ledger.RecordAt(m, "r", "pkg", "1.0.0", old)
+	ledger.Record(m, "r", "pkg", "1.0.0") // would stamp "now"
 
-	got := cleanup.PublishIndex(m, "r")[cleanup.PublishKey("pkg", "1.0.0")]
+	got := ledger.Load(m, "r")[ledger.Key("pkg", "1.0.0")]
 	if got.Sub(old).Abs() > time.Second {
 		t.Errorf("publish time was overwritten: %v, want ~%v", got, old)
 	}
@@ -111,14 +112,14 @@ func TestForgetPublishOnDelete(t *testing.T) {
 	if err := m.PutJSON("npm-hosted:npm:v", "gone:1.0.0", map[string]any{}); err != nil {
 		t.Fatal(err)
 	}
-	cleanup.RecordPublishAt(m, "npm-hosted", "gone", "1.0.0",
+	ledger.RecordAt(m, "npm-hosted", "gone", "1.0.0",
 		time.Now().UTC().AddDate(0, 0, -60))
 
 	if _, err := cleanup.Run("npm-hosted", "npm",
 		&repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := cleanup.PublishIndex(m, "npm-hosted")[cleanup.PublishKey("gone", "1.0.0")]; ok {
+	if _, ok := ledger.Load(m, "npm-hosted")[ledger.Key("gone", "1.0.0")]; ok {
 		t.Error("ledger entry survived the deletion")
 	}
 }

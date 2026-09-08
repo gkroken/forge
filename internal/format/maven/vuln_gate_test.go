@@ -14,11 +14,11 @@ func TestVulnGateTarget(t *testing.T) {
 			"org.apache.logging.log4j:log4j-core", "2.14.1", true},
 		{"com/example/foo/1.2.3/foo-1.2.3.war", "com.example:foo", "1.2.3", true},
 		// not primary artifacts → not gated
-		{"com/example/foo/1.2.3/foo-1.2.3.pom", "", "", false},          // POM
-		{"com/example/foo/1.2.3/foo-1.2.3.jar.sha1", "", "", false},     // checksum
-		{"com/example/foo/1.2.3/foo-1.2.3.jar.asc", "", "", false},      // signature
-		{"com/example/foo/maven-metadata.xml", "", "", false},          // metadata, no version dir
-		{"com/example/foo", "", "", false},                             // too short
+		{"com/example/foo/1.2.3/foo-1.2.3.pom", "", "", false},      // POM
+		{"com/example/foo/1.2.3/foo-1.2.3.jar.sha1", "", "", false}, // checksum
+		{"com/example/foo/1.2.3/foo-1.2.3.jar.asc", "", "", false},  // signature
+		{"com/example/foo/maven-metadata.xml", "", "", false},       // metadata, no version dir
+		{"com/example/foo", "", "", false},                          // too short
 	}
 	for _, tc := range tests {
 		comp, ver, ok := h.VulnGateTarget(tc.sub)

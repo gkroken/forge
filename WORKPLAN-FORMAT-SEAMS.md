@@ -51,7 +51,7 @@ Callers stop type-asserting and start calling. `ErrNotSupported` surfaces as a
 
 | Phase | Scope | Independent? | Risk |
 |---|---|---|---|
-| P0 | Break the `format` → `cleanup` import cycle | prerequisite for P2 | low |
+| P0 | Break the `format` → `cleanup` import cycle | prerequisite for P2 | ✅ done |
 | P1 | Fold the 9 optional interfaces into `Handler` + `Unsupported` | **yes — ships alone** | low |
 | P2 | Retention: 4 switch families → `ListVersions`/`DeleteVersion` | needs P0, P1 | **high** |
 | P3 | Promote / migration / browser-upload switches | needs P1 | medium |
@@ -64,18 +64,21 @@ cut short, cut it after P1.
 
 ---
 
-## Phase P0 — break the import cycle
+## Phase P0 — break the import cycle · ✅ COMPLETE
 
 `internal/format/{maven,npm,helm,cran,oci}` all import `internal/cleanup` for
 `RecordPublish` (added 2026-09-08 with the publish ledger). So `internal/cleanup`
 can never import `internal/format`, which blocks P2's interface types.
 
-- [ ] Extract the publish ledger (`published.go`) into `internal/ledger`, importing
+- [x] Extract the publish ledger (`published.go`) into `internal/ledger`, importing
       only `internal/meta`. Both `format` and `cleanup` may then depend on it.
-- [ ] `internal/cleanup` re-exports the names it uses so call sites elsewhere are
-      untouched, or update them — whichever diff is smaller.
-- [ ] Acceptance: `go list -deps forge/internal/cleanup | grep forge/internal/format`
-      is empty AND `go build ./...` passes.
+- [x] Call sites updated rather than re-exported — the diff was smaller, and a
+      re-export would have left the misleading `cleanup.RecordPublish` name on a
+      thing handlers call at publish time. Renamed while moving, since the package
+      now carries the noun: `ledger.Record`/`RecordAt`/`Forget`/`Load`/`Resolve`/`Key`.
+- [x] Acceptance: no package under `internal/format` imports `internal/cleanup`;
+      `internal/ledger` depends only on `internal/meta`; `go build ./...`,
+      `go vet ./...`, `go test ./...` and `bash test.sh` (20/20) all pass.
 
 ## Phase P1 — required interface + Unsupported default
 

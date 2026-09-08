@@ -1,13 +1,9 @@
-package cleanup
-
-import (
-	"strings"
-	"time"
-
-	"forge/internal/meta"
-)
-
-// Publish ledger.
+// Package ledger records when each component+version was published.
+//
+// It sits below both internal/format and internal/cleanup: handlers write to it
+// on publish, retention reads it to decide age. It deliberately has no
+// dependency beyond internal/meta, so neither of those packages has to import
+// the other.
 //
 // Age-based retention needs to know when a version was published. Each format
 // used to answer that from its own records, and they disagreed: helm and cran
@@ -23,13 +19,21 @@ import (
 // prefers a format's own timestamp where it has a better one and falls back to
 // this ledger otherwise, which means a new format gets working retention by
 // calling RecordPublish instead of by reimplementing timestamps.
+package ledger
 
-const publishedNSSuffix = ":published"
+import (
+	"strings"
+	"time"
+
+	"forge/internal/meta"
+)
+
+const nsSuffix = ":published"
 
 // PublishedNS is the meta namespace holding a repository's publish ledger.
-func PublishedNS(repoName string) string { return repoName + publishedNSSuffix }
+func NS(repoName string) string { return repoName + nsSuffix }
 
-type publishRecord struct {
+type record struct {
 	PublishedAt time.Time `json:"publishedAt"`
 }
 
@@ -37,61 +41,61 @@ type publishRecord struct {
 // format's natural component identity — the package name for npm, the chart
 // name for helm, "groupId/artifactId" for maven — and must match what that
 // format's cleanup pass uses, or the fallback silently misses.
-func PublishKey(component, version string) string {
+func Key(component, version string) string {
 	return component + ":" + version
 }
 
 // RecordPublish stamps a component+version as published now. Best-effort: a
 // failure here must never fail the upload that triggered it, since the artifact
 // is already stored and a missing ledger entry only costs age-based retention.
-func RecordPublish(m meta.Store, repoName, component, version string) {
-	recordPublishAt(m, repoName, component, version, time.Now().UTC())
+func Record(m meta.Store, repoName, component, version string) {
+	recordAt(m, repoName, component, version, time.Now().UTC())
 }
 
 // RecordPublishAt is RecordPublish with an explicit time, for handlers that
 // know the real publish time (a proxied artifact's upstream date, say) and for
 // tests.
-func RecordPublishAt(m meta.Store, repoName, component, version string, t time.Time) {
-	recordPublishAt(m, repoName, component, version, t.UTC())
+func RecordAt(m meta.Store, repoName, component, version string, t time.Time) {
+	recordAt(m, repoName, component, version, t.UTC())
 }
 
-func recordPublishAt(m meta.Store, repoName, component, version string, t time.Time) {
+func recordAt(m meta.Store, repoName, component, version string, t time.Time) {
 	if m == nil || repoName == "" || component == "" || version == "" {
 		return
 	}
 	// Never overwrite an existing entry: re-publishing the same coordinates, or
 	// a proxy re-caching a tarball, must not make an old artifact look new.
-	if ok, err := m.GetJSON(PublishedNS(repoName), PublishKey(component, version), &publishRecord{}); ok && err == nil {
+	if ok, err := m.GetJSON(NS(repoName), Key(component, version), &record{}); ok && err == nil {
 		return
 	}
-	_ = m.PutJSON(PublishedNS(repoName), PublishKey(component, version), publishRecord{PublishedAt: t})
+	_ = m.PutJSON(NS(repoName), Key(component, version), record{PublishedAt: t})
 }
 
 // ForgetPublish drops a ledger entry, so a deleted version does not leave a
 // record behind that would resurface if the same coordinates are published
 // again.
-func ForgetPublish(m meta.Store, repoName, component, version string) {
+func Forget(m meta.Store, repoName, component, version string) {
 	if m == nil {
 		return
 	}
-	_ = m.Delete(PublishedNS(repoName), PublishKey(component, version))
+	_ = m.Delete(NS(repoName), Key(component, version))
 }
 
 // PublishIndex loads a repository's whole ledger in one pass. Cleanup reads it
 // once per run rather than per artifact — a repository can hold tens of
 // thousands of versions, and this is on the retention path.
-func PublishIndex(m meta.Store, repoName string) map[string]time.Time {
+func Load(m meta.Store, repoName string) map[string]time.Time {
 	out := map[string]time.Time{}
 	if m == nil {
 		return out
 	}
-	keys, err := m.List(PublishedNS(repoName))
+	keys, err := m.List(NS(repoName))
 	if err != nil {
 		return out
 	}
 	for _, k := range keys {
-		var rec publishRecord
-		if ok, err := m.GetJSON(PublishedNS(repoName), k, &rec); ok && err == nil && !rec.PublishedAt.IsZero() {
+		var rec record
+		if ok, err := m.GetJSON(NS(repoName), k, &rec); ok && err == nil && !rec.PublishedAt.IsZero() {
 			out[k] = rec.PublishedAt
 		}
 	}
@@ -101,19 +105,19 @@ func PublishIndex(m meta.Store, repoName string) map[string]time.Time {
 // publishedAt resolves a version's publish time: the format's own timestamp
 // when it has one, else the ledger. Returns the zero time when neither knows,
 // which the rules treat as "cannot evaluate" rather than "old".
-func publishedAt(own time.Time, pub map[string]time.Time, component, version string) time.Time {
+func Resolve(own time.Time, pub map[string]time.Time, component, version string) time.Time {
 	if !own.IsZero() {
 		return own
 	}
-	return pub[PublishKey(component, version)]
+	return pub[Key(component, version)]
 }
 
 // RecordPublishFromMavenPath records a publish using a maven sub-path
 // ("{groupId path}/{artifactId}/{version}/{file}"). Paths too short to carry a
 // version — checksum sidecars at the metadata level, for instance — are ignored.
-func RecordPublishFromMavenPath(m meta.Store, repoName, subPath string) {
+func RecordFromMavenPath(m meta.Store, repoName, subPath string) {
 	if component, version, ok := mavenComponent(subPath); ok {
-		RecordPublish(m, repoName, component, version)
+		Record(m, repoName, component, version)
 	}
 }
 

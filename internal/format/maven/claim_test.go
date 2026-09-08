@@ -25,10 +25,10 @@ func TestClaimPath(t *testing.T) {
 		{"com/acme/app/1.0-SNAPSHOT/maven-metadata.xml", "com/acme/app", true},
 		{"org/example/deep/group/lib/2.1/lib-2.1.war", "org/example/deep/group/lib", true},
 		// not claim targets
-		{"com/acme", "", false},                  // no version segment
-		{"app/1.0/app-1.0.jar", "", false},       // version too shallow (no groupId)
-		{"maven-metadata.xml", "", false},        // bare metadata at root
-		{"com/maven-metadata.xml", "", false},    // metadata with only one parent segment
+		{"com/acme", "", false},               // no version segment
+		{"app/1.0/app-1.0.jar", "", false},    // version too shallow (no groupId)
+		{"maven-metadata.xml", "", false},     // bare metadata at root
+		{"com/maven-metadata.xml", "", false}, // metadata with only one parent segment
 	}
 	for _, tc := range tests {
 		comp, ok := h.ClaimPath(tc.sub)

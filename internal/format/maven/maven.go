@@ -35,8 +35,8 @@ import (
 	"time"
 
 	"forge/internal/blob"
-	"forge/internal/cleanup"
 	"forge/internal/format"
+	"forge/internal/ledger"
 	"forge/internal/proxy"
 	"forge/internal/repo"
 )
@@ -160,7 +160,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request, c *format.Context)
 	// ("groupId/artifactId" + version directory). Snapshots also get a richer
 	// per-file record from maybeUpdateSnapshotMeta above; releases have only
 	// this, which is what makes age-based retention work for them at all.
-	cleanup.RecordPublishFromMavenPath(c.Meta, c.Repo.Name, c.Sub)
+	ledger.RecordFromMavenPath(c.Meta, c.Repo.Name, c.Sub)
 	w.WriteHeader(http.StatusCreated)
 	fmt.Fprintf(w, "stored %s (%d bytes, sha1=%s)\n", c.Sub, info.Size, info.SHA1)
 }

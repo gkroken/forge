@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"forge/internal/blob"
+	"forge/internal/ledger"
 	"forge/internal/meta"
 	"forge/internal/repo"
 )
@@ -99,12 +100,12 @@ func runMaven(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store
 
 	var res Result
 	snapNS := repoName + ":maven:snap:v"
-	pub := PublishIndex(m, repoName)
+	pub := ledger.Load(m, repoName)
 	// mavenUploadTime prefers the snapshot record's own timestamp (which carries
 	// the real deploy time for a timestamped snapshot) and falls back to the
 	// publish ledger, which is the only source releases have.
 	mavenUploadTime := func(ga, version string, keys []string) time.Time {
-		return publishedAt(mavenSnapUploadTime(snapNS, version, keys, m), pub, ga, version)
+		return ledger.Resolve(mavenSnapUploadTime(snapNS, version, keys, m), pub, ga, version)
 	}
 
 	for ga, arts := range byGA {
@@ -196,7 +197,7 @@ func runMaven(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store
 					res.Deleted++
 				}
 			}
-			ForgetPublish(m, repoName, ga, a.version)
+			ledger.Forget(m, repoName, ga, a.version)
 		}
 	}
 	return res, nil
@@ -248,13 +249,13 @@ func runCRAN(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store)
 		byPkg[rec.Package] = append(byPkg[rec.Package], rec)
 	}
 
-	pub := PublishIndex(m, repoName)
+	pub := ledger.Load(m, repoName)
 	var res Result
 	for _, recs := range byPkg {
 		toDelete := applyPolicies(p, recs,
 			func(r cranRecord) string { return r.Version },
 			func(r cranRecord) time.Time {
-				return publishedAt(r.UploadedAt, pub, r.Package, r.Version)
+				return ledger.Resolve(r.UploadedAt, pub, r.Package, r.Version)
 			},
 			func(r cranRecord) time.Time {
 				return lastDownloadTime(m, repoName+"/src/contrib/"+r.Package+"_"+r.Version+".tar.gz")
@@ -268,7 +269,7 @@ func runCRAN(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store)
 				b.Delete(blobKey) //nolint:errcheck
 			}
 			m.Delete(ns, rec.Package+"_"+rec.Version) //nolint:errcheck
-			ForgetPublish(m, repoName, rec.Package, rec.Version)
+			ledger.Forget(m, repoName, rec.Package, rec.Version)
 			res.Deleted++
 		}
 	}
@@ -300,13 +301,13 @@ func runHelm(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store)
 		byChart[rec.Name] = append(byChart[rec.Name], rec)
 	}
 
-	pub := PublishIndex(m, repoName)
+	pub := ledger.Load(m, repoName)
 	var res Result
 	for _, recs := range byChart {
 		toDelete := applyPolicies(p, recs,
 			func(r helmRecord) string { return r.Version },
 			func(r helmRecord) time.Time {
-				return publishedAt(r.UploadedAt, pub, r.Name, r.Version)
+				return ledger.Resolve(r.UploadedAt, pub, r.Name, r.Version)
 			},
 			func(r helmRecord) time.Time { return lastDownloadTime(m, repoName+"/"+r.Filename) },
 		)
@@ -318,7 +319,7 @@ func runHelm(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store)
 				b.Delete(blobKey) //nolint:errcheck
 			}
 			m.Delete(ns, rec.Name+"-"+rec.Version) //nolint:errcheck
-			ForgetPublish(m, repoName, rec.Name, rec.Version)
+			ledger.Forget(m, repoName, rec.Name, rec.Version)
 			res.Deleted++
 		}
 	}
@@ -352,13 +353,13 @@ func runNPM(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store) 
 		byPkg[pkg] = append(byPkg[pkg], npmVersionRecord{Package: pkg, Version: ver})
 	}
 
-	pub := PublishIndex(m, repoName)
+	pub := ledger.Load(m, repoName)
 	var res Result
 	for _, recs := range byPkg {
 		toDelete := applyPolicies(p, recs,
 			func(r npmVersionRecord) string { return r.Version },
 			func(r npmVersionRecord) time.Time {
-				return publishedAt(r.UploadedAt, pub, r.Package, r.Version)
+				return ledger.Resolve(r.UploadedAt, pub, r.Package, r.Version)
 			},
 			func(r npmVersionRecord) time.Time {
 				return lastDownloadTime(m, repoName+"/"+r.Package+"/-/"+r.Package+"-"+r.Version+".tgz")
@@ -372,7 +373,7 @@ func runNPM(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store) 
 				b.Delete(blobKey) //nolint:errcheck
 			}
 			m.Delete(versNS, rec.Package+":"+rec.Version) //nolint:errcheck
-			ForgetPublish(m, repoName, rec.Package, rec.Version)
+			ledger.Forget(m, repoName, rec.Package, rec.Version)
 
 			// Remove the version from the packument.
 			var packument map[string]any

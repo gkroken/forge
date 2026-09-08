@@ -34,8 +34,8 @@ import (
 	"strings"
 	"time"
 
-	"forge/internal/cleanup"
 	"forge/internal/format"
+	"forge/internal/ledger"
 	"forge/internal/repo"
 )
 
@@ -329,7 +329,7 @@ func (h *Handler) putManifest(w http.ResponseWriter, r *http.Request, c *format.
 		// The cleanup engine has no OCI pass yet, but recording publishes now
 		// means retention will have real dates to work with when it gains one,
 		// rather than treating every existing image as undatable.
-		cleanup.RecordPublish(c.Meta, c.Repo.Name, image, ref)
+		ledger.Record(c.Meta, c.Repo.Name, image, ref)
 	}
 
 	w.Header().Set("Location", fmt.Sprintf("/v2/%s/%s/manifests/%s", c.Repo.Name, image, dgst))

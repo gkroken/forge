@@ -13,11 +13,11 @@ func TestVulnGateTarget(t *testing.T) {
 		{"@angular/core/-/core-12.0.0.tgz", "@angular/core", "12.0.0", true},
 		{"lodash/-/lodash-4.17.20-beta.1.tgz", "lodash", "4.17.20-beta.1", true},
 		// not primary artifacts → not gated
-		{"lodash", "", "", false},                            // packument
-		{"-/package/lodash/dist-tags", "", "", false},        // registry endpoint
-		{"-/npm/v1/security/audits/quick", "", "", false},    // audit endpoint
-		{"lodash/-/lodash-4.17.20.tgz.sig", "", "", false},   // not a .tgz
-		{"lodash/-/", "", "", false},                         // empty filename
+		{"lodash", "", "", false},                          // packument
+		{"-/package/lodash/dist-tags", "", "", false},      // registry endpoint
+		{"-/npm/v1/security/audits/quick", "", "", false},  // audit endpoint
+		{"lodash/-/lodash-4.17.20.tgz.sig", "", "", false}, // not a .tgz
+		{"lodash/-/", "", "", false},                       // empty filename
 	}
 	for _, tc := range tests {
 		comp, ver, ok := h.VulnGateTarget(tc.sub)

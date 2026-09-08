@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"forge/internal/blob"
+	"forge/internal/ledger"
 	"forge/internal/meta"
 	"forge/internal/repo"
 )
@@ -76,7 +77,7 @@ func loadOCIState(repoName string, m meta.Store, pub map[string]time.Time) (ociS
 					pushed = t.UTC()
 				}
 			}
-			pushed = publishedAt(pushed, pub, image, tag)
+			pushed = ledger.Resolve(pushed, pub, image, tag)
 			st.tags = append(st.tags, ociTag{
 				Image: image, Tag: tag, Digest: dgst, Pushed: pushed,
 				BlobKey: repoName + "/manifests/" + dgst,
@@ -133,7 +134,7 @@ func manifestRefs(b blob.Store, key string) []string {
 }
 
 func runOCI(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (Result, error) {
-	pub := PublishIndex(m, repoName)
+	pub := ledger.Load(m, repoName)
 	st, err := loadOCIState(repoName, m, pub)
 	if err != nil {
 		return Result{}, err
@@ -158,7 +159,7 @@ func runOCI(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store) 
 				m.Delete(ns, k) //nolint:errcheck
 			}
 			m.Delete(ns, "tag-times/"+t.Image+"/"+t.Tag) //nolint:errcheck
-			ForgetPublish(m, repoName, t.Image, t.Tag)
+			ledger.Forget(m, repoName, t.Image, t.Tag)
 			deletedTags[t.Image+":"+t.Tag] = true
 			res.Deleted++
 		}
@@ -236,7 +237,7 @@ func deleteBlobIfPresent(b blob.Store, key string) int64 {
 }
 
 func dryRunOCI(repoName string, p *repo.CleanupPolicy, b blob.Store, m meta.Store) (DryRunResult, error) {
-	pub := PublishIndex(m, repoName)
+	pub := ledger.Load(m, repoName)
 	st, err := loadOCIState(repoName, m, pub)
 	if err != nil {
 		return DryRunResult{}, err

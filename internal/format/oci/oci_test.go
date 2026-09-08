@@ -473,10 +473,10 @@ func TestProxy_RejectsWrites(t *testing.T) {
 func TestVulnGateTarget(t *testing.T) {
 	h := New()
 	cases := []struct {
-		sub       string
-		wantComp  string
-		wantVer   string
-		wantOK    bool
+		sub      string
+		wantComp string
+		wantVer  string
+		wantOK   bool
 	}{
 		// Tag-addressed manifest pulls are gated.
 		{"myapp/manifests/latest", "myapp", "latest", true},

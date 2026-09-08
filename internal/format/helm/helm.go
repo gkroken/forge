@@ -31,8 +31,8 @@ import (
 	"time"
 
 	"forge/internal/blob"
-	"forge/internal/cleanup"
 	"forge/internal/format"
+	"forge/internal/ledger"
 	"forge/internal/proxy"
 	"forge/internal/repo"
 )
@@ -115,7 +115,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, c *format.Conte
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	cleanup.RecordPublishAt(c.Meta, c.Repo.Name, meta.Name, meta.Version, now)
+	ledger.RecordAt(c.Meta, c.Repo.Name, meta.Name, meta.Version, now)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]bool{"saved": true})

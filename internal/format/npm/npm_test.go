@@ -608,7 +608,7 @@ func TestInspect_Group(t *testing.T) {
 		map[string]string{"latest": "1.0.0"})
 
 	mgr := repo.NewManager()
-	mgr.Add(repo.Repository{Name: "npm-member", Format: "npm", Kind: repo.Hosted}) //nolint:errcheck
+	mgr.Add(repo.Repository{Name: "npm-member", Format: "npm", Kind: repo.Hosted})                                //nolint:errcheck
 	mgr.Add(repo.Repository{Name: "npm-group", Format: "npm", Kind: repo.Group, Members: []string{"npm-member"}}) //nolint:errcheck
 
 	groupRepo, _ := mgr.Get("npm-group")
@@ -635,7 +635,7 @@ func TestGroupTarball_FromHostedMember(t *testing.T) {
 	b.Put("npm-member/mylib/-/mylib-1.0.0.tgz", strings.NewReader("tarbytes")) //nolint:errcheck
 
 	mgr := repo.NewManager()
-	mgr.Add(repo.Repository{Name: "npm-member", Format: "npm", Kind: repo.Hosted}) //nolint:errcheck
+	mgr.Add(repo.Repository{Name: "npm-member", Format: "npm", Kind: repo.Hosted})                                //nolint:errcheck
 	mgr.Add(repo.Repository{Name: "npm-group", Format: "npm", Kind: repo.Group, Members: []string{"npm-member"}}) //nolint:errcheck
 
 	groupRepo, _ := mgr.Get("npm-group")
@@ -660,7 +660,7 @@ func TestGroupTarball_NotFound(t *testing.T) {
 		return b, m
 	}()
 	mgr := repo.NewManager()
-	mgr.Add(repo.Repository{Name: "npm-member", Format: "npm", Kind: repo.Hosted}) //nolint:errcheck
+	mgr.Add(repo.Repository{Name: "npm-member", Format: "npm", Kind: repo.Hosted})                                //nolint:errcheck
 	mgr.Add(repo.Repository{Name: "npm-group", Format: "npm", Kind: repo.Group, Members: []string{"npm-member"}}) //nolint:errcheck
 
 	groupRepo, _ := mgr.Get("npm-group")

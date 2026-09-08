@@ -47,9 +47,9 @@ import (
 	"time"
 
 	"forge/internal/blob"
-	"forge/internal/cleanup"
 	"forge/internal/format"
 	"forge/internal/indexer"
+	"forge/internal/ledger"
 	"forge/internal/proxy"
 	"forge/internal/repo"
 )
@@ -200,7 +200,7 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, c *format.Cont
 		}
 		// Publish ledger: npm's version records are rebuilt from meta key names
 		// at cleanup time, so they carry no timestamp of their own.
-		cleanup.RecordPublish(c.Meta, c.Repo.Name, pkg, ver)
+		ledger.Record(c.Meta, c.Repo.Name, pkg, ver)
 	}
 
 	// Merge incoming dist-tags into the stored set.
