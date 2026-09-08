@@ -71,7 +71,43 @@ blob.Store   meta.Store    both are interfaces; only FS impls exist in the proto
 
 **Repository model** (`internal/repo/repo.go`): A `Repository` has `Name`, `Format`, `Kind` (`hosted`/`proxy`/`group`), and optional `Upstream` URL. Repositories are hardcoded in `cmd/forge/main.go`; production needs a DB + admin CRUD API. `group` kind is modeled but unimplemented.
 
-**Adding a new format**: implement `format.Handler`, register it in `main.go` with `reg.Register(...)`, and add one or more `Repository` entries. No changes to routing, storage, or the repo model.
+**Adding a new format**: implement `format.Handler`, register it in `main.go` with
+`reg.Register(...)`, and add one or more `Repository` entries. No changes to routing,
+storage, or the repo model.
+
+That gets artifacts in and out. Everything else is opt-in, and **most of it fails
+silently when you skip it** — the feature is simply absent, with no error. Work the
+list below when adding a format, and record deliberate omissions.
+
+*Optional interfaces in `internal/format` — not implementing one drops that feature:*
+
+| Interface | Method | Without it |
+|---|---|---|
+| `Browsable` | `BrowseRepo` | repo shows no components in the UI |
+| `Inspectable` | `Inspect` | no detail pane |
+| `VulnCoordinates` | `OSVCoordinates` | **no vulnerability scanning** |
+| `ReferencedImages` | `ReferencedImages` | referenced images unscanned (helm-style formats) |
+| `Claimable` | claims support | **no dependency-confusion protection** |
+| `IntegrityChecker` | `VerifyIntegrity` | invisible to integrity verify |
+| `Reindexer` | `Reindex` | drift findings unrepairable |
+
+*Per-format switches outside `internal/format` — the compiler cannot catch a missing
+case, so a new format silently gets nothing:*
+
+- `internal/cleanup/{cleanup,dryrun,delete,trash}.go` — **no retention at all** without a
+  case (this is why `oci` has none today)
+- `internal/server/promote.go` — not promotable between repos
+- `internal/server/migration_transfer.go` — not migratable from Nexus
+- `internal/server/ui_upload.go` — no browser upload form
+
+*Also required, and silent when missed:*
+
+- Call `cleanup.RecordPublish(c.Meta, c.Repo.Name, component, version)` on every
+  successful publish. Age-based retention reads this ledger; without it
+  `deleteOlderThanDays` is permanently inert on the format, and a dry run reports the
+  versions under `unevaluable` rather than deleting them.
+- Add the format to the tree-vs-flat check in `internal/server/static/browse.js` if its
+  storage has meaningful folder hierarchy (see Browse UI below).
 
 **URL routing**: `/repository/{repo-name}/{...rest}` — `server.go` strips the prefix, resolves the repo, dispatches to the handler. `format.Context.Sub` is the path after the repo name.
 

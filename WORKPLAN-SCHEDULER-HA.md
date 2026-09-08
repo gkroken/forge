@@ -64,7 +64,7 @@ is the only fan-out gap.
        `PGCoordinator`s over one testcontainers PG; drives `Tick` concurrently + repeatedly
        at the same due `now`; asserts exactly one run (`len(GetHistory)==1`). PASSES (16s, real PG).
 - [x] 7. `go test ./...` + `go vet` green; binary rebuilt; `bash test.sh` 20/20 green.
-- [ ] 8. Commit per self-contained unit; update memory.  ← committing now
+- [x] 8. Commit per self-contained unit; update memory.
 
 ## Next agenda item (separate workplan when we get there)
 
