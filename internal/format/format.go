@@ -392,6 +392,17 @@ func NewRegistry() *Registry { return &Registry{byFormat: map[string]Handler{}} 
 
 func (reg *Registry) Register(h Handler) { reg.byFormat[h.Format()] = h }
 
+// Formats lists every registered format key, sorted. It exists so a test can
+// walk the real registry rather than a hand-kept list that drifts from it.
+func (reg *Registry) Formats() []string {
+	out := make([]string, 0, len(reg.byFormat))
+	for f := range reg.byFormat {
+		out = append(out, f)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (reg *Registry) For(format string) (Handler, bool) {
 	h, ok := reg.byFormat[format]
 	return h, ok

@@ -55,7 +55,7 @@ Callers stop type-asserting and start calling. `ErrNotSupported` surfaces as a
 | P1 | Fold the 8 optional interfaces into `Handler` + `Unsupported` | **yes — ships alone** | ✅ done |
 | P2 | Retention: 3 switch families → `ListVersions`/`DeleteVersion` | needs P0, P1 | ✅ done |
 | P3 | Promote / migration / browser-upload switches | needs P1 | ✅ done (scoped) |
-| P4 | Residual test for what no compiler can check | needs P1 | low |
+| P4 | Residual test for what no compiler can check | needs P1 | ✅ done |
 | P5 | PyPI against the finished shape — the capstone proof | needs P1 (P2/P3 ideally) | — |
 
 **P1 alone is most of the value.** It removes nine silent-absence seams, touches
@@ -178,14 +178,29 @@ as a deliberate stop, not an oversight.
 - [x] `internal/server/ui_upload.go`: left as a switch. It already tells the user
       "browser upload not supported for X"; converting it would buy nothing.
 
-## Phase P4 — the residue
+## Phase P4 — the residue · ✅ COMPLETE
 
 Some things no compiler can check. One test, not a document:
 
-- [ ] `Registry.Formats() []string` (does not exist yet — 3 lines).
-- [ ] A test asserting every registered format has a `main.go` repository entry
-      and appears in `browse.js`'s tree-vs-flat dispatch, or is explicitly listed
-      as not needing one.
+- [x] `Registry.Formats() []string`, so the test walks the real registry rather
+      than a hand-kept list that would drift from it.
+- [x] `internal/cleanup/coverage_test.go`: a declared support matrix, checked
+      against reality by probing each surface.
+      - **Roll call** — a registered format missing from the table fails, so a new
+        format cannot be added without stating what it supports. This is the half
+        that matters; without it a new format is simply untested rather than red.
+      - **Retention** probed through `cleanup.DryRun` (catches a format that
+        embeds `Unsupported` and never overrides `ListVersions`).
+      - **Trash** probed through `cleanup.TrashVersion`, the switch P2 left alone
+        on purpose — nothing but a test can tell us a format was left out of it.
+      - **browse.js** tree-vs-flat dispatch, the one seam that is not Go at all.
+- [x] Mutation-tested all three guards: dropping `oci` from the table, claiming
+      `oci` supports trash, and claiming `npm` renders as a tree each produce a
+      failure naming the format and the fix. A guard that cannot fail is
+      decoration.
+- [x] Deliberately NOT covered: promote, migration and browser upload. They fail
+      loudly at runtime already (P3), and a table that grows to cover everything
+      becomes the hand-kept list this test exists to replace.
 
 ## Phase P5 — PyPI, as the capstone was meant to be
 
