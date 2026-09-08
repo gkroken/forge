@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"forge/internal/format"
 	"io"
 	"net/http"
 	"strings"
@@ -276,61 +277,60 @@ func mavenGAPath(component string) (string, bool) {
 }
 
 // componentExists reports whether r holds any blob/record for component+version.
-func (s *Server) componentExists(r repo.Repository, component, version string) bool {
-	switch r.Format {
-	case "maven":
-		gaPath, ok := mavenGAPath(component)
-		if !ok {
-			return false
-		}
-		keys, _ := s.Blob.List(r.Name + "/" + gaPath + "/" + version + "/")
-		return len(keys) > 0
-	case "cran":
-		_, ok, _ := s.Blob.Stat(r.Name + "/src/contrib/" + component + "_" + version + ".tar.gz")
-		return ok
-	case "helm":
-		var rec map[string]any
-		ok, _ := s.Meta.GetJSON(r.Name+":helm", component+"-"+version, &rec)
-		return ok
-	case "npm":
-		var v map[string]any
-		ok, _ := s.Meta.GetJSON(r.Name+":npm:v", component+":"+version, &v)
-		return ok
-	case "oci":
-		var d string
-		ok, _ := s.Meta.GetJSON(r.Name+":oci", "tags/"+component+"/"+version, &d)
-		return ok
+// findVersion locates component+version in r through the format's own
+// ListVersions, so promotion no longer keeps a second copy of every format's
+// storage layout. Maven spells components two ways — "groupId:artifactId" from
+// the API, "groupId/artifactId" from the blob layout — so both are matched.
+func (s *Server) findVersion(r repo.Repository, component, version string) (format.Version, bool) {
+	h, ok := s.Handlers.For(r.Format)
+	if !ok {
+		return format.Version{}, false
 	}
-	return false
+	versions, err := h.ListVersions(&format.Context{Repo: r, Blob: s.Blob, Meta: s.Meta})
+	if err != nil {
+		return format.Version{}, false
+	}
+	for _, v := range versions {
+		if v.Version == version && sameComponent(v.Component, component) {
+			return v, true
+		}
+	}
+	return format.Version{}, false
+}
+
+// sameComponent compares two component spellings, treating maven's
+// "com.acme:app" and "com/acme/app" as the same thing.
+func sameComponent(a, b string) bool {
+	if a == b {
+		return true
+	}
+	norm := func(x string) string {
+		g, art, ok := strings.Cut(x, ":")
+		if !ok {
+			return x
+		}
+		return strings.ReplaceAll(g, ".", "/") + "/" + art
+	}
+	return norm(a) == norm(b)
+}
+
+func (s *Server) componentExists(r repo.Repository, component, version string) bool {
+	_, ok := s.findVersion(r, component, version)
+	return ok
 }
 
 // componentBytes sums the on-disk size of every blob backing component+version
 // in r (used for the target quota pre-check). Best-effort: unknown sizes are 0.
 func (s *Server) componentBytes(r repo.Repository, component, version string) int64 {
+	v, ok := s.findVersion(r, component, version)
+	if !ok {
+		return 0
+	}
 	var total int64
-	sum := func(key string) {
-		if info, ok, _ := s.Blob.Stat(key); ok {
+	for _, k := range v.BlobKeys {
+		if info, ok, _ := s.Blob.Stat(k); ok {
 			total += info.Size
 		}
-	}
-	switch r.Format {
-	case "maven":
-		if gaPath, ok := mavenGAPath(component); ok {
-			keys, _ := s.Blob.List(r.Name + "/" + gaPath + "/" + version + "/")
-			for _, k := range keys {
-				sum(k)
-			}
-		}
-	case "cran":
-		sum(r.Name + "/src/contrib/" + component + "_" + version + ".tar.gz")
-	case "helm":
-		sum(r.Name + "/" + s.helmFilename(r.Name, component, version))
-	case "npm":
-		if k, ok := s.npmTarballKey(r.Name, component, version); ok {
-			sum(k)
-		}
-	case "oci":
-		total = s.ociManifestBytes(r.Name, component, version)
 	}
 	return total
 }

@@ -54,7 +54,7 @@ Callers stop type-asserting and start calling. `ErrNotSupported` surfaces as a
 | P0 | Break the `format` → `cleanup` import cycle | prerequisite for P2 | ✅ done |
 | P1 | Fold the 8 optional interfaces into `Handler` + `Unsupported` | **yes — ships alone** | ✅ done |
 | P2 | Retention: 3 switch families → `ListVersions`/`DeleteVersion` | needs P0, P1 | ✅ done |
-| P3 | Promote / migration / browser-upload switches | needs P1 | medium |
+| P3 | Promote / migration / browser-upload switches | needs P1 | ✅ done (scoped) |
 | P4 | Residual test for what no compiler can check | needs P1 | low |
 | P5 | PyPI against the finished shape — the capstone proof | needs P1 (P2/P3 ideally) | — |
 
@@ -146,15 +146,37 @@ only the listing and deleting are format-specific.
       counted files, every other format counted versions. It is now uniformly
       versions, which is what the UI and history mean by "deleted N".
 
-## Phase P3 — the remaining switches
+## Phase P3 — the remaining switches · ✅ COMPLETE (scoped)
 
-- [ ] `internal/server/promote.go` (517 lines, 15 case labels) — the messiest.
-      Promotion is copy-through-the-handler already; it should collapse hard.
-- [ ] `internal/server/migration_transfer.go` (470 lines) — needs Nexus mapping
-      knowledge; consider leaving as a switch with a `default` that errors, and
-      record that as a deliberate exception.
-- [ ] `internal/server/ui_upload.go` (236 lines) — already fails loudly; convert
-      for consistency, low value on its own.
+**Finding that scoped this phase: all three remaining switches already fail
+loudly.** Promote returns 501 "no promotion strategy for format X", migration
+records "no transfer strategy for format X" in the job note, and browser upload
+tells the user the format is unsupported. None of them is the silent-absence bug
+this track exists to kill — that was cleanup's run/dry-run/delete returning a
+zero value and a nil error, and those are gone.
+
+What was worth removing is the *duplication*: promotion kept a second copy of
+every format's storage layout in componentExists and componentBytes, which is
+precisely the drift that made CRAN retention read the wrong namespace for its
+entire life. Those now go through ListVersions.
+
+The three strategy switches stay. They encode real per-format work — promotion
+reconstructs a publish document and pushes it through the target's handler —
+and converting them would move ~250 lines across five packages, against a
+well-tested feature, to replace a loud failure with a compile-time one. Recorded
+as a deliberate stop, not an oversight.
+
+- [x] `internal/server/promote.go`: **15 case labels → 5.** componentExists and
+      componentBytes were a second implementation of every format's layout; both
+      now use `ListVersions`, with `sameComponent` reconciling maven's two
+      spellings ("com.acme:app" vs "com/acme/app"). The 5 remaining labels are the
+      copy strategies, kept deliberately.
+- [x] `internal/server/migration_transfer.go`: left as a switch. Its default
+      already records "no transfer strategy for format X" on the job, and the
+      strategies need Nexus mapping knowledge that does not belong in a format
+      package.
+- [x] `internal/server/ui_upload.go`: left as a switch. It already tells the user
+      "browser upload not supported for X"; converting it would buy nothing.
 
 ## Phase P4 — the residue
 
