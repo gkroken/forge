@@ -51,6 +51,8 @@ func DryRun(repoName, format string, p *repo.CleanupPolicy, b blob.Store, m meta
 		return dryRunNPM(repoName, p, b, m)
 	case "maven":
 		return dryRunMaven(repoName, p, b, m)
+	case "oci":
+		return dryRunOCI(repoName, p, b, m)
 	}
 	return DryRunResult{Candidates: []Candidate{}}, nil
 }

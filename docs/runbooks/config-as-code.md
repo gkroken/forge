@@ -219,6 +219,10 @@ POST   /api/v1/repos/{name}/cleanup      run retention now
                                          (add ?dry=true to PREVIEW candidates;
                                           any other spelling deletes for real)
 
+On an `oci` repository the retention unit is the image tag: `keepVersions: 3`
+keeps the three newest tags of each image. Deleting a tag also removes its
+manifest and any config or layer blobs that no surviving image still references.
+
 A dry run also returns `unevaluable`: versions an age-based rule could not judge
 because no publish time is known for them. An empty `candidates` list with a
 non-empty `unevaluable` list means the rule is not matching rather than that

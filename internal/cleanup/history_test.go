@@ -111,8 +111,8 @@ func TestHistory_IsolatedByRepo(t *testing.T) {
 	_, m := stores(t)
 
 	now := time.Now().UTC()
-	cleanup.RecordRun(m, "repo-a", cleanup.CleanupRun{Timestamp: now, Deleted: 1})       //nolint:errcheck
-	cleanup.RecordRun(m, "repo-b", cleanup.CleanupRun{Timestamp: now, Deleted: 99})      //nolint:errcheck
+	cleanup.RecordRun(m, "repo-a", cleanup.CleanupRun{Timestamp: now, Deleted: 1})  //nolint:errcheck
+	cleanup.RecordRun(m, "repo-b", cleanup.CleanupRun{Timestamp: now, Deleted: 99}) //nolint:errcheck
 
 	hA, _ := cleanup.GetHistory(m, "repo-a")
 	hB, _ := cleanup.GetHistory(m, "repo-b")

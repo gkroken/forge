@@ -44,6 +44,8 @@ func Run(repoName, format string, p *repo.CleanupPolicy, b blob.Store, m meta.St
 		return runHelm(repoName, p, b, m)
 	case "npm":
 		return runNPM(repoName, p, b, m)
+	case "oci":
+		return runOCI(repoName, p, b, m)
 	}
 	return Result{}, nil
 }

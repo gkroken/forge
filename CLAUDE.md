@@ -95,7 +95,9 @@ list below when adding a format, and record deliberate omissions.
 case, so a new format silently gets nothing:*
 
 - `internal/cleanup/{cleanup,dryrun,delete,trash}.go` — **no retention at all** without a
-  case (this is why `oci` has none today)
+  case. All five formats have one; `oci` retains by tag and sweeps the manifest and any
+  blobs the removed tag orphaned (see `internal/cleanup/oci.go` for why the sweep is
+  scoped that narrowly).
 - `internal/server/promote.go` — not promotable between repos
 - `internal/server/migration_transfer.go` — not migratable from Nexus
 - `internal/server/ui_upload.go` — no browser upload form

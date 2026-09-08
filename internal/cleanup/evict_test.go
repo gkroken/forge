@@ -18,8 +18,8 @@ func TestEvictProxyCache(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	put("npm-proxy/left-pad/-/left-pad-1.0.0.tgz") // cold → evict
-	put("npm-proxy/chalk/-/chalk-5.0.0.tgz")        // warm → keep
+	put("npm-proxy/left-pad/-/left-pad-1.0.0.tgz")   // cold → evict
+	put("npm-proxy/chalk/-/chalk-5.0.0.tgz")         // warm → keep
 	put("npm-proxy/uncounted/-/uncounted-1.0.0.tgz") // never downloaded → keep
 
 	now := time.Now().UTC()

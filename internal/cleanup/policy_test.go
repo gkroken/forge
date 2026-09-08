@@ -13,11 +13,11 @@ func TestPolicyManager_PutAndGet(t *testing.T) {
 	pm := cleanup.NewPolicyManager(m)
 
 	p := cleanup.NamedPolicy{
-		Name:            "keep-3",
-		Description:     "Keep last 3 versions",
-		KeepVersions:    3,
+		Name:             "keep-3",
+		Description:      "Keep last 3 versions",
+		KeepVersions:     3,
 		KeepReleasesOnly: false,
-		Interval:        24 * time.Hour,
+		Interval:         24 * time.Hour,
 	}
 	if err := pm.Put(p); err != nil {
 		t.Fatal(err)
@@ -118,10 +118,10 @@ func TestNamedPolicy_JSONRoundtrip(t *testing.T) {
 	pm := cleanup.NewPolicyManager(m)
 
 	original := cleanup.NamedPolicy{
-		Name:        "roundtrip",
-		Description: "test",
+		Name:         "roundtrip",
+		Description:  "test",
 		KeepVersions: 10,
-		Interval:    72 * time.Hour,
+		Interval:     72 * time.Hour,
 	}
 	if err := pm.Put(original); err != nil {
 		t.Fatal(err)
@@ -161,7 +161,7 @@ func TestReclaimable_WithPolicy(t *testing.T) {
 	pm := cleanup.NewPolicyManager(m)
 
 	pm.Put(cleanup.NamedPolicy{Name: "keep-1", KeepVersions: 1}) //nolint:errcheck
-	mgr.Add(repo.Repository{                                       //nolint:errcheck
+	mgr.Add(repo.Repository{                                     //nolint:errcheck
 		Name: "helm-hosted", Format: "helm", Kind: repo.Hosted,
 		CleanupPolicyName: "keep-1",
 	})
