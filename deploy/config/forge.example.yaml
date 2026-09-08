@@ -100,8 +100,13 @@ repositories:
       - npm-proxy
 
 cleanupPolicies:
+  # Rules combine: a version is deleted if ANY of them matches. keepReleasesOnly
+  # removes snapshots and pre-releases outright; deleteOlderThanDays then ages
+  # out what remains, releases included. Age is measured from the recorded
+  # publish time — see the runbook if a dry run reports versions as
+  # "unevaluable".
   - name: keep-releases-30d
-    description: Keep only release versions; remove anything older than 30 days
+    description: Drop snapshots immediately, and any release older than 30 days
     keepReleasesOnly: true
     deleteOlderThanDays: 30
     interval: 24h
