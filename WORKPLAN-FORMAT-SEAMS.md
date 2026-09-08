@@ -286,3 +286,33 @@ Correctness is unchanged and it is simpler to reason about, but pruning many tag
 from one image is O(tags x manifests). Revisit if OCI retention is ever used on a
 registry with thousands of tags per image.
 
+## Second review pass — hunting unchecked assumptions
+
+The first two bugs this session both came from asserting a rationale without
+checking it. So the second pass went looking specifically for claims made in
+comments and commit messages that had never been verified.
+
+**Fixed — an OCI dry run understated reclaimable space by orders of magnitude.**
+`ListVersions` reported only the manifest as the version's blobs, and the generic
+collector sums `BlobKeys` for size. A manifest is a couple of kilobytes in front
+of layers that may be hundreds of megabytes, so a dry run answered "frees 2 KB"
+before a run freed 500 MB — breaking the one question dry-run exists to answer.
+`format.Version` now has an optional `SizeBytes` a format can set, and oci
+reports its EXCLUSIVE size: the manifest plus blobs no other tagged manifest
+references, computed from a single reference-count pass. Under-promising is the
+safe direction, and two tests pin it, including the shared-layer case.
+
+**Corrected — a misleading comment about vuln gating.** P1's rewrite claimed a
+format with no OSV source answers `VulnGateTarget` false via `Unsupported`. oci
+implements it deliberately: it is Trivy-gated, not OSV-gated. Behaviour was
+unchanged either way — oci implemented `VulnGate` before P1 too — but the comment
+would have misled the next reader into thinking gating implies OSV.
+`TestUnsupportedDefaults_PreserveOptOut` now pins that gating and OSV mapping are
+independent.
+
+**Verified, held up:** dependency-confusion never guards oci (`ClaimPath` and
+`OwnsComponent` both false); `cleanup.DeleteVersion` has no production callers;
+trash, promote, migration and browser upload all fail loudly on an unknown
+format; maven `DeleteVersion` accepts both component spellings; the S3 memory
+bound was measured, not reasoned.
+

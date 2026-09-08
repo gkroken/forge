@@ -207,3 +207,62 @@ func TestOCI_UnevaluableReported(t *testing.T) {
 		t.Fatalf("Unevaluable = %+v, want 1", res.Unevaluable)
 	}
 }
+
+// TestOCI_DryRunSizeMatchesRealRun — a dry run exists to answer "how much will
+// this reclaim". Reporting the manifest alone would answer in kilobytes for a
+// deletion that frees hundreds of megabytes of layers.
+func TestOCI_DryRunSizeMatchesRealRun(t *testing.T) {
+	b, m := stores(t)
+	pushImage(t, b, m, "docker", "acme/api", "v1",
+		[]string{"sha256:l1", "sha256:l2"}, time.Now().UTC().AddDate(0, 0, -60))
+	pol := &repo.CleanupPolicy{DeleteOlderThanDays: 30}
+
+	dr, err := cleanup.DryRun(rp("docker", "oci"), formats(), pol, b, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dr.Candidates) != 1 {
+		t.Fatalf("candidates = %+v", dr.Candidates)
+	}
+	predicted := dr.Candidates[0].SizeBytes
+
+	res, err := cleanup.Run(rp("docker", "oci"), formats(), pol, b, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if predicted != res.FreedBytes {
+		t.Errorf("dry run predicted %d bytes, real run freed %d", predicted, res.FreedBytes)
+	}
+}
+
+// TestOCI_DryRunSizeExcludesSharedLayers — a layer another tag still needs is
+// not freed by deleting this one, so it must not be counted. Over-promising
+// reclaimable space is worse than under-promising it.
+func TestOCI_DryRunSizeExcludesSharedLayers(t *testing.T) {
+	b, m := stores(t)
+	old := time.Now().UTC().AddDate(0, 0, -60)
+	recent := time.Now().UTC().AddDate(0, 0, -1)
+	pushImage(t, b, m, "docker", "acme/api", "old", []string{"sha256:shared", "sha256:only-old"}, old)
+	pushImage(t, b, m, "docker", "acme/api", "new", []string{"sha256:shared", "sha256:only-new"}, recent)
+	pol := &repo.CleanupPolicy{DeleteOlderThanDays: 30}
+
+	dr, err := cleanup.DryRun(rp("docker", "oci"), formats(), pol, b, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var predicted int64
+	for _, c := range dr.Candidates {
+		predicted += c.SizeBytes
+	}
+	res, err := cleanup.Run(rp("docker", "oci"), formats(), pol, b, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if predicted != res.FreedBytes {
+		t.Errorf("predicted %d bytes, freed %d — the shared layer was mis-counted",
+			predicted, res.FreedBytes)
+	}
+	if !exists(t, b, "docker/blobs/sha256:shared") {
+		t.Error("shared layer was deleted")
+	}
+}

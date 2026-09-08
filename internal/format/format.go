@@ -213,10 +213,17 @@ type Version struct {
 	// PublishedAt is the format's own record of when this was published, if it
 	// keeps one. Zero is normal and means "ask the ledger".
 	PublishedAt time.Time
-	// BlobKeys are the artifacts this version consists of. Retention stats them
-	// for size and reads their download times; DeleteVersion is what actually
-	// removes them, since some formats (oci) must do more than delete these keys.
+	// BlobKeys are the artifacts this version consists of. Retention reads their
+	// download times, and sizes them when SizeBytes is zero; DeleteVersion is
+	// what actually removes them, since some formats (oci) must do more than
+	// delete these keys.
 	BlobKeys []string
+	// SizeBytes is what deleting this version would actually free. Leave it zero
+	// and retention sums BlobKeys, which is right for a format whose version owns
+	// its bytes outright. A format with shared storage must set it: an oci tag's
+	// manifest is a couple of kilobytes in front of layers that may be hundreds
+	// of megabytes, and layers shared with another tag are freed by neither.
+	SizeBytes int64
 }
 
 // Unsupported answers every optional seam with "not supported". Embed it in a

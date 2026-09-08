@@ -28,8 +28,9 @@ func (s *Server) vulnGateBlocks(w http.ResponseWriter, r *http.Request, rp repo.
 	if s.VulnPolicy == nil || s.Vuln == nil {
 		return false
 	}
-	// A format with no credible OSV source answers VulnGateTarget false for
-	// every path via format.Unsupported, so the gate never fires.
+	// Formats that can be scanned implement VulnGateTarget — npm and maven map to
+	// OSV, oci to Trivy. One that cannot answers false for every path via
+	// format.Unsupported, so the gate simply never fires for it.
 	gate := h
 	pol, err := s.VulnPolicy.Resolve(rp.SecurityPolicyName)
 	if err != nil || pol.Mode == vuln.ModeOff || pol.Mode == "" {

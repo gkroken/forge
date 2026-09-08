@@ -50,8 +50,12 @@ func collect(h format.Handler, c *format.Context, b blob.Store, m meta.Store) (m
 			published:  ledger.Resolve(v.PublishedAt, pub, v.Component, v.Version),
 			downloaded: lastDownloadTime(m, v.BlobKeys...),
 		}
-		for _, k := range v.BlobKeys {
-			vi.sizeBytes += statSize(b, k)
+		if v.SizeBytes > 0 {
+			vi.sizeBytes = v.SizeBytes
+		} else {
+			for _, k := range v.BlobKeys {
+				vi.sizeBytes += statSize(b, k)
+			}
 		}
 		byComponent[v.Component] = append(byComponent[v.Component], vi)
 	}

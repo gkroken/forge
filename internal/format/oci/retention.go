@@ -21,12 +21,23 @@ import (
 // orphaned makes that impossible, so retention needs no read-only window.
 
 // ListVersions implements format.Handler.
+//
+// SizeBytes is the EXCLUSIVE size: the manifest plus the blobs no other tagged
+// manifest references. Summing the manifest alone would be wildly misleading —
+// it is a couple of kilobytes in front of layers that may be hundreds of
+// megabytes — and summing every referenced blob would double-count layers
+// shared between tags, promising space that deleting one tag cannot free.
+// Under-promising is the safe direction for "how much will this reclaim".
 func (h *Handler) ListVersions(c *format.Context) ([]format.Version, error) {
 	keys, err := c.Meta.List(h.ns(c))
 	if err != nil {
 		return nil, err
 	}
-	var out []format.Version
+
+	// One pass over every tagged manifest gives a reference count per digest,
+	// so exclusivity is a map lookup rather than a walk per tag.
+	type tagRef struct{ image, tag, digest string }
+	var tags []tagRef
 	for _, k := range keys {
 		if !strings.HasPrefix(k, "tags/") {
 			continue
@@ -39,14 +50,42 @@ func (h *Handler) ListVersions(c *format.Context) ([]format.Version, error) {
 		if ok, _ := c.Meta.GetJSON(h.ns(c), k, &dgst); !ok || dgst == "" {
 			continue
 		}
+		tags = append(tags, tagRef{image, tag, dgst})
+	}
+	refs := map[string]int{}
+	perTag := map[string][]string{}
+	for _, t := range tags {
+		blobs := h.manifestRefs(c, h.manifestKey(c, t.digest))
+		perTag[t.digest] = blobs
+		for _, d := range blobs {
+			refs[d]++
+		}
+	}
+
+	out := make([]format.Version, 0, len(tags))
+	for _, t := range tags {
+		size := h.blobSize(c, h.manifestKey(c, t.digest))
+		for _, d := range perTag[t.digest] {
+			if refs[d] == 1 {
+				size += h.blobSize(c, h.blobKey(c, d))
+			}
+		}
 		out = append(out, format.Version{
-			Component:   image,
-			Version:     tag,
-			PublishedAt: h.tagPushTime(c, image, tag),
-			BlobKeys:    []string{h.manifestKey(c, dgst)},
+			Component:   t.image,
+			Version:     t.tag,
+			PublishedAt: h.tagPushTime(c, t.image, t.tag),
+			BlobKeys:    []string{h.manifestKey(c, t.digest)},
+			SizeBytes:   size,
 		})
 	}
 	return out, nil
+}
+
+func (h *Handler) blobSize(c *format.Context, key string) int64 {
+	if info, ok, _ := c.Blob.Stat(key); ok {
+		return info.Size
+	}
+	return 0
 }
 
 // DeleteVersion implements format.Handler: removes the tag, then the manifest
