@@ -8,6 +8,7 @@ import (
 
 	"forge/internal/blob"
 	"forge/internal/cleanup"
+	"forge/internal/ledger"
 	"forge/internal/meta"
 	"forge/internal/repo"
 )
@@ -278,5 +279,79 @@ func TestNPM_KeepReleasesOnly(t *testing.T) {
 	_, exists, _ := b.Stat("npm/react/-/react-18.0.0.tgz")
 	if !exists {
 		t.Fatal("expected react@18.0.0 release to be kept")
+	}
+}
+
+// TestNPM_ScopedPackageTarballIsReclaimed — publish stores a scoped package's
+// tarball under the last path segment ("@acme/tool" -> ".../-/tool-1.0.0.tgz").
+// Retention used to look for ".../-/@acme/tool-1.0.0.tgz", so it removed the
+// record and left the tarball on disk forever — and scoped packages are most of
+// npm.
+func TestNPM_ScopedPackageTarballIsReclaimed(t *testing.T) {
+	b, m := stores(t)
+	const pkg, ver = "@acme/tool", "1.0.0"
+	tarball := "npm-hosted/" + pkg + "/-/tool-" + ver + ".tgz"
+	putBlob(t, b, tarball)
+	if err := m.PutJSON("npm-hosted:npm:v", pkg+":"+ver, map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	ledger.RecordAt(m, "npm-hosted", pkg, ver, time.Now().UTC().AddDate(0, 0, -60))
+
+	res, err := cleanup.Run(rp("npm-hosted", "npm"), formats(),
+		&repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Deleted != 1 {
+		t.Fatalf("deleted = %d, want 1", res.Deleted)
+	}
+	if _, exists, _ := b.Stat(tarball); exists {
+		t.Error("scoped package tarball survived retention — the space is never reclaimed")
+	}
+	if res.FreedBytes == 0 {
+		t.Error("freed 0 bytes while reporting a deletion — the count lies")
+	}
+}
+
+// TestCRAN_BinariesRetainedWithSource — a CRAN version is the package across all
+// its artifacts. Keeping N versions has to mean N versions everywhere, or the
+// per-platform binaries (the bulky ones for an R shop) accumulate forever while
+// the source index looks tidy.
+func TestCRAN_BinariesRetainedWithSource(t *testing.T) {
+	b, m := stores(t)
+	const pkg = "ggplot2"
+	src := func(v string) string { return "cran/src/contrib/" + pkg + "_" + v + ".tar.gz" }
+	win := func(v string) string { return "cran/bin/windows/contrib/4.3/" + pkg + "_" + v + ".zip" }
+	mac := func(v string) string {
+		return "cran/bin/macosx/big-sur-arm64/contrib/4.3/" + pkg + "_" + v + ".tgz"
+	}
+
+	for _, v := range []string{"1.0.0", "2.0.0"} {
+		putBlob(t, b, src(v))
+		putBlob(t, b, win(v))
+		putBlob(t, b, mac(v))
+		if err := m.PutJSON("cran+cran", pkg+"_"+v, cranRec{Package: pkg, Version: v}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ledger.RecordAt(m, "cran", pkg, "1.0.0", time.Now().UTC().AddDate(0, 0, -60))
+
+	res, err := cleanup.Run(rp("cran", "cran"), formats(),
+		&repo.CleanupPolicy{DeleteOlderThanDays: 30}, b, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Deleted != 1 {
+		t.Fatalf("deleted = %d, want 1 (the old version)", res.Deleted)
+	}
+	for _, k := range []string{src("1.0.0"), win("1.0.0"), mac("1.0.0")} {
+		if _, exists, _ := b.Stat(k); exists {
+			t.Errorf("%s survived — binaries are not covered by retention", k)
+		}
+	}
+	for _, k := range []string{src("2.0.0"), win("2.0.0"), mac("2.0.0")} {
+		if _, exists, _ := b.Stat(k); !exists {
+			t.Errorf("%s was deleted — retention took a version it should have kept", k)
+		}
 	}
 }

@@ -56,6 +56,11 @@ func (h *Handler) DeleteVersion(c *format.Context, pkg, version string) (int64, 
 	return freed, nil
 }
 
+// tarballKey is where publish() puts the tarball. The FILENAME uses only the
+// last path segment, so a scoped package "@acme/tool" is stored at
+// "{repo}/@acme/tool/-/tool-1.0.0.tgz" — not ".../@acme/tool-1.0.0.tgz".
+// Getting this wrong means retention deletes the record and leaves the tarball
+// on disk forever, and scoped packages are most of npm.
 func (h *Handler) tarballKey(c *format.Context, pkg, version string) string {
-	return c.Repo.Name + "/" + pkg + "/-/" + pkg + "-" + version + ".tgz"
+	return c.Repo.Name + "/" + pkg + "/-/" + lastPathSeg(pkg) + "-" + version + ".tgz"
 }

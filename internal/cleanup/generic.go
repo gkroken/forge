@@ -1,6 +1,7 @@
 package cleanup
 
 import (
+	"sort"
 	"time"
 
 	"forge/internal/blob"
@@ -73,8 +74,8 @@ func runGeneric(h format.Handler, c *format.Context, p *repo.CleanupPolicy, b bl
 		return Result{}, err
 	}
 	var res Result
-	for _, versions := range byComponent {
-		for _, vi := range applyPolicies(p, versions, viVersion, viPublished, viDownloaded) {
+	for _, component := range sortedKeys(byComponent) {
+		for _, vi := range applyPolicies(p, byComponent[component], viVersion, viPublished, viDownloaded) {
 			freed, err := h.DeleteVersion(c, vi.v.Component, vi.v.Version)
 			if err != nil {
 				return res, err
@@ -94,9 +95,11 @@ func dryRunGeneric(h format.Handler, c *format.Context, p *repo.CleanupPolicy, b
 	if err != nil {
 		return DryRunResult{}, err
 	}
+	// Components in a stable order: a preview that reshuffles between identical
+	// runs is hard to diff and hard to trust.
 	result := DryRunResult{Candidates: []Candidate{}}
-	for _, versions := range byComponent {
-		cands, skipped := applyPoliciesTagged(p, versions, viVersion, viPublished, viDownloaded)
+	for _, component := range sortedKeys(byComponent) {
+		cands, skipped := applyPoliciesTagged(p, byComponent[component], viVersion, viPublished, viDownloaded)
 		for _, vi := range skipped {
 			result.Unevaluable = append(result.Unevaluable, Unevaluable{
 				Component: vi.v.Component, Version: vi.v.Version, Rule: "delete_older_than_days",
@@ -113,4 +116,15 @@ func dryRunGeneric(h format.Handler, c *format.Context, p *repo.CleanupPolicy, b
 		}
 	}
 	return result, nil
+}
+
+// sortedKeys gives map iteration a defined order, so runs and previews are
+// reproducible.
+func sortedKeys(m map[string][]versionInfo) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

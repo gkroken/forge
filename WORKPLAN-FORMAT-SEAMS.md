@@ -316,3 +316,41 @@ trash, promote, migration and browser upload all fail loudly on an unknown
 format; maven `DeleteVersion` accepts both component spellings; the S3 memory
 bound was measured, not reasoned.
 
+## Third review pass — a deliberate hunt
+
+Asked to find as many problems as possible before fixing any. Five found, three
+hypotheses cleared.
+
+**Fixed — scoped npm packages were never reclaimed.** Publish stores a scoped
+tarball under the last path segment (`@acme/tool` → `.../-/tool-1.0.0.tgz`), but
+retention looked for `.../-/@acme/tool-1.0.0.tgz`. It removed the record and the
+packument entry, left the tarball on disk forever, and reported success. Scoped
+packages are most of npm. Pre-existing; inherited into `retention.go` during P2.
+
+**Fixed — CRAN binaries were outside retention entirely.** They live under
+`bin/{platform}/contrib/{rver}/` with their own meta namespaces, and only source
+packages were enumerated. For an R-centric user those binaries are the bulky
+artifacts, so retention did not work where it mattered most. A CRAN version is
+now the package across ALL its artifacts — source plus every platform binary —
+because "keep the last 3 versions" has to mean three versions everywhere.
+Binaries are discovered from the blob side, since `meta.Store` cannot enumerate
+namespaces.
+
+**Fixed — non-deterministic run and preview order.** Components came out of a map
+in random order, so two identical dry runs listed candidates differently.
+
+**Documented — the ledger key separator.** `Key` joins on ":", so a component
+containing one would collide. None does: npm scopes use "@", maven reaches the
+ledger in slash form, oci splits image from tag first. Written down next to the
+function that would have to change.
+
+**Cleared, having expected trouble:** `meta.FS` unmangles slashes on `List`, so
+ledger lookups for `com/acme/app` work; `maven-metadata.xml` is generated rather
+than stored, so path grouping cannot mistake an artifactId for a version;
+`applyPolicies` sorts semver-aware before `KeepVersions`, so random map order
+cannot misselect which versions survive.
+
+Both fixes were mutation-tested — reverting the npm key and neutering the CRAN
+binary deletion each fail their guard with a message naming the artifact left
+behind.
+

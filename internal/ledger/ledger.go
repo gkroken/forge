@@ -45,6 +45,12 @@ func Key(component, version string) string {
 	return component + ":" + version
 }
 
+// The separator means a component containing ":" would collide with a different
+// component+version pair. No format produces one: npm scopes use "@", maven
+// components reach the ledger in their slash-separated path form, and oci splits
+// the image from its tag before either gets here. A format that ever did would
+// need its own escaping.
+
 // RecordPublish stamps a component+version as published now. Best-effort: a
 // failure here must never fail the upload that triggered it, since the artifact
 // is already stored and a missing ledger entry only costs age-based retention.
