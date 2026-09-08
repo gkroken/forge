@@ -7,8 +7,11 @@
 //	GET  /simple/{project}/        -> PEP 503 links to that project's files
 //	GET  /packages/{filename}      -> the artifact itself
 //
-// Proxy mode fetches the same paths from upstream (pypi.org) and rewrites the
-// file links in a simple page to point back at forge, so pip follows them here.
+// HOSTED ONLY for now. Proxying pypi.org needs the simple pages fetched, their
+// file links rewritten to point back at forge, and the artifacts cached on
+// first fetch; none of that is implemented, and Serve refuses anything it does
+// not recognise rather than pretending. A proxy repo of this format will not
+// serve.
 //
 // Naming is the part that bites. PEP 503 says "Foo.Bar", "foo-bar" and
 // "foo_bar" are the same project, so every identity forge keeps — the meta
@@ -20,8 +23,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
 	"regexp"
 	"sort"
@@ -76,6 +81,31 @@ func Normalize(name string) string {
 	return strings.ToLower(normalizeRe.ReplaceAllString(name, "-"))
 }
 
+// nameRe is PEP 508's project-name rule; versionRe and filenameRe are the
+// character sets PyPI itself accepts. Anything outside them is rejected at
+// upload rather than stored, because these values are interpolated into the
+// simple pages that browsers render — a filename like `x"><img onerror=…>` is
+// stored XSS against everyone who later browses the repository. Output is
+// escaped as well (see simpleIndex/simpleProject); this is the outer of the two
+// layers, and the one that keeps bad values out of the store in the first place.
+var (
+	nameRe     = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$`)
+	versionRe  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.!+_-]*$`)
+	filenameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]*$`)
+)
+
+// validFilename also insists on an extension pip understands, so the store
+// cannot fill up with things no client will ever install.
+func validFilename(name string) bool {
+	if !filenameRe.MatchString(name) {
+		return false
+	}
+	return strings.HasSuffix(name, ".whl") ||
+		strings.HasSuffix(name, ".tar.gz") ||
+		strings.HasSuffix(name, ".zip") ||
+		strings.HasSuffix(name, ".egg")
+}
+
 // --- Serve ------------------------------------------------------------------
 
 func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Context) {
@@ -115,6 +145,8 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 // as form fields alongside the file, so nothing has to be parsed out of the
 // archive itself.
 func (h *Handler) upload(w http.ResponseWriter, r *http.Request, c *format.Context) {
+	// #nosec G120 -- the body is already bounded: the spine wraps every write
+	// method in http.MaxBytesReader (internal/server/server.go, -max-upload).
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		http.Error(w, "invalid upload: "+err.Error(), http.StatusBadRequest)
 		return
@@ -126,6 +158,14 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, c *format.Conte
 	name, version := r.FormValue("name"), r.FormValue("version")
 	if name == "" || version == "" {
 		http.Error(w, "name and version are required", http.StatusBadRequest)
+		return
+	}
+	if !nameRe.MatchString(name) {
+		http.Error(w, "invalid project name", http.StatusBadRequest)
+		return
+	}
+	if !versionRe.MatchString(version) {
+		http.Error(w, "invalid version", http.StatusBadRequest)
 		return
 	}
 	file, header, err := r.FormFile("content")
@@ -141,7 +181,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, c *format.Conte
 		return
 	}
 	filename := path.Base(header.Filename)
-	if filename == "" || filename == "." || strings.Contains(filename, "/") {
+	if !validFilename(filename) {
 		http.Error(w, "invalid filename", http.StatusBadRequest)
 		return
 	}
@@ -166,7 +206,14 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, c *format.Conte
 	c.Meta.PutJSON(h.ns(c), recordKey(project, version, filename), rec) //nolint:errcheck
 	ledger.RecordAt(c.Meta, c.Repo.Name, project, version, rec.UploadedAt)
 
-	w.WriteHeader(http.StatusOK) // twine treats any 2xx as success
+	// Explicit content type so nothing here is ever sniffed as markup; the
+	// values are validated above, and twine treats any 2xx as success.
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	// #nosec G705 -- not a markup context: all three values are validated
+	// against the character sets above (no "<", ">" or quotes survive), the
+	// response is explicitly text/plain, and the spine sends nosniff
+	// (internal/server/server.go). Taint analysis cannot see any of that.
 	fmt.Fprintf(w, "stored %s %s (%s)\n", project, version, filename)
 }
 
@@ -191,7 +238,8 @@ func (h *Handler) simpleIndex(w http.ResponseWriter, c *format.Context) {
 	var b strings.Builder
 	b.WriteString("<!DOCTYPE html><html><head><meta name=\"pypi:repository-version\" content=\"1.0\"><title>Simple index</title></head><body>\n")
 	for _, p := range projects {
-		fmt.Fprintf(&b, "<a href=\"%s/\">%s</a><br/>\n", p, p)
+		fmt.Fprintf(&b, "<a href=\"%s/\">%s</a><br/>\n",
+			template.HTMLEscapeString(url.PathEscape(p)), template.HTMLEscapeString(p))
 	}
 	b.WriteString("</body></html>\n")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -218,13 +266,18 @@ func (h *Handler) simpleProject(w http.ResponseWriter, r *http.Request, c *forma
 
 	base := publicBase(r) + "/repository/" + c.Repo.Name
 	var b strings.Builder
-	fmt.Fprintf(&b, "<!DOCTYPE html><html><head><meta name=\"pypi:repository-version\" content=\"1.0\"><title>Links for %s</title></head><body>\n<h1>Links for %s</h1>\n", project, project)
+	safeProject := template.HTMLEscapeString(project)
+	fmt.Fprintf(&b, "<!DOCTYPE html><html><head><meta name=\"pypi:repository-version\" content=\"1.0\"><title>Links for %s</title></head><body>\n<h1>Links for %s</h1>\n", safeProject, safeProject)
 	for _, f := range files {
-		href := fmt.Sprintf("%s/packages/%s/%s#sha256=%s", base, project, f.Filename, f.SHA256)
+		href := fmt.Sprintf("%s/packages/%s/%s#sha256=%s",
+			base, url.PathEscape(project), url.PathEscape(f.Filename), url.QueryEscape(f.SHA256))
 		if f.RequiresPython != "" {
-			fmt.Fprintf(&b, "<a href=\"%s\" data-requires-python=\"%s\">%s</a><br/>\n", href, f.RequiresPython, f.Filename)
+			fmt.Fprintf(&b, "<a href=\"%s\" data-requires-python=\"%s\">%s</a><br/>\n",
+				template.HTMLEscapeString(href), template.HTMLEscapeString(f.RequiresPython),
+				template.HTMLEscapeString(f.Filename))
 		} else {
-			fmt.Fprintf(&b, "<a href=\"%s\">%s</a><br/>\n", href, f.Filename)
+			fmt.Fprintf(&b, "<a href=\"%s\">%s</a><br/>\n",
+				template.HTMLEscapeString(href), template.HTMLEscapeString(f.Filename))
 		}
 	}
 	b.WriteString("</body></html>\n")
