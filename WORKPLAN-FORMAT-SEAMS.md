@@ -371,3 +371,37 @@ Both fixes were mutation-tested — reverting the npm key and neutering the CRAN
 binary deletion each fail their guard with a message naming the artifact left
 behind.
 
+## Fourth pass — reviewing the "what a new format costs" table itself
+
+Writing out what adding Cargo would take turned up two seams the earlier passes
+had missed, because they are not switches and not interfaces — they are
+hardcoded lists.
+
+**Fixed (a live bug, not future friction) — a new format could not be created
+from the UI.** `allFormats` in `ui_admin.go` was a hand-kept
+`[]string{"maven","npm","helm","cran","oci"}` driving the repository form's
+format dropdown, in four places. A newly registered format would simply not be
+offered, however complete the rest of its wiring. The dashboard's per-format
+breakdown had a second copy of the same list, so a new format was invisible
+there too. Both now come from `Registry.Formats()`, which P4 already added and
+neither used. `TestServerCoverage_EveryFormatIsCreatable` pins it.
+
+**Fixed — the browse tree/flat decision was a string comparison in JavaScript.**
+`browse.js` asked `format === 'maven'`. Whether a format's storage has
+meaningful folder hierarchy is a fact about the format, so it is now
+`Handler.BrowseAsTree()`, passed down as a data attribute. P4 had written a test
+that grepped browse.js for format names — guarding a seam instead of deleting
+one, which was the wrong instinct: the roll call is for things a compiler cannot
+see, and this one it could. The check now reads the handler and the JS names no
+format at all.
+
+**Stated more precisely:** the roll-call tests force a *declaration*, not an
+implementation. Faced with a red test, a new format can be added to the table as
+`{trash: false}` and go green with trash unimplemented. That is deliberate —
+declining a seam is legitimate — but it converts silent absence into a conscious
+choice, not into completeness.
+
+**Still open, deliberately:** `ledger.Record` is a call each publish handler must
+remember rather than a question the compiler asks; migration is the one seam with
+no test-time guard at all.
+

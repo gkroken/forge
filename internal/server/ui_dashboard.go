@@ -169,7 +169,8 @@ func (s *Server) uiDashboard(w http.ResponseWriter, r *http.Request) {
 
 	total := len(repos)
 	var fmtStats []formatStat
-	for _, f := range []string{"maven", "npm", "helm", "cran", "oci"} {
+	// Registry order, so a new format appears in the breakdown without an edit.
+	for _, f := range s.Handlers.Formats() {
 		n := fmtCounts[f]
 		if n == 0 {
 			continue

@@ -47,10 +47,14 @@ func parseBoolField(r *http.Request, name string) *bool {
 	return &b
 }
 
-var (
-	allFormats = []string{"maven", "npm", "helm", "cran", "oci"}
-	allKinds   = []string{"hosted", "proxy", "group"}
-)
+var allKinds = []string{"hosted", "proxy", "group"}
+
+// formatChoices lists the formats this build actually serves, taken from the
+// handler registry rather than a hand-kept list. A hardcoded one meant a newly
+// registered format was missing from the repository form's dropdown — so it
+// could not be created from the UI at all, however complete the rest of its
+// wiring was.
+func (s *Server) formatChoices() []string { return s.Handlers.Formats() }
 
 // ── page data types ───────────────────────────────────────────────────────────
 
@@ -424,7 +428,7 @@ func (s *Server) uiAdminNewRepo(w http.ResponseWriter, r *http.Request) {
 		ActiveNav:   "repos",
 		Repo:        newRepo,
 		KindStr:     "hosted",
-		Formats:     allFormats,
+		Formats:     s.formatChoices(),
 		Kinds:       allKinds,
 		PolicyNames: s.policyNames(),
 		Members:     s.memberOptions(newRepo),
@@ -567,7 +571,7 @@ func (s *Server) renderRepoConfig(w http.ResponseWriter, rp repo.Repository, tab
 		ManagedByConfig: s.configOwns(config.KindRepository, rp.Name) && !s.configOverride,
 		ConfigSource:    s.configSource,
 		Flash:           flash,
-		Formats:         allFormats,
+		Formats:         s.formatChoices(),
 		Kinds:           allKinds,
 		PolicyNames:     s.policyNames(),
 		Members:         s.memberOptions(rp),
@@ -790,7 +794,7 @@ func (s *Server) reRenderForm(w http.ResponseWriter, r *http.Request, name strin
 		Repo:        rp,
 		KindStr:     string(rp.Kind),
 		Error:       errMsg,
-		Formats:     allFormats,
+		Formats:     s.formatChoices(),
 		Kinds:       allKinds,
 		PolicyNames: s.policyNames(),
 		Members:     s.memberOptions(rp),

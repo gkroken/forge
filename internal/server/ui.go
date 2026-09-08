@@ -208,7 +208,13 @@ type browsePage struct {
 	Title        string
 	ActiveNav    string
 	SelectedRepo string
-	Repos        []repo.Repository
+	Repos        []browseRepoRow
+}
+
+// browseRepoRow is a repository plus how the browse UI should render it.
+type browseRepoRow struct {
+	repo.Repository
+	AsTree bool
 }
 
 type repoPage struct {
@@ -302,11 +308,20 @@ func (s *Server) uiBrowsePage(w http.ResponseWriter, r *http.Request, selected s
 			return
 		}
 	}
+	all := s.Repos.All()
+	rows := make([]browseRepoRow, 0, len(all))
+	for _, rp := range all {
+		row := browseRepoRow{Repository: rp}
+		if h, ok := s.Handlers.For(rp.Format); ok {
+			row.AsTree = h.BrowseAsTree()
+		}
+		rows = append(rows, row)
+	}
 	render(w, tmplBrowsePage, "admin_shell.html", browsePage{
 		Title:        "Browse",
 		ActiveNav:    "browse",
 		SelectedRepo: selected,
-		Repos:        s.Repos.All(),
+		Repos:        rows,
 	})
 }
 
@@ -421,7 +436,7 @@ func (s *Server) uiSearch(w http.ResponseWriter, r *http.Request) {
 		Query:      q,
 		Format:     filterFormat,
 		Repo:       filterRepo,
-		AllFormats: allFormats,
+		AllFormats: s.formatChoices(),
 		AllRepos:   allRepos,
 		Results:    results,
 	}

@@ -146,3 +146,25 @@ func multipartUpload(t *testing.T, filename string, content []byte) (*bytes.Buff
 	}
 	return &buf, w.FormDataContentType()
 }
+
+// TestServerCoverage_EveryFormatIsCreatable — the repository form's format
+// dropdown was a hardcoded list, so a newly registered format could not be
+// created from the UI at all, however complete the rest of its wiring was. It
+// now comes from the registry; this pins that, because nothing else would
+// notice it drifting back.
+func TestServerCoverage_EveryFormatIsCreatable(t *testing.T) {
+	srv := coverageServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/ui/admin/repos/new", nil)
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("new-repository form = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, f := range srv.Handlers.Formats() {
+		if !strings.Contains(body, ">"+f+"<") && !strings.Contains(body, `value="`+f+`"`) {
+			t.Errorf("format %q is registered but the repository form does not offer it — "+
+				"it cannot be created from the UI", f)
+		}
+	}
+}

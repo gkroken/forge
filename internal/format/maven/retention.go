@@ -15,6 +15,10 @@ import (
 // that is the only publish time maven keeps of its own, so it is reported when
 // present and the publish ledger fills the rest.
 
+// BrowseAsTree implements format.Handler: maven's blob layout mirrors
+// groupId/artifactId/version, so a folder tree is the honest view of it.
+func (h *Handler) BrowseAsTree() bool { return true }
+
 // ListVersions implements format.Handler.
 func (h *Handler) ListVersions(c *format.Context) ([]format.Version, error) {
 	keys, err := c.Blob.List(c.Repo.Name + "/")

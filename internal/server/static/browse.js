@@ -44,11 +44,13 @@ function toggleRepo(node) {
 
 async function loadRepoContent(repoNode, content) {
   const repo   = repoNode.dataset.repo;
-  const format = repoNode.dataset.format;
   const kind   = repoNode.dataset.kind || '';
+  // Whether this repo browses as a folder tree is decided by its format handler
+  // in Go and passed down; the format name is no longer inspected here.
+  const asTree = repoNode.dataset.tree === 'true';
   content.innerHTML = '<div class="browse-msg">Loading…</div>';
   try {
-    if (format === 'maven') {
+    if (asTree) {
       await loadTreeLevel(repo, '', 0, content);
     } else {
       await loadFlatPkgs(repo, content, kind);

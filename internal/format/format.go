@@ -173,7 +173,13 @@ type Handler interface {
 	Format() string
 	Serve(w http.ResponseWriter, r *http.Request, c *Context)
 
-	// Browse and detail.
+	// Browse and detail. BrowseAsTree says whether this format's storage has
+	// meaningful folder hierarchy, so the browse UI shows a navigable tree
+	// rather than a flat package list. It lives here because it is a fact about
+	// the format's layout; it used to be a string comparison in browse.js, where
+	// nothing but a test grepping the file could catch a new format being left
+	// out of it.
+	BrowseAsTree() bool
 	BrowseRepo(c *Context) ([]BrowseEntry, error)
 	Inspect(c *Context, baseURL, component string) (ComponentDetail, bool)
 
@@ -242,6 +248,10 @@ type Version struct {
 // This is the grpc.UnimplementedFooServer pattern, which exists for this exact
 // problem: methods silently missing from an implementation.
 type Unsupported struct{}
+
+// BrowseAsTree defaults to a flat list, which is right for every format whose
+// components are identified by name alone.
+func (Unsupported) BrowseAsTree() bool { return false }
 
 func (Unsupported) BrowseRepo(*Context) ([]BrowseEntry, error) { return nil, ErrNotSupported }
 

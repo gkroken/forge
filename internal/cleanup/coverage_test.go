@@ -1,8 +1,6 @@
 package cleanup_test
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -90,20 +88,23 @@ func TestFormatCoverage_Trash(t *testing.T) {
 	}
 }
 
-// TestFormatCoverage_BrowseTree checks the one seam that is not Go at all: the
-// browse UI picks a folder tree or a flat list from a string comparison in
-// browse.js, so a format with real hierarchy silently gets the wrong view.
+// TestFormatCoverage_BrowseTree checks the browse layout each format declares.
+//
+// This used to grep browse.js for the format name, because the tree-vs-flat
+// decision was a string comparison in JavaScript. It is a fact about a format's
+// storage layout, so it moved onto the handler and the JS now reads a flag the
+// server passes down. The check stays to pin the declaration; it no longer has
+// to reach into another language to do it.
 func TestFormatCoverage_BrowseTree(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join("..", "server", "static", "browse.js"))
-	if err != nil {
-		t.Fatalf("read browse.js: %v", err)
-	}
-	js := string(src)
+	res := formats()
 	for f, want := range expected {
-		mentioned := strings.Contains(js, "'"+f+"'") || strings.Contains(js, `"`+f+`"`)
-		if want.browseAsTree && !mentioned {
-			t.Errorf("format %q should render as a folder tree, but browse.js never names it — "+
-				"add it to the dispatch in internal/server/static/browse.js", f)
+		h, ok := res.For(f)
+		if !ok {
+			t.Errorf("format %q is not registered", f)
+			continue
+		}
+		if got := h.BrowseAsTree(); got != want.browseAsTree {
+			t.Errorf("format %q BrowseAsTree = %v, table says %v", f, got, want.browseAsTree)
 		}
 	}
 }
