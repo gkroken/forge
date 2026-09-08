@@ -85,16 +85,11 @@ func (s *Server) verifyRepoIntegrity(repoName string, mode integrity.Mode) {
 			note = "no handler for format " + rp.Format
 			break
 		}
-		checker, ok := h.(format.IntegrityChecker)
-		if !ok {
-			note = "format " + rp.Format + " has no integrity checker; nothing was verified"
-			break
-		}
 		c := &format.Context{
 			Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: s.client,
 			Repos: s.Repos, Metrics: s.Metrics,
 		}
-		res, runErr = checker.VerifyIntegrity(c, mode)
+		res, runErr = h.VerifyIntegrity(c, mode)
 		if rp.Kind == repo.Proxy {
 			note = proxyVerifyNote
 		}

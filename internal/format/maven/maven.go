@@ -41,7 +41,7 @@ import (
 	"forge/internal/repo"
 )
 
-type Handler struct{}
+type Handler struct{ format.Unsupported }
 
 func New() *Handler               { return &Handler{} }
 func (h *Handler) Format() string { return "maven" }
@@ -707,7 +707,7 @@ func (h *Handler) maybeDeleteSnapshotMeta(c *format.Context) {
 	c.Meta.Delete(h.snapVersNS(c), key) //nolint:errcheck
 }
 
-// BrowseRepo implements format.Browsable.
+// BrowseRepo implements format.Handler.
 // Maven blobs live at {repo}/{group/as/path}/{artifactId}/{version}/{file}.
 // We detect the version segment (first part that starts with a digit) to
 // derive groupId and artifactId without a separate metadata store.
@@ -763,7 +763,7 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 	return entries, nil
 }
 
-// Inspect implements format.Inspectable for the component detail page.
+// Inspect implements format.Handler for the component detail page.
 func (h *Handler) Inspect(c *format.Context, baseURL, comp string) (format.ComponentDetail, bool) {
 	if c.Repo.Kind == repo.Group {
 		for _, name := range c.Repo.Members {
@@ -861,9 +861,10 @@ func (h *Handler) Inspect(c *format.Context, baseURL, comp string) (format.Compo
 	}, true
 }
 
-var _ format.VulnCoordinates = (*Handler)(nil)
+// OSVEcosystem implements format.Handler: this format is OSV-scannable.
+func (h *Handler) OSVEcosystem() string { return "Maven" }
 
-// OSVCoordinates implements format.VulnCoordinates. The maven component key is
+// OSVCoordinates implements format.Handler. The maven component key is
 // already "groupId:artifactId", which is exactly OSV's Maven package name, so
 // the mapping is identity (guarded on the ":" separator being present).
 func (h *Handler) OSVCoordinates(component string) (ecosystem, name string, ok bool) {
@@ -873,14 +874,12 @@ func (h *Handler) OSVCoordinates(component string) (ecosystem, name string, ok b
 	return "Maven", component, true
 }
 
-var _ format.VulnGate = (*Handler)(nil)
-
 // gateExtensions are the primary Maven artifact types subject to vuln
 // enforcement. POMs, modules, checksums (.md5/.sha1/.sha256) and signatures
 // (.asc) carry a different extension and are not gated.
 var gateExtensions = map[string]bool{"jar": true, "war": true, "aar": true, "ear": true}
 
-// VulnGateTarget implements format.VulnGate. It mirrors BrowseRepo's path model:
+// VulnGateTarget implements format.Handler. It mirrors BrowseRepo's path model:
 // the first path segment beginning with a digit is the version directory, the
 // segment before it is the artifactId, and the dotted prefix is the groupId, so
 // the component is "groupId:artifactId" and the version is that directory — the

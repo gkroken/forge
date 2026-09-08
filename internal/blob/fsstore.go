@@ -1,8 +1,8 @@
 package blob
 
 import (
-	"crypto/md5"    // #nosec G501 -- MD5/SHA1 required by Maven/npm protocol specs
-	"crypto/sha1"   // #nosec G505
+	"crypto/md5"  // #nosec G501 -- MD5/SHA1 required by Maven/npm protocol specs
+	"crypto/sha1" // #nosec G505
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -145,5 +145,5 @@ func sum(h hash.Hash, b []byte) string {
 
 // SHA256 / SHA1 / MD5 of a byte slice (used by format handlers for sidecars).
 func SHA256(b []byte) string { return sum(sha256.New(), b) }
-func SHA1(b []byte) string { return sum(sha1.New(), b) } // #nosec G401
-func MD5(b []byte) string  { return sum(md5.New(), b) }  // #nosec G401
+func SHA1(b []byte) string   { return sum(sha1.New(), b) } // #nosec G401
+func MD5(b []byte) string    { return sum(md5.New(), b) }  // #nosec G401

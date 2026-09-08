@@ -6,12 +6,12 @@ import (
 )
 
 type bucket struct {
-	mu           sync.Mutex
-	resetAt      time.Time
-	hits         uint64
-	misses       uint64
+	mu            sync.Mutex
+	resetAt       time.Time
+	hits          uint64
+	misses        uint64
 	revalidations uint64
-	negatives    uint64
+	negatives     uint64
 }
 
 // RepoStats tracks hourly proxy cache outcomes for one repository using a
@@ -33,10 +33,12 @@ func (rs *RepoStats) record(now time.Time, f func(*bucket)) {
 	b.mu.Unlock()
 }
 
-func (rs *RepoStats) RecordHit()          { rs.record(time.Now(), func(b *bucket) { b.hits++ }) }
-func (rs *RepoStats) RecordMiss()         { rs.record(time.Now(), func(b *bucket) { b.misses++ }) }
-func (rs *RepoStats) RecordRevalidation() { rs.record(time.Now(), func(b *bucket) { b.revalidations++ }) }
-func (rs *RepoStats) RecordNegative()     { rs.record(time.Now(), func(b *bucket) { b.negatives++ }) }
+func (rs *RepoStats) RecordHit()  { rs.record(time.Now(), func(b *bucket) { b.hits++ }) }
+func (rs *RepoStats) RecordMiss() { rs.record(time.Now(), func(b *bucket) { b.misses++ }) }
+func (rs *RepoStats) RecordRevalidation() {
+	rs.record(time.Now(), func(b *bucket) { b.revalidations++ })
+}
+func (rs *RepoStats) RecordNegative() { rs.record(time.Now(), func(b *bucket) { b.negatives++ }) }
 
 // HourlyBucket is one hour-slot in the 24h stats response.
 type HourlyBucket struct {

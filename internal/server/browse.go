@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -161,17 +162,11 @@ func (s *Server) handleComponents(w http.ResponseWriter, r *http.Request, name s
 	}
 	q := strings.ToLower(r.URL.Query().Get("q"))
 
-	b, ok := h.(format.Browsable)
-	if !ok {
-		writeJSON(w, componentsResponse{Components: []componentItem{}, Total: 0, Page: page, Limit: limit})
-		return
-	}
-
 	c := &format.Context{
 		Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: s.client,
 		Repos: s.Repos, Metrics: s.Metrics,
 	}
-	entries, err := b.BrowseRepo(c)
+	entries, err := h.BrowseRepo(c)
 	if err != nil {
 		jsonError(w, "browse failed: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -252,15 +247,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			continue
 		}
-		b, ok := h.(format.Browsable)
-		if !ok {
-			continue
-		}
 		c := &format.Context{
 			Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: s.client,
 			Repos: s.Repos, Metrics: s.Metrics,
 		}
-		entries, err := b.BrowseRepo(c)
+		entries, err := h.BrowseRepo(c)
 		if err != nil {
 			continue
 		}
@@ -311,12 +302,11 @@ func (s *Server) uiBrowseVersions(w http.ResponseWriter, r *http.Request, repoNa
 	rollup := s.vulnRollupFor(repoName)
 	resp := browseVersionsResponse{Name: pkg, Pkg: pkg}
 
-	if insp, ok := h.(format.Inspectable); ok {
-		detail, found := insp.Inspect(c, publicBase(r), pkg)
-		if !found {
-			jsonError(w, "component not found", http.StatusNotFound)
-			return
-		}
+	// Inspect gives richer rows (published date, size, download URL). A format
+	// that declines it falls back to the version list from BrowseRepo.
+	detail, found := h.Inspect(c, publicBase(r), pkg)
+	switch {
+	case found:
 		for _, v := range detail.Versions {
 			resp.Versions = append(resp.Versions, browseVersionRow{
 				Version:     v.Version,
@@ -326,14 +316,20 @@ func (s *Server) uiBrowseVersions(w http.ResponseWriter, r *http.Request, repoNa
 				Severity:    rollup.VersionSeverity(pkg, v.Version),
 			})
 		}
-	} else if b, ok := h.(format.Browsable); ok {
-		entries, err := b.BrowseRepo(c)
+	default:
+		entries, err := h.BrowseRepo(c)
+		if errors.Is(err, format.ErrNotSupported) {
+			jsonError(w, "component not found", http.StatusNotFound)
+			return
+		}
 		if err != nil {
 			jsonError(w, "browse failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		matched := false
 		for _, e := range entries {
 			if e.Name == pkg {
+				matched = true
 				for _, v := range e.Versions {
 					resp.Versions = append(resp.Versions, browseVersionRow{
 						Version:  v,
@@ -342,6 +338,10 @@ func (s *Server) uiBrowseVersions(w http.ResponseWriter, r *http.Request, repoNa
 				}
 				break
 			}
+		}
+		if !matched {
+			jsonError(w, "component not found", http.StatusNotFound)
+			return
 		}
 	}
 	if resp.Versions == nil {
@@ -373,14 +373,9 @@ func (s *Server) uiBrowseDetail(w http.ResponseWriter, r *http.Request, repoName
 		jsonError(w, "no handler for format", http.StatusNotImplemented)
 		return
 	}
-	insp, ok := h.(format.Inspectable)
-	if !ok {
-		jsonError(w, "format does not support inspection", http.StatusNotImplemented)
-		return
-	}
 
 	c := s.browseCtx(rp)
-	detail, found := insp.Inspect(c, publicBase(r), pkg)
+	detail, found := h.Inspect(c, publicBase(r), pkg)
 	if !found {
 		jsonError(w, "component not found", http.StatusNotFound)
 		return
@@ -448,7 +443,7 @@ func (s *Server) vulnInfoFor(rp repo.Repository, h format.Handler, pkg, ver stri
 	// implementing VulnCoordinates — npm/Maven) or the Trivy sidecar (OCI images
 	// and Helm chart configs, when configured). Keying solely on VulnCoordinates
 	// wrongly reported OCI/Helm as unsupported even after Trivy wrote a finding.
-	_, osvSupported := h.(format.VulnCoordinates)
+	osvSupported := h.OSVEcosystem() != ""
 	vi.Supported = osvSupported || s.trivyScannable(rp.Format) || s.helmScannable(rp.Format)
 	if !vi.Supported {
 		return vi // e.g. helm/cran: "not scanned — unsupported"

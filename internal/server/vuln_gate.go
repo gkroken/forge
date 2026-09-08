@@ -28,10 +28,9 @@ func (s *Server) vulnGateBlocks(w http.ResponseWriter, r *http.Request, rp repo.
 	if s.VulnPolicy == nil || s.Vuln == nil {
 		return false
 	}
-	gate, ok := h.(format.VulnGate)
-	if !ok {
-		return false // format has no credible OSV source; never gated
-	}
+	// A format with no credible OSV source answers VulnGateTarget false for
+	// every path via format.Unsupported, so the gate never fires.
+	gate := h
 	pol, err := s.VulnPolicy.Resolve(rp.SecurityPolicyName)
 	if err != nil || pol.Mode == vuln.ModeOff || pol.Mode == "" {
 		return false

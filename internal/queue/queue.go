@@ -8,9 +8,9 @@
 // Two implementations are provided:
 //
 //   - Mem   — in-process, channel-backed; suitable for eval / single-node.
-//             State is lost on process restart.
+//     State is lost on process restart.
 //   - PG    — Postgres-backed using SELECT … FOR UPDATE SKIP LOCKED;
-//             safe for multiple concurrent app nodes sharing one database.
+//     safe for multiple concurrent app nodes sharing one database.
 //
 // Lifecycle: a Queue must be long-lived (one per server). Create it during
 // server start-up, call Work in a background goroutine, cancel the context

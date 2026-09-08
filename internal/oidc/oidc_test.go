@@ -467,10 +467,16 @@ func rsaToJWK(pub *rsa.PublicKey) map[string]any {
 	}
 }
 
-func b64url(b []byte) string          { return base64.RawURLEncoding.EncodeToString(b) }
-func mustMarshal(v any) []byte        { b, err := json.Marshal(v); fatalf(err); return b }
-func fatalf(err error)                { if err != nil { panic(err) } }
-func containsStr(s, sub string) bool  { return len(s) >= len(sub) && (s == sub || len(sub) == 0 || containsRune(s, sub)) }
+func b64url(b []byte) string   { return base64.RawURLEncoding.EncodeToString(b) }
+func mustMarshal(v any) []byte { b, err := json.Marshal(v); fatalf(err); return b }
+func fatalf(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+func containsStr(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || len(sub) == 0 || containsRune(s, sub))
+}
 
 func containsRune(s, sub string) bool {
 	for i := 0; i <= len(s)-len(sub); i++ {

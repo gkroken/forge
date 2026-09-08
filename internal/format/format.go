@@ -6,6 +6,7 @@ package format
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"sync/atomic"
@@ -151,11 +152,82 @@ func (c *Context) ProxyConfig() proxy.Config {
 	return cfg
 }
 
+// ErrNotSupported is returned by a seam a format deliberately does not
+// implement. Callers map it to whatever "this format cannot do that" means at
+// their layer — usually a 404 or 501, never a silent success.
+var ErrNotSupported = errors.New("format: not supported by this format")
+
 // Handler implements one package format.
+//
+// Every seam below is REQUIRED. That is the point: a format that does not
+// answer one cannot be built, rather than silently lacking the feature. Nine
+// of these used to be optional interfaces discovered by type assertion, and a
+// format that skipped one compiled perfectly and quietly had no browse view, no
+// vulnerability scanning, or no dependency-confusion protection — which is
+// exactly how oci shipped with no retention.
+//
+// A format that genuinely does not need a seam embeds Unsupported and says so
+// in one line. Adding a new seam here deliberately breaks every format until
+// each one answers it.
 type Handler interface {
 	Format() string
 	Serve(w http.ResponseWriter, r *http.Request, c *Context)
+
+	// Browse and detail.
+	BrowseRepo(c *Context) ([]BrowseEntry, error)
+	Inspect(c *Context, baseURL, component string) (ComponentDetail, bool)
+
+	// Vulnerability scanning. OSVEcosystem answers the capability question —
+	// "can this format be scanned at all" — which a per-component call cannot,
+	// since it has no component to be asked about. Empty means no OSV support,
+	// and it is the same string OSVCoordinates returns, so the two cannot drift.
+	OSVEcosystem() string
+	OSVCoordinates(component string) (ecosystem, name string, ok bool)
+	ReferencedImages(c *Context, component, version string) ([]string, error)
+	VulnGateTarget(sub string) (component, version string, ok bool)
+
+	// Dependency-confusion protection.
+	ClaimPath(sub string) (component string, ok bool)
+	OwnsComponent(c *Context, component string) bool
+
+	// Integrity.
+	VerifyIntegrity(c *Context, mode integrity.Mode) (integrity.Result, error)
+	Reindex(ctx context.Context, c *Context) (int, error)
 }
+
+// Unsupported answers every optional seam with "not supported". Embed it in a
+// Handler and override what the format actually does, so declining a seam is a
+// visible line of code instead of an absence nobody notices.
+//
+// This is the grpc.UnimplementedFooServer pattern, which exists for this exact
+// problem: methods silently missing from an implementation.
+type Unsupported struct{}
+
+func (Unsupported) BrowseRepo(*Context) ([]BrowseEntry, error) { return nil, ErrNotSupported }
+
+func (Unsupported) Inspect(*Context, string, string) (ComponentDetail, bool) {
+	return ComponentDetail{}, false
+}
+
+func (Unsupported) OSVEcosystem() string { return "" }
+
+func (Unsupported) OSVCoordinates(string) (string, string, bool) { return "", "", false }
+
+func (Unsupported) ReferencedImages(*Context, string, string) ([]string, error) {
+	return nil, ErrNotSupported
+}
+
+func (Unsupported) VulnGateTarget(string) (string, string, bool) { return "", "", false }
+
+func (Unsupported) ClaimPath(string) (string, bool) { return "", false }
+
+func (Unsupported) OwnsComponent(*Context, string) bool { return false }
+
+func (Unsupported) VerifyIntegrity(*Context, integrity.Mode) (integrity.Result, error) {
+	return integrity.Result{}, ErrNotSupported
+}
+
+func (Unsupported) Reindex(context.Context, *Context) (int, error) { return 0, ErrNotSupported }
 
 // BrowseEntry represents one component (package, chart, image, …) in a repo's
 // browse view: a name and all known versions, newest-first where deterministic.
@@ -167,9 +239,6 @@ type BrowseEntry struct {
 
 // Browsable is an optional extension to Handler that powers the web UI browse
 // and search views. Handlers that do not implement it show a fallback message.
-type Browsable interface {
-	BrowseRepo(c *Context) ([]BrowseEntry, error)
-}
 
 // ComponentDetail is the full metadata for one component, used by the detail page.
 type ComponentDetail struct {
@@ -204,9 +273,6 @@ type Dep struct {
 // Inspectable is an optional extension to Handler that powers the component
 // detail page. baseURL is the scheme+host of the forge server (e.g.
 // "http://localhost:8080"), used to build download URLs and install snippets.
-type Inspectable interface {
-	Inspect(c *Context, baseURL, component string) (ComponentDetail, bool)
-}
 
 // VulnCoordinates is an optional Handler extension that maps a forge component
 // name to OSV's package vocabulary, so the vulnerability scanner can look up
@@ -216,9 +282,6 @@ type Inspectable interface {
 // may differ from the forge component). Formats without a credible OSV source
 // (helm, oci, cran) simply don't implement it and are skipped. The version is
 // not needed to derive the coordinate, so callers pass it through separately.
-type VulnCoordinates interface {
-	OSVCoordinates(component string) (ecosystem, name string, ok bool)
-}
 
 // ReferencedImages is an optional Handler extension: a format whose stored
 // components reference external container images (e.g. a Helm chart's values.yaml
@@ -226,9 +289,6 @@ type VulnCoordinates interface {
 // scanner can scan them too. The scanner stays format-agnostic — the parsing
 // knowledge lives in the plugin, like VulnCoordinates. Refs are fully-qualified
 // image references (e.g. "docker.io/nginx:1.19"); only helm implements it.
-type ReferencedImages interface {
-	ReferencedImages(c *Context, component, version string) ([]string, error)
-}
 
 // VulnGate is an optional Handler extension used by the download-policy gate. It
 // reverses a download sub-path back to the (component, version) the artifact
@@ -238,9 +298,6 @@ type ReferencedImages interface {
 // Maven) implement it; others are never gated. The returned component and
 // version match the keys used by vuln.Store, so the gate looks findings up
 // directly without re-deriving OSV coordinates.
-type VulnGate interface {
-	VulnGateTarget(sub string) (component, version string, ok bool)
-}
 
 // Claimable is an optional Handler extension powering dependency-confusion
 // protection. It answers the two format-specific questions the guard needs;
@@ -257,10 +314,6 @@ type VulnGate interface {
 // of the component — the auto-derived ownership signal that protects a name
 // in a group without an explicit claim. It must be cheap (one lookup, no
 // upstream traffic); the caller memoizes per request.
-type Claimable interface {
-	ClaimPath(sub string) (component string, ok bool)
-	OwnsComponent(c *Context, component string) bool
-}
 
 // IntegrityChecker is an optional Handler extension that powers the read-only
 // integrity verify job. The format knows what "consistent" means for its own
@@ -272,9 +325,6 @@ type Claimable interface {
 // In integrity.ModeQuick no artifact bytes are hashed (small metadata
 // documents may still be read); integrity.ModeFull re-verifies every stored
 // checksum expectation against the bytes on disk.
-type IntegrityChecker interface {
-	VerifyIntegrity(c *Context, mode integrity.Mode) (integrity.Result, error)
-}
 
 // Reindexer is an optional Handler extension for formats that keep a
 // materialized index which can be rebuilt from source records (npm's
@@ -282,13 +332,10 @@ type IntegrityChecker interface {
 // many were rebuilt/enqueued. Formats that generate their indexes on demand
 // (maven-metadata.xml, Helm index.yaml, CRAN PACKAGES) have nothing to
 // rebuild and simply don't implement it.
-type Reindexer interface {
-	Reindex(ctx context.Context, c *Context) (int, error)
-}
 
 // GroupBrowse merges BrowseRepo results from every member of a group context.
 // First member that contains a given Name wins; output is sorted by Name.
-func GroupBrowse(h Browsable, c *Context) ([]BrowseEntry, error) {
+func GroupBrowse(h Handler, c *Context) ([]BrowseEntry, error) {
 	seen := map[string]struct{}{}
 	var all []BrowseEntry
 	for _, name := range c.Repo.Members {

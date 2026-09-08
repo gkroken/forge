@@ -39,7 +39,7 @@ import (
 type depGuard struct {
 	s      *Server
 	rp     repo.Repository // the group or proxy repo being served
-	cl     format.Claimable
+	cl     format.Handler
 	hosted []repo.Repository // authority set: hosted members (group) or same-format hosted repos (proxy)
 	comp   string            // component addressed by this request; "" = not a component path
 	owns   map[string]bool   // memoized OwnsComponent per "{repo}\x00{component}"
@@ -51,11 +51,9 @@ func (s *Server) newDepGuard(rp repo.Repository, h format.Handler, sub string) *
 	if rp.Kind == repo.Hosted || !rp.DepGuardEnabled() {
 		return nil
 	}
-	cl, ok := h.(format.Claimable)
-	if !ok {
-		return nil // format has no component model (OCI has no groups) — never guarded
-	}
-	g := &depGuard{s: s, rp: rp, cl: cl, owns: map[string]bool{}}
+	// A format with no component model (oci) answers ClaimPath false for every
+	// path via format.Unsupported, so the guard simply never matches.
+	g := &depGuard{s: s, rp: rp, cl: h, owns: map[string]bool{}}
 	switch rp.Kind {
 	case repo.Group:
 		for _, name := range rp.Members {
@@ -76,7 +74,7 @@ func (s *Server) newDepGuard(rp repo.Repository, h format.Handler, sub string) *
 	if len(g.hosted) == 0 {
 		return nil
 	}
-	if comp, ok := cl.ClaimPath(sub); ok {
+	if comp, ok := g.cl.ClaimPath(sub); ok {
 		g.comp = comp
 	}
 	return g

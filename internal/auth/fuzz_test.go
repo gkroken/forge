@@ -19,9 +19,9 @@ func FuzzEnforcerDecide(f *testing.F) {
 	f.Add("", "npm-hosted")
 	f.Add("Bearer forge_"+strings.Repeat("a", 64), "npm-hosted")
 	f.Add("Bearer forge_"+strings.Repeat("0", 64), "private")
-	f.Add("Basic dXNlcjpwYXNz", "npm-hosted")        // standard Basic auth
+	f.Add("Basic dXNlcjpwYXNz", "npm-hosted") // standard Basic auth
 	f.Add("Bearer \x00null-byte", "npm-hosted")
-	f.Add(strings.Repeat("x", 4096), "npm-hosted")   // very long value
+	f.Add(strings.Repeat("x", 4096), "npm-hosted") // very long value
 	f.Add("forge_notprefixedwithbearer", "npm-hosted")
 	f.Add("Bearer forge_short", "unknown-repo")
 

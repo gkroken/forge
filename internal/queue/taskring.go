@@ -12,8 +12,8 @@ import (
 type TaskRing struct {
 	mu      sync.Mutex
 	cap     int
-	running *TaskInfo   // nil when no job is in progress
-	done    []TaskInfo  // ring slice, newest first, capped at cap
+	running *TaskInfo  // nil when no job is in progress
+	done    []TaskInfo // ring slice, newest first, capped at cap
 }
 
 func NewTaskRing(cap int) *TaskRing {

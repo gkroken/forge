@@ -167,10 +167,6 @@ func (s *Server) scanOCIRepo(ctx context.Context, repoName string) error {
 	if !ok {
 		return nil
 	}
-	browser, ok := h.(format.Browsable)
-	if !ok {
-		return nil
-	}
 	rp, ok := s.Repos.Get(repoName)
 	if !ok {
 		return fmt.Errorf("trivy: repository not found: %s", repoName)
@@ -179,7 +175,7 @@ func (s *Server) scanOCIRepo(ctx context.Context, repoName string) error {
 		Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: s.client,
 		Repos: s.Repos, Metrics: s.Metrics,
 	}
-	entries, err := browser.BrowseRepo(c)
+	entries, err := h.BrowseRepo(c)
 	if err != nil {
 		return err
 	}

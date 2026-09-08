@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -323,13 +324,9 @@ func (s *Server) uiComponent(w http.ResponseWriter, r *http.Request, repoName, c
 	c := s.browseCtx(rp)
 	base := publicBase(r)
 
-	// Inspectable provides rich detail; fall back to BrowseRepo for versions only.
-	if insp, ok := h.(format.Inspectable); ok {
-		detail, found := insp.Inspect(c, base, component)
-		if !found {
-			http.NotFound(w, r)
-			return
-		}
+	// Inspect provides rich detail; a format that declines it falls back to
+	// BrowseRepo for versions only.
+	if detail, found := h.Inspect(c, base, component); found {
 		render(w, tmplComponent, "admin_shell.html", componentPage{
 			Title:     component + " — " + repoName,
 			ActiveNav: "browse",
@@ -339,12 +336,11 @@ func (s *Server) uiComponent(w http.ResponseWriter, r *http.Request, repoName, c
 		return
 	}
 
-	b, ok := h.(format.Browsable)
-	if !ok {
+	entries, err := h.BrowseRepo(c)
+	if errors.Is(err, format.ErrNotSupported) {
 		http.NotFound(w, r)
 		return
 	}
-	entries, err := b.BrowseRepo(c)
 	if err != nil {
 		http.Error(w, "browse error: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -391,11 +387,7 @@ func (s *Server) uiSearch(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				continue
 			}
-			b, ok := h.(format.Browsable)
-			if !ok {
-				continue
-			}
-			entries, err := b.BrowseRepo(s.browseCtx(rp))
+			entries, err := h.BrowseRepo(s.browseCtx(rp))
 			if err != nil {
 				continue
 			}

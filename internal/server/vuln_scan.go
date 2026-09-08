@@ -70,7 +70,7 @@ func (s *Server) VulnRescanTick(now time.Time, lastRun map[string]time.Time) {
 
 		// OSV path: formats that implement VulnCoordinates (npm, Maven).
 		if s.OSV != nil {
-			if _, scannable := h.(format.VulnCoordinates); scannable {
+			if h.OSVEcosystem() != "" {
 				key := vulnRescanKey(rp.Name)
 				if now.Sub(lastRun[key]) >= vulnRescanInterval {
 					if err := s.Queue.Enqueue(context.Background(), vulnScanJobType, vulnScanPayload{Repo: rp.Name}); err != nil {
@@ -139,20 +139,16 @@ func (s *Server) scanRepo(ctx context.Context, repoName string) error {
 	if !ok {
 		return nil
 	}
-	mapper, ok := h.(format.VulnCoordinates)
-	if !ok {
+	if h.OSVEcosystem() == "" {
 		return nil // format has no OSV mapping — nothing scannable
 	}
-	browser, ok := h.(format.Browsable)
-	if !ok {
-		return nil
-	}
+	mapper := h
 
 	c := &format.Context{
 		Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: s.client,
 		Repos: s.Repos, Metrics: s.Metrics,
 	}
-	entries, err := browser.BrowseRepo(c)
+	entries, err := h.BrowseRepo(c)
 	if err != nil {
 		return err
 	}
@@ -264,7 +260,7 @@ func (s *Server) handleVulnScan(w http.ResponseWriter, r *http.Request, repoName
 		return
 	}
 	if h, ok := s.Handlers.For(rp.Format); ok {
-		if _, scannable := h.(format.VulnCoordinates); !scannable {
+		if h.OSVEcosystem() == "" {
 			jsonError(w, "format not scannable: "+rp.Format, http.StatusNotImplemented)
 			return
 		}

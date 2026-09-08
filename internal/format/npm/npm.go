@@ -54,7 +54,7 @@ import (
 	"forge/internal/repo"
 )
 
-type Handler struct{}
+type Handler struct{ format.Unsupported }
 
 func New() *Handler               { return &Handler{} }
 func (h *Handler) Format() string { return "npm" }
@@ -739,7 +739,7 @@ func lastPathSeg(p string) string {
 	return p
 }
 
-// BrowseRepo implements format.Browsable.
+// BrowseRepo implements format.Handler.
 func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 	if c.Repo.Kind == repo.Group {
 		return format.GroupBrowse(h, c)
@@ -773,7 +773,7 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 	return entries, nil
 }
 
-// Inspect implements format.Inspectable for the component detail page.
+// Inspect implements format.Handler for the component detail page.
 func (h *Handler) Inspect(c *format.Context, baseURL, pkg string) (format.ComponentDetail, bool) {
 	if c.Repo.Kind == repo.Group {
 		for _, name := range c.Repo.Members {
@@ -875,9 +875,10 @@ func (h *Handler) Inspect(c *format.Context, baseURL, pkg string) (format.Compon
 	}, true
 }
 
-var _ format.VulnCoordinates = (*Handler)(nil)
+// OSVEcosystem implements format.Handler: this format is OSV-scannable.
+func (h *Handler) OSVEcosystem() string { return "npm" }
 
-// OSVCoordinates implements format.VulnCoordinates. An npm package name maps
+// OSVCoordinates implements format.Handler. An npm package name maps
 // directly to the OSV "npm" ecosystem (scoped names like @scope/pkg included).
 func (h *Handler) OSVCoordinates(component string) (ecosystem, name string, ok bool) {
 	if component == "" {
@@ -886,9 +887,7 @@ func (h *Handler) OSVCoordinates(component string) (ecosystem, name string, ok b
 	return "npm", component, true
 }
 
-var _ format.VulnGate = (*Handler)(nil)
-
-// VulnGateTarget implements format.VulnGate. npm primary artifacts are tarball
+// VulnGateTarget implements format.Handler. npm primary artifacts are tarball
 // downloads at "{pkg}/-/{name}-{version}.tgz"; the package name is the component
 // and the version is parsed from the tarball filename (same derivation as
 // deleteTarball). Packuments, dist-tags and the /-/ registry endpoints are not

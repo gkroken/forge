@@ -61,5 +61,5 @@ func (ls *LatencyStore) PutJSON(ns, key string, v any) error {
 	return err
 }
 
-func (ls *LatencyStore) List(ns string) ([]string, error)      { return ls.inner.List(ns) }
-func (ls *LatencyStore) Delete(ns, key string) error            { return ls.inner.Delete(ns, key) }
+func (ls *LatencyStore) List(ns string) ([]string, error) { return ls.inner.List(ns) }
+func (ls *LatencyStore) Delete(ns, key string) error      { return ls.inner.Delete(ns, key) }

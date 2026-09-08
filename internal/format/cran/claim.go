@@ -7,9 +7,7 @@ import (
 	"forge/internal/format"
 )
 
-var _ format.Claimable = (*Handler)(nil)
-
-// ClaimPath implements format.Claimable. The claimable component is the R
+// ClaimPath implements format.Handler. The claimable component is the R
 // package name. Source tarballs ("src/contrib/{pkg}_{ver}.tar.gz", including
 // Archive paths) and binary packages ("bin/.../{pkg}_{ver}.zip|.tgz") resolve
 // to it — CRAN package names cannot contain "_", so the name is everything
@@ -29,7 +27,7 @@ func (h *Handler) ClaimPath(sub string) (string, bool) {
 	return "", false
 }
 
-// OwnsComponent implements format.Claimable: a hosted CRAN repo owns a
+// OwnsComponent implements format.Handler: a hosted CRAN repo owns a
 // package when it holds a source record for any version. Record keys are
 // "{Package}_{Version}" and package names cannot contain "_", so the prefix
 // match is exact. Binary-only hosted packages are not auto-detected — protect

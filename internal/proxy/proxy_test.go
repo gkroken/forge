@@ -20,11 +20,11 @@ import (
 
 // fake is a controllable upstream HTTP server.
 type fake struct {
-	srv       *httptest.Server
-	code      int
-	body      string
-	etag      string
-	calls     int // number of requests received
+	srv   *httptest.Server
+	code  int
+	body  string
+	etag  string
+	calls int // number of requests received
 }
 
 func newFake(t *testing.T, code int, body string) *fake {

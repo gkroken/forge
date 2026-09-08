@@ -12,17 +12,17 @@ func TestSSRFGuard_ValidateURL(t *testing.T) {
 		url     string
 		allowed bool
 	}{
-		{"http://127.0.0.1/hook", false},          // loopback
-		{"http://localhost/hook", false},          // loopback by name
-		{"http://169.254.169.254/latest", false},  // cloud metadata (link-local)
-		{"http://10.0.0.5/hook", false},           // private
-		{"http://192.168.1.10/hook", false},       // private
-		{"http://172.16.4.4/hook", false},         // private
-		{"http://[::1]/hook", false},              // IPv6 loopback
-		{"http://0.0.0.0/hook", false},            // unspecified
-		{"ftp://example.com/hook", false},         // bad scheme
-		{"http://8.8.8.8/hook", true},             // public
-		{"https://93.184.216.34/hook", true},      // public (example.com's IP)
+		{"http://127.0.0.1/hook", false},         // loopback
+		{"http://localhost/hook", false},         // loopback by name
+		{"http://169.254.169.254/latest", false}, // cloud metadata (link-local)
+		{"http://10.0.0.5/hook", false},          // private
+		{"http://192.168.1.10/hook", false},      // private
+		{"http://172.16.4.4/hook", false},        // private
+		{"http://[::1]/hook", false},             // IPv6 loopback
+		{"http://0.0.0.0/hook", false},           // unspecified
+		{"ftp://example.com/hook", false},        // bad scheme
+		{"http://8.8.8.8/hook", true},            // public
+		{"https://93.184.216.34/hook", true},     // public (example.com's IP)
 	}
 	for _, c := range cases {
 		err := g.ValidateURL(c.url)

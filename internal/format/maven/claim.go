@@ -7,9 +7,7 @@ import (
 	"forge/internal/format"
 )
 
-var _ format.Claimable = (*Handler)(nil)
-
-// ClaimPath implements format.Claimable. The claimable component is the
+// ClaimPath implements format.Handler. The claimable component is the
 // artifact directory ("{groupId path}/{artifactId}"), so a claim like
 // "com/acme/**" covers every artifact under the com.acme groupId and
 // "com/acme/app" claims exactly one artifact. Both artifact files
@@ -52,7 +50,7 @@ func (h *Handler) ClaimPath(sub string) (string, bool) {
 	return strings.Join(parts[:verIdx], "/"), true
 }
 
-// OwnsComponent implements format.Claimable: a hosted Maven repo owns an
+// OwnsComponent implements format.Handler: a hosted Maven repo owns an
 // artifact when any blob exists under its artifact directory. The trailing
 // slash keeps sibling artifacts with a common prefix ("app" vs "app-extra")
 // from shadowing each other.

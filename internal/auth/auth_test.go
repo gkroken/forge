@@ -183,28 +183,28 @@ func TestAuthzMatrix(t *testing.T) {
 		want   int
 	}{
 		// ── anonymous ───────────────────────────────────────────────────────
-		{"anon GET private",  "GET",    "private", "",          http.StatusUnauthorized},
-		{"anon PUT private",  "PUT",    "private", "",          http.StatusUnauthorized},
-		{"anon GET public",   "GET",    "public",  "",          http.StatusOK},
-		{"anon PUT public",   "PUT",    "public",  "",          http.StatusUnauthorized},
+		{"anon GET private", "GET", "private", "", http.StatusUnauthorized},
+		{"anon PUT private", "PUT", "private", "", http.StatusUnauthorized},
+		{"anon GET public", "GET", "public", "", http.StatusOK},
+		{"anon PUT public", "PUT", "public", "", http.StatusUnauthorized},
 
 		// ── read token ──────────────────────────────────────────────────────
-		{"read GET private",  "GET",    "private", readSecret,  http.StatusOK},
-		{"read PUT private",  "PUT",    "private", readSecret,  http.StatusForbidden},
+		{"read GET private", "GET", "private", readSecret, http.StatusOK},
+		{"read PUT private", "PUT", "private", readSecret, http.StatusForbidden},
 
 		// ── write token ─────────────────────────────────────────────────────
-		{"write GET private", "GET",    "private", writeSecret, http.StatusOK},
-		{"write PUT private", "PUT",    "private", writeSecret, http.StatusOK},
-		{"write PUT other",   "PUT",    "public",  otherSecret, http.StatusOK},
-		{"write cross-repo",  "PUT",    "private", otherSecret, http.StatusForbidden},
+		{"write GET private", "GET", "private", writeSecret, http.StatusOK},
+		{"write PUT private", "PUT", "private", writeSecret, http.StatusOK},
+		{"write PUT other", "PUT", "public", otherSecret, http.StatusOK},
+		{"write cross-repo", "PUT", "private", otherSecret, http.StatusForbidden},
 
 		// ── admin wildcard ──────────────────────────────────────────────────
-		{"admin GET private", "GET",    "private", adminSecret, http.StatusOK},
-		{"admin PUT private", "PUT",    "private", adminSecret, http.StatusOK},
-		{"admin GET public",  "GET",    "public",  adminSecret, http.StatusOK},
+		{"admin GET private", "GET", "private", adminSecret, http.StatusOK},
+		{"admin PUT private", "PUT", "private", adminSecret, http.StatusOK},
+		{"admin GET public", "GET", "public", adminSecret, http.StatusOK},
 
 		// ── invalid token ───────────────────────────────────────────────────
-		{"invalid token",     "GET",    "private", "forge_" + nHex(64), http.StatusUnauthorized},
+		{"invalid token", "GET", "private", "forge_" + nHex(64), http.StatusUnauthorized},
 	}
 
 	for _, tc := range cases {
@@ -263,13 +263,13 @@ func TestAuthzMatrix_OCI(t *testing.T) {
 		wantStatus int
 		wantWWW    bool // expect WWW-Authenticate header on 401
 	}{
-		{"anon GET private",   "GET", "oci-private", "",           http.StatusUnauthorized, true},
-		{"anon PUT private",   "PUT", "oci-private", "",           http.StatusUnauthorized, true},
-		{"anon GET public",    "GET", "oci-public",  "",           http.StatusOK,           false},
-		{"write GET private",  "GET", "oci-private", writeSecret,  http.StatusOK,           false},
-		{"write PUT private",  "PUT", "oci-private", writeSecret,  http.StatusOK,           false},
-		{"read PUT private",   "PUT", "oci-private", readSecret,   http.StatusForbidden,    false},
-		{"invalid token",      "GET", "oci-private", "forge_" + nHex(64), http.StatusUnauthorized, true},
+		{"anon GET private", "GET", "oci-private", "", http.StatusUnauthorized, true},
+		{"anon PUT private", "PUT", "oci-private", "", http.StatusUnauthorized, true},
+		{"anon GET public", "GET", "oci-public", "", http.StatusOK, false},
+		{"write GET private", "GET", "oci-private", writeSecret, http.StatusOK, false},
+		{"write PUT private", "PUT", "oci-private", writeSecret, http.StatusOK, false},
+		{"read PUT private", "PUT", "oci-private", readSecret, http.StatusForbidden, false},
+		{"invalid token", "GET", "oci-private", "forge_" + nHex(64), http.StatusUnauthorized, true},
 	}
 
 	for _, tc := range cases {
@@ -306,14 +306,14 @@ func TestAuthzMatrix_Methods(t *testing.T) {
 		want   int
 	}{
 		// HEAD is a read — read token allows, anon denied.
-		{"HEAD anon",        "HEAD",   "",          http.StatusUnauthorized},
-		{"HEAD read-token",  "HEAD",   readSecret,  http.StatusOK},
+		{"HEAD anon", "HEAD", "", http.StatusUnauthorized},
+		{"HEAD read-token", "HEAD", readSecret, http.StatusOK},
 		// DELETE needs the delete action; the write tier carries it.
-		{"DELETE read-token",  "DELETE", readSecret,  http.StatusForbidden},
+		{"DELETE read-token", "DELETE", readSecret, http.StatusForbidden},
 		{"DELETE write-token", "DELETE", writeSecret, http.StatusOK},
-		{"POST read-token",    "POST",   readSecret,  http.StatusForbidden},
-		{"POST write-token",   "POST",   writeSecret, http.StatusOK},
-		{"PATCH write-token",  "PATCH",  writeSecret, http.StatusOK},
+		{"POST read-token", "POST", readSecret, http.StatusForbidden},
+		{"POST write-token", "POST", writeSecret, http.StatusOK},
+		{"PATCH write-token", "PATCH", writeSecret, http.StatusOK},
 	}
 
 	for _, tc := range cases {
@@ -363,11 +363,11 @@ func TestAuthzMatrix_BearerFormats(t *testing.T) {
 		return "Basic " + base64.StdEncoding.EncodeToString([]byte(":"+token))
 	}
 
-	send("npm Basic auth",         basicEncode(secret),          http.StatusOK)
-	send("standard Bearer",        "Bearer "+secret,             http.StatusOK)
-	send("Bearer with extra space","Bearer  "+secret,            http.StatusOK)
-	send("wrong token via Basic",  basicEncode("forge_"+nHex(64)), http.StatusUnauthorized)
-	send("wrong Bearer",           "Bearer forge_"+nHex(64),     http.StatusUnauthorized)
+	send("npm Basic auth", basicEncode(secret), http.StatusOK)
+	send("standard Bearer", "Bearer "+secret, http.StatusOK)
+	send("Bearer with extra space", "Bearer  "+secret, http.StatusOK)
+	send("wrong token via Basic", basicEncode("forge_"+nHex(64)), http.StatusUnauthorized)
+	send("wrong Bearer", "Bearer forge_"+nHex(64), http.StatusUnauthorized)
 }
 
 // TestAuthzMatrix_RequireAdmin verifies the admin guard on token-management
@@ -404,10 +404,10 @@ func TestAuthzMatrix_RequireAdmin(t *testing.T) {
 		secret string
 		want   int
 	}{
-		{"no token",     "",             http.StatusUnauthorized},
-		{"non-admin",    nonAdminSecret, http.StatusForbidden},
-		{"admin",        adminSecret,    http.StatusOK},
-		{"invalid",      "forge_" + nHex(64), http.StatusUnauthorized},
+		{"no token", "", http.StatusUnauthorized},
+		{"non-admin", nonAdminSecret, http.StatusForbidden},
+		{"admin", adminSecret, http.StatusOK},
+		{"invalid", "forge_" + nHex(64), http.StatusUnauthorized},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

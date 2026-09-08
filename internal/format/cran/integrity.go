@@ -12,9 +12,8 @@ import (
 )
 
 // Compile-time assertion that the handler implements the integrity seam.
-var _ format.IntegrityChecker = (*Handler)(nil)
 
-// VerifyIntegrity implements format.IntegrityChecker.
+// VerifyIntegrity implements format.Handler.
 //
 // CRAN's source of truth is the pkgRecord set — "{repo}+cran" for source
 // packages, "{repo}+cran+bin+{platform}+{rver}" per binary tree — from which

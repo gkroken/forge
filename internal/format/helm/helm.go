@@ -37,7 +37,7 @@ import (
 	"forge/internal/repo"
 )
 
-type Handler struct{}
+type Handler struct{ format.Unsupported }
 
 func New() *Handler               { return &Handler{} }
 func (h *Handler) Format() string { return "helm" }
@@ -548,7 +548,7 @@ func scanChartYAML(data []byte) chartMeta {
 	return m
 }
 
-// ReferencedImages implements format.ReferencedImages: it reads the stored chart
+// ReferencedImages implements format.Handler: it reads the stored chart
 // .tgz for name@version and extracts the container image refs from its
 // values.yaml, so the scanner can scan images the chart deploys.
 func (h *Handler) ReferencedImages(c *format.Context, name, version string) ([]string, error) {
@@ -564,8 +564,6 @@ func (h *Handler) ReferencedImages(c *format.Context, name, version string) ([]s
 	}
 	return ValuesImageRefs(data)
 }
-
-var _ format.ReferencedImages = (*Handler)(nil)
 
 // ValuesImageRefs extracts container image references from a chart's values.yaml
 // for referenced-image vulnerability scanning. It recognises the two dominant
@@ -681,7 +679,7 @@ func extractFile(tgz []byte, want string) ([]byte, error) {
 	return nil, fmt.Errorf("%s not found in archive", want)
 }
 
-// BrowseRepo implements format.Browsable.
+// BrowseRepo implements format.Handler.
 func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 	if c.Repo.Kind == repo.Group {
 		return format.GroupBrowse(h, c)
@@ -718,7 +716,7 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 	return entries, nil
 }
 
-// Inspect implements format.Inspectable for the component detail page.
+// Inspect implements format.Handler for the component detail page.
 func (h *Handler) Inspect(c *format.Context, baseURL, name string) (format.ComponentDetail, bool) {
 	var allRecs []chartRecord
 	switch c.Repo.Kind {

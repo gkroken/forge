@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"sort"
 
-	"forge/internal/format"
 	"forge/internal/vuln"
 )
 
@@ -106,7 +105,7 @@ func (s *Server) uiSecurity(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			continue
 		}
-		if _, scannable := h.(format.VulnCoordinates); !scannable {
+		if h.OSVEcosystem() == "" {
 			continue // only list repos that can produce findings
 		}
 		page.AllRepos = append(page.AllRepos, rp.Name)

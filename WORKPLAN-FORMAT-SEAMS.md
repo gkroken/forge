@@ -52,7 +52,7 @@ Callers stop type-asserting and start calling. `ErrNotSupported` surfaces as a
 | Phase | Scope | Independent? | Risk |
 |---|---|---|---|
 | P0 | Break the `format` → `cleanup` import cycle | prerequisite for P2 | ✅ done |
-| P1 | Fold the 9 optional interfaces into `Handler` + `Unsupported` | **yes — ships alone** | low |
+| P1 | Fold the 8 optional interfaces into `Handler` + `Unsupported` | **yes — ships alone** | ✅ done |
 | P2 | Retention: 4 switch families → `ListVersions`/`DeleteVersion` | needs P0, P1 | **high** |
 | P3 | Promote / migration / browser-upload switches | needs P1 | medium |
 | P4 | Residual test for what no compiler can check | needs P1 | low |
@@ -80,24 +80,33 @@ can never import `internal/format`, which blocks P2's interface types.
       `internal/ledger` depends only on `internal/meta`; `go build ./...`,
       `go vet ./...`, `go test ./...` and `bash test.sh` (20/20) all pass.
 
-## Phase P1 — required interface + Unsupported default
+## Phase P1 — required interface + Unsupported default · ✅ COMPLETE
 
 Acceptance: every optional interface is a `Handler` method; deleting a format's
 method body breaks the build; `go vet ./...` clean.
 
-- [ ] Move `Browsable`, `Inspectable`, `VulnCoordinates`, `ReferencedImages`,
-      `VulnGate`, `Claimable`, `IntegrityChecker`, `Reindexer` (+ any found while
-      working) into `Handler`.
-- [ ] Add `format.Unsupported` with an `ErrNotSupported` answer for each, and
-      `var ErrNotSupported = errors.New("format: not supported")`.
-- [ ] Embed `Unsupported` in all five handlers; keep every existing method body.
-      The diff per format should be one line plus deletions.
-- [ ] Replace type assertions in `internal/server` with direct calls; map
-      `ErrNotSupported` to the status each site already returns for "this format
-      can't" (404/501), so behaviour is unchanged.
-- [ ] Tests: a compile-time assertion per format (`var _ Handler = (*Handler)(nil)`),
-      and one test that a bare `struct{ format.Unsupported }` returns
-      `ErrNotSupported` from every seam.
+- [x] Moved `Browsable`, `Inspectable`, `VulnCoordinates`, `ReferencedImages`,
+      `VulnGate`, `Claimable`, `IntegrityChecker`, `Reindexer` into `Handler` and
+      deleted the interface declarations.
+- [x] Added `format.Unsupported` and `format.ErrNotSupported`.
+- [x] **Added `OSVEcosystem() string`, which the plan did not anticipate.** Four
+      call sites asked a *capability* question ("is this repo scannable at all?")
+      that a per-component `OSVCoordinates(component)` cannot answer — there is no
+      component to ask about. An ecosystem string answers it, and since it is the
+      same string `OSVCoordinates` returns, the two cannot drift.
+- [x] Embedded `Unsupported` in all five handlers — one line each, plus deleted
+      `var _ format.X = (*Handler)(nil)` assertions replaced by a single
+      `var _ format.Handler = (*Handler)(nil)`.
+- [x] Replaced all 21 type assertions across 10 files with direct calls.
+      **Not merely cosmetic:** once every handler satisfies every interface, the
+      assertions all succeed, so sites that relied on `ok == false` for their
+      "not supported" branch silently changed behaviour. Four tests caught it.
+      Each site now keys off `ErrNotSupported`, an `ok` return, or
+      `OSVEcosystem() != ""`.
+- [x] Tests: `internal/format/unsupported_test.go` asserts a bare
+      `struct{ format.Unsupported }` satisfies `Handler` and reports every seam as
+      declined. A test stub in `webhooks_events_test.go` failed to compile until it
+      embedded `Unsupported` — the mechanism working, on its first day.
 
 ## Phase P2 — retention through the interface
 

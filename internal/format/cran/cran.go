@@ -44,7 +44,7 @@ import (
 	"forge/internal/repo"
 )
 
-type Handler struct{}
+type Handler struct{ format.Unsupported }
 
 func New() *Handler               { return &Handler{} }
 func (h *Handler) Format() string { return "cran" }
@@ -935,7 +935,7 @@ func parseDescriptionFromZip(data []byte) (pkgRecord, error) {
 	return pkgRecord{}, fmt.Errorf("DESCRIPTION not found in zip")
 }
 
-// BrowseRepo implements format.Browsable. Source and binary packages are merged
+// BrowseRepo implements format.Handler. Source and binary packages are merged
 // by package name; versions are deduplicated so a package published for multiple
 // platforms appears once per version.
 func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
@@ -1037,7 +1037,7 @@ func (h *Handler) cachedSrcRecords(c *format.Context) []pkgRecord {
 	return recs
 }
 
-// Inspect implements format.Inspectable for the component detail page.
+// Inspect implements format.Handler for the component detail page.
 func (h *Handler) Inspect(c *format.Context, baseURL, comp string) (format.ComponentDetail, bool) {
 	recs := h.allPkgRecords(c)
 	var matching []pkgRecord

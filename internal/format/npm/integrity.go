@@ -12,13 +12,12 @@ import (
 	"forge/internal/repo"
 )
 
-// Compile-time assertions that the handler implements the optional seams.
-var (
-	_ format.IntegrityChecker = (*Handler)(nil)
-	_ format.Reindexer        = (*Handler)(nil)
-)
+// Compile-time assertion that the handler satisfies every format seam. The
+// interface requires them all, so this fails to build if one is missing rather
+// than silently leaving the feature absent.
+var _ format.Handler = (*Handler)(nil)
 
-// Reindex implements format.Reindexer: it rebuilds the materialized packument
+// Reindex implements format.Handler: it rebuilds the materialized packument
 // of every package that has per-version records (synchronously, plus an async
 // regen job per package when a queue is wired, mirroring publish). This is
 // the repair for "drift" integrity findings.
@@ -39,7 +38,7 @@ func (h *Handler) Reindex(ctx context.Context, c *format.Context) (int, error) {
 	return len(pkgs), nil
 }
 
-// VerifyIntegrity implements format.IntegrityChecker.
+// VerifyIntegrity implements format.Handler.
 //
 // npm's source of truth is split: per-version records in "{repo}:npm:v" own
 // the metadata, tarballs in the blob store own the bytes, and the packument

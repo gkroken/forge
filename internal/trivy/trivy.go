@@ -270,11 +270,11 @@ func parseOutput(data []byte) ([]vuln.Advisory, error) {
 				continue
 			}
 			a := vuln.Advisory{
-				ID:      v.VulnerabilityID,
-				Summary: v.Title,
+				ID:       v.VulnerabilityID,
+				Summary:  v.Title,
 				Severity: sev,
-				FixedIn: fixedIn,
-				URL:     url,
+				FixedIn:  fixedIn,
+				URL:      url,
 			}
 			seen[v.VulnerabilityID] = a
 			order = append(order, v.VulnerabilityID)

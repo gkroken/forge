@@ -443,9 +443,9 @@ func makeBinaryConformanceZip(t *testing.T, pkg, ver string) []byte {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	for name, content := range map[string]string{
-		pkg + "/DESCRIPTION":        desc,
-		pkg + "/NAMESPACE":          "exportPattern('.')\n",
-		pkg + "/R/" + pkg + ".R":   fmt.Sprintf("hello <- function() invisible(NULL)\n"),
+		pkg + "/DESCRIPTION":     desc,
+		pkg + "/NAMESPACE":       "exportPattern('.')\n",
+		pkg + "/R/" + pkg + ".R": fmt.Sprintf("hello <- function() invisible(NULL)\n"),
 	} {
 		f, _ := zw.Create(name)
 		f.Write([]byte(content)) //nolint:errcheck
@@ -476,13 +476,13 @@ func makeBinaryConformanceTgz(t *testing.T, pkg, ver string) []byte {
 		tw.WriteHeader(&tar.Header{Name: dir, Mode: 0755, Typeflag: tar.TypeDir}) //nolint:errcheck
 	}
 	for name, content := range map[string]string{
-		pkg + "/DESCRIPTION":      desc,
-		pkg + "/NAMESPACE":        "exportPattern('.')\n",
+		pkg + "/DESCRIPTION":     desc,
+		pkg + "/NAMESPACE":       "exportPattern('.')\n",
 		pkg + "/R/" + pkg + ".R": "hello <- function() invisible(NULL)\n",
 	} {
 		b := []byte(content)
 		tw.WriteHeader(&tar.Header{Name: name, Mode: 0644, Size: int64(len(b))}) //nolint:errcheck
-		tw.Write(b)                                                                //nolint:errcheck
+		tw.Write(b)                                                              //nolint:errcheck
 	}
 	tw.Close()
 	gz.Close()

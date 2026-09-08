@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -69,7 +70,7 @@ func (s *Server) handleHelmRepoScanJob(ctx context.Context, j queue.Job) error {
 // scanReferencedImages scans the external images a chart references (from its
 // values.yaml) and returns their advisories, each summary prefixed with the image
 // ref. Format-agnostic: it asks the helm handler for the refs via the optional
-// format.ReferencedImages seam, then reuses the Plan B external-image scanner.
+// format.Handler seam, then reuses the Plan B external-image scanner.
 // Returns nil (never errors) — referenced-image scanning supplements the config
 // scan and must never fail the chart scan.
 func (s *Server) scanReferencedImages(ctx context.Context, rp repo.Repository, chart, version string) []vuln.Advisory {
@@ -77,12 +78,11 @@ func (s *Server) scanReferencedImages(ctx context.Context, rp repo.Repository, c
 	if !ok {
 		return nil
 	}
-	ri, ok := h.(format.ReferencedImages)
-	if !ok {
+	c := &format.Context{Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: s.client, Repos: s.Repos}
+	refs, err := h.ReferencedImages(c, chart, version)
+	if errors.Is(err, format.ErrNotSupported) {
 		return nil
 	}
-	c := &format.Context{Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: s.client, Repos: s.Repos}
-	refs, err := ri.ReferencedImages(c, chart, version)
 	if err != nil {
 		slog.Debug("helm: no referenced images", "repo", rp.Name, "chart", chart, "version", version, "err", err)
 		return nil
@@ -120,10 +120,6 @@ func (s *Server) scanHelmRepo(ctx context.Context, repoName string) error {
 	if !ok {
 		return nil
 	}
-	browser, ok := h.(format.Browsable)
-	if !ok {
-		return nil
-	}
 	rp, ok := s.Repos.Get(repoName)
 	if !ok {
 		return fmt.Errorf("helm: repository not found: %s", repoName)
@@ -132,7 +128,7 @@ func (s *Server) scanHelmRepo(ctx context.Context, repoName string) error {
 		Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: s.client,
 		Repos: s.Repos, Metrics: s.Metrics,
 	}
-	entries, err := browser.BrowseRepo(c)
+	entries, err := h.BrowseRepo(c)
 	if err != nil {
 		return err
 	}

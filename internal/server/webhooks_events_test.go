@@ -200,8 +200,10 @@ func TestMiddleware_RepositoryDELETE_EmitsDeleted(t *testing.T) {
 }
 
 // stubDeletable is a minimal format handler that 200s on DELETE, standing in
-// for a format-native delete (npm unpublish, maven delete, etc.).
-type stubDeletable struct{}
+// for a format-native delete (npm unpublish, maven delete, etc.). It embeds
+// format.Unsupported for the seams it has no opinion about — the same one line
+// a real format writes when it declines a seam.
+type stubDeletable struct{ format.Unsupported }
 
 func (stubDeletable) Format() string { return "maven" }
 func (stubDeletable) Serve(w http.ResponseWriter, r *http.Request, c *format.Context) {

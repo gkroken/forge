@@ -43,7 +43,11 @@ func TestAuditLog_WrapAround(t *testing.T) {
 	// Last 3 written were 'e','f','g' — newest first
 	if got[0].Path != "g" || got[1].Path != "f" || got[2].Path != "e" {
 		t.Errorf("wrap-around order wrong: %v", func() []string {
-			s := make([]string, len(got)); for i, e := range got { s[i] = e.Path }; return s
+			s := make([]string, len(got))
+			for i, e := range got {
+				s[i] = e.Path
+			}
+			return s
 		}())
 	}
 }

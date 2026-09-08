@@ -8,9 +8,7 @@ import (
 	"forge/internal/format"
 )
 
-var _ format.Claimable = (*Handler)(nil)
-
-// ClaimPath implements format.Claimable. The claimable component is the
+// ClaimPath implements format.Handler. The claimable component is the
 // package name, so a claim like "@acme/**" covers a scope and "left-pad"
 // claims one package. Both packument requests ("{pkg}") and tarball downloads
 // ("{pkg}/-/{file}.tgz") resolve to it; the "-/" registry endpoints and paths
@@ -37,7 +35,7 @@ func (h *Handler) ClaimPath(sub string) (string, bool) {
 	return s, true
 }
 
-// OwnsComponent implements format.Claimable: a hosted npm repo owns a package
+// OwnsComponent implements format.Handler: a hosted npm repo owns a package
 // when it holds a packument for it.
 func (h *Handler) OwnsComponent(c *format.Context, component string) bool {
 	var raw json.RawMessage

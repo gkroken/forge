@@ -10,9 +10,8 @@ import (
 )
 
 // Compile-time assertion that the handler implements the integrity seam.
-var _ format.IntegrityChecker = (*Handler)(nil)
 
-// VerifyIntegrity implements format.IntegrityChecker.
+// VerifyIntegrity implements format.Handler.
 //
 // Helm's source of truth is the chartRecord in "{repo}:helm" (index.yaml is
 // generated from it); the .tgz bytes live in the blob store and every record

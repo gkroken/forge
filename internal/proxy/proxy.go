@@ -32,7 +32,7 @@
 // Callers choose the namespace; the convention used by the format handlers is
 // "{repo-name}:proxy".
 //
-// Lifecycle
+// # Lifecycle
 //
 // Fetcher must be long-lived (one per proxy repository, stored on the Server)
 // so the circuit-breaker state persists across requests. Creating a fresh
@@ -274,9 +274,9 @@ func (b *breaker) failure(now time.Time) {
 // Fetcher performs cache-on-read proxy fetches with a per-upstream circuit breaker.
 // It must be long-lived — create one per proxy repository on server start-up.
 type Fetcher struct {
-	client   *http.Client
-	cfg      Config
-	now      func() time.Time // injectable for deterministic testing
+	client *http.Client
+	cfg    Config
+	now    func() time.Time // injectable for deterministic testing
 
 	mu       sync.Mutex
 	breakers map[string]*breaker // keyed by "scheme://host"

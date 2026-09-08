@@ -6,6 +6,7 @@
 //	hosted - you publish into it; it is the source of truth
 //	proxy  - read-through cache of an upstream registry
 //	group  - a merged read-only view over several members
+//
 // Package repo defines the repository model shared by every format.
 //
 // A Repository is the unit Nexus calls a "repo": it has a name, a Format
@@ -130,9 +131,9 @@ type Repository struct {
 	// Enabled=false makes the server return 503 for all requests to this repo.
 	// Existing repos without this field serialised default to true (see UnmarshalJSON).
 	Enabled        bool           `json:"enabled"`
-	BlobStore      string         `json:"blobStore,omitempty"`    // named store; "" = default
-	ContentMaxAge  *time.Duration `json:"-"`                      // serialised as "contentMaxAge" string
-	MetadataMaxAge *time.Duration `json:"-"`                      // serialised as "metadataMaxAge" string
+	BlobStore      string         `json:"blobStore,omitempty"`     // named store; "" = default
+	ContentMaxAge  *time.Duration `json:"-"`                       // serialised as "contentMaxAge" string
+	MetadataMaxAge *time.Duration `json:"-"`                       // serialised as "metadataMaxAge" string
 	NegativeCache  *bool          `json:"negativeCache,omitempty"` // nil = global default (true)
 	AutoBlock      *bool          `json:"autoBlock,omitempty"`     // nil = global default (true)
 	TimeoutSecs    *int           `json:"timeoutSecs,omitempty"`   // nil = 30s

@@ -7,9 +7,7 @@ import (
 	"forge/internal/format"
 )
 
-var _ format.Claimable = (*Handler)(nil)
-
-// ClaimPath implements format.Claimable. The claimable component is the chart
+// ClaimPath implements format.Handler. The claimable component is the chart
 // name. Chart downloads ("{name}-{version}.tgz") and the per-chart API
 // ("api/charts/{name}[/{version}]") resolve to it; index.yaml and the
 // all-charts listing are not claim targets.
@@ -45,7 +43,7 @@ func chartNameFromFilename(f string) string {
 	return ""
 }
 
-// OwnsComponent implements format.Claimable: a hosted Helm repo owns a chart
+// OwnsComponent implements format.Handler: a hosted Helm repo owns a chart
 // when it holds a record for any version of it. Record keys are
 // "{name}-{version}", so a prefix hit is confirmed against the record's Name
 // (the prefix "my-" would otherwise match "my-chart-1.0").

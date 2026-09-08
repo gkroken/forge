@@ -343,8 +343,8 @@ func TestMiddleware_HelmUpload_EnqueuesScan(t *testing.T) {
 	}
 }
 
-// compile-time: helm handler satisfies the interfaces the scan path relies on.
-var _ format.Browsable = (*helm.Handler)(nil)
+// compile-time: the helm handler satisfies every format seam.
+var _ format.Handler = (*helm.Handler)(nil)
 
 func TestHandleHelmRepoScanJob_Dispatches(t *testing.T) {
 	srv, b, m := newHelmServer(t, trivyConfigJSON)

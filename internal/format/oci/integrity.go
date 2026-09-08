@@ -13,13 +13,12 @@ import (
 )
 
 // Compile-time assertion that the handler implements the integrity seam.
-var _ format.IntegrityChecker = (*Handler)(nil)
 
 // staleUploadAge is how old an in-progress upload buffer must be before it is
 // reported as an orphan — younger buffers may belong to a push in flight.
 const staleUploadAge = 24 * time.Hour
 
-// VerifyIntegrity implements format.IntegrityChecker.
+// VerifyIntegrity implements format.Handler.
 //
 // OCI is content-addressed, which makes it the most verifiable format: every
 // blob and manifest key embeds the sha256 the bytes must hash to, and every

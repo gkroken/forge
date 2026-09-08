@@ -380,10 +380,10 @@ func shortGroupNames(dns []string) []string {
 // Read-only accessors expose non-secret config for the admin UI. BindPassword is
 // deliberately never exposed.
 
-func (c *Client) URLs() []string          { return c.cfg.URLs }
-func (c *Client) BindDN() string          { return c.cfg.BindDN }
-func (c *Client) UserBaseDN() string      { return c.cfg.UserBaseDN }
-func (c *Client) UserFilter() string      { return c.cfg.UserFilter }
-func (c *Client) GroupMode() string       { return c.cfg.GroupMode }
+func (c *Client) URLs() []string              { return c.cfg.URLs }
+func (c *Client) BindDN() string              { return c.cfg.BindDN }
+func (c *Client) UserBaseDN() string          { return c.cfg.UserBaseDN }
+func (c *Client) UserFilter() string          { return c.cfg.UserFilter }
+func (c *Client) GroupMode() string           { return c.cfg.GroupMode }
 func (c *Client) DefaultGrants() []auth.Grant { return c.cfg.DefaultGrants }
-func (c *Client) TokenTTL() time.Duration { return c.cfg.TokenTTL }
+func (c *Client) TokenTTL() time.Duration     { return c.cfg.TokenTTL }

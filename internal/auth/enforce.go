@@ -28,9 +28,9 @@ func NewEnforcer(store Store, repos *repo.Manager) *Enforcer {
 type decision int
 
 const (
-	decisionAllow decision = iota
-	decisionNeedAuth   // 401: no token or invalid/expired token
-	decisionForbidden  // 403: valid token, insufficient role
+	decisionAllow     decision = iota
+	decisionNeedAuth           // 401: no token or invalid/expired token
+	decisionForbidden          // 403: valid token, insufficient role
 )
 
 // Middleware wraps next, enforcing the auth policy before each call.

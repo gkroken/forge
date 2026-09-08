@@ -39,7 +39,7 @@ func expBackoff(attempt int) time.Duration {
 		attempt = 1
 	}
 	d := backoffBase << (attempt - 1) // base * 2^(attempt-1)
-	if d <= 0 || d > maxBackoff {      // overflow or past the ceiling
+	if d <= 0 || d > maxBackoff {     // overflow or past the ceiling
 		d = maxBackoff
 	}
 	half := d / 2

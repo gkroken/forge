@@ -40,7 +40,7 @@ import (
 )
 
 // Handler implements format.Handler for the OCI Distribution Spec.
-type Handler struct{}
+type Handler struct{ format.Unsupported }
 
 func New() *Handler               { return &Handler{} }
 func (h *Handler) Format() string { return "oci" }
@@ -510,7 +510,7 @@ func newUUID() string {
 	return hex.EncodeToString(b)
 }
 
-// VulnGateTarget implements format.VulnGate for the download-policy gate. It
+// VulnGateTarget implements format.Handler for the download-policy gate. It
 // returns the image name and tag for tag-addressed manifest GETs so the gate
 // can look up findings in the vuln store. Digest refs (sha256:...) fail open —
 // the gate can't map a digest to a specific scanned tag without a reverse
@@ -529,7 +529,7 @@ var _ interface {
 	VulnGateTarget(string) (string, string, bool)
 } = (*Handler)(nil)
 
-// BrowseRepo implements format.Browsable.
+// BrowseRepo implements format.Handler.
 // OCI tags are stored at meta key "tags/{image}/{tag}".
 func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 	keys, err := c.Meta.List(h.ns(c))
@@ -567,7 +567,7 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 	return entries, nil
 }
 
-// Inspect implements format.Inspectable for the component detail page.
+// Inspect implements format.Handler for the component detail page.
 func (h *Handler) Inspect(c *format.Context, baseURL, image string) (format.ComponentDetail, bool) {
 	keys, err := c.Meta.List(h.ns(c))
 	if err != nil {

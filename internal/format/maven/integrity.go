@@ -11,9 +11,8 @@ import (
 )
 
 // Compile-time assertion that the handler implements the integrity seam.
-var _ format.IntegrityChecker = (*Handler)(nil)
 
-// VerifyIntegrity implements format.IntegrityChecker.
+// VerifyIntegrity implements format.Handler.
 //
 // Maven's blobs are the source of truth (indexes are generated from them), so
 // a blob without metadata is normal — the invariants run the other way:

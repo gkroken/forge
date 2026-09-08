@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -964,7 +965,7 @@ func (s *Server) handleRepoHealth(w http.ResponseWriter, r *http.Request, name s
 
 // handleReindex serves POST /api/v1/repos/{name}/reindex.
 // Formats with a materialized index (npm's packument) rebuild it via the
-// optional format.Reindexer seam — the repair for "drift" integrity findings.
+// optional format.Handler seam — the repair for "drift" integrity findings.
 // Every other format generates its indexes on demand, so there is nothing to
 // rebuild and the response says so honestly.
 func (s *Server) handleReindex(w http.ResponseWriter, r *http.Request, name string) {
@@ -982,19 +983,18 @@ func (s *Server) handleReindex(w http.ResponseWriter, r *http.Request, name stri
 		http.Error(w, "no handler for format: "+rp.Format, http.StatusNotImplemented)
 		return
 	}
-	ri, ok := h.(format.Reindexer)
-	if !ok {
+	c := &format.Context{
+		Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: nil,
+		Repos: s.Repos, Queue: s.Queue, Metrics: s.Metrics,
+	}
+	n, err := h.Reindex(r.Context(), c)
+	if errors.Is(err, format.ErrNotSupported) {
 		writeJSON(w, map[string]string{
 			"status": "noop",
 			"detail": "indexes for " + rp.Format + " are generated on demand; there is nothing to rebuild",
 		})
 		return
 	}
-	c := &format.Context{
-		Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: nil,
-		Repos: s.Repos, Queue: s.Queue, Metrics: s.Metrics,
-	}
-	n, err := ri.Reindex(r.Context(), c)
 	if err != nil {
 		http.Error(w, "reindex failed: "+err.Error(), http.StatusInternalServerError)
 		return

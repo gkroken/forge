@@ -127,7 +127,7 @@ func TestConcurrentPublish(t *testing.T) {
 			})
 		}(i)
 	}
-	wg.Wait()  // all publishes done
+	wg.Wait() // all publishes done
 	q.Drain() // all regen jobs processed
 
 	// Every version must appear in the final packument.
