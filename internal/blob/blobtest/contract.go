@@ -151,10 +151,48 @@ func RunContract(t *testing.T, s blob.Store) {
 		}
 	})
 
-	// S3 uploads stream with an unknown length, which makes the client split the
-	// body into multipart chunks. Checksums are computed from a TeeReader as
-	// those bytes go past, so a payload large enough to be split is the case
-	// that would catch the digests being taken from only one part.
+	// The S3 store picks between a single known-length PUT and a streamed
+	// multipart upload at an 8 MiB threshold. Both sides of that boundary have
+	// to produce identical digests and bytes, so exercise each.
+	t.Run("InlineBoundaryChecksums", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			size int
+		}{
+			{"justUnderInlineLimit", (8 << 20) - 1024},
+			{"justOverInlineLimit", (8 << 20) + 1024},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				data := bytes.Repeat([]byte("b"), tc.size)
+				want := sha256.Sum256(data)
+				info, err := s.Put("large/"+tc.name, bytes.NewReader(data))
+				if err != nil {
+					t.Fatalf("put: %v", err)
+				}
+				if info.Size != int64(tc.size) {
+					t.Fatalf("size: got %d want %d", info.Size, tc.size)
+				}
+				if info.SHA256 != hex.EncodeToString(want[:]) {
+					t.Fatalf("sha256 mismatch across the inline/stream boundary")
+				}
+				rc, err := s.Get("large/" + tc.name)
+				if err != nil {
+					t.Fatalf("get: %v", err)
+				}
+				defer rc.Close()
+				back, err := io.ReadAll(rc)
+				if err != nil {
+					t.Fatalf("read: %v", err)
+				}
+				if !bytes.Equal(back, data) {
+					t.Fatalf("round-trip mismatch at %d bytes", tc.size)
+				}
+			})
+		}
+	})
+
+	// A payload large enough to be split into several parts: the case that would
+	// catch digests being taken from only one of them.
 	t.Run("MultipartStreamChecksums", func(t *testing.T) {
 		const size = 20 << 20 // 20 MiB — above the client's default part size
 		data := bytes.Repeat([]byte("multipart-forge-"), size/16)

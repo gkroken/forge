@@ -1,6 +1,7 @@
 package blob
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5"  // #nosec G501 -- MD5/SHA1 required by Maven/npm protocol specs
 	"crypto/sha1" // #nosec G505
@@ -50,26 +51,56 @@ func NewS3(cfg S3Config) (*S3, error) {
 	return &S3{client: client, bucket: cfg.Bucket}, nil
 }
 
+// s3InlineMax is the largest artifact uploaded in a single request with a known
+// length. Below it the body is small enough to hold briefly; above it, memory
+// matters more than the extra round trips.
+//
+// s3PartSize bounds what minio-go allocates for an unknown-length upload. It
+// must be at least S3's 5 MiB part minimum.
+const (
+	s3InlineMax = 8 << 20
+	s3PartSize  = 16 << 20
+)
+
 func (s *S3) Put(key string, r io.Reader) (Info, error) {
-	// Stream straight through to S3, hashing as the bytes go past, rather than
-	// buffering the whole artifact to learn its size first: a multi-gigabyte
-	// container layer or fat jar would otherwise be held entirely in memory,
-	// and several concurrent uploads would exhaust the process.
-	//
-	// Size -1 tells minio-go the length is unknown, which makes it choose a
-	// multipart upload and stream the parts. The TeeReader feeds every byte to
-	// the checksum hashes on its way into that upload, so the digests are
-	// complete exactly when the upload is.
 	hSHA256 := sha256.New()
 	hSHA1 := sha1.New() // #nosec G401
 	hMD5 := md5.New()   // #nosec G401
-	tee := io.TeeReader(r, io.MultiWriter(hSHA256, hSHA1, hMD5))
+	hashes := io.MultiWriter(hSHA256, hSHA1, hMD5)
 
-	info, err := s.client.PutObject(
-		context.Background(), s.bucket, key,
-		tee, -1,
-		minio.PutObjectOptions{},
-	)
+	// Read up to the inline limit to find out which kind of upload this is.
+	// Nearly every artifact — a jar, a chart, an npm tarball — ends here, and
+	// gets a single known-length PUT whose memory cost is its own size.
+	var head bytes.Buffer
+	n, err := io.CopyN(&head, r, s3InlineMax+1)
+	if err != nil && err != io.EOF {
+		return Info{}, err
+	}
+
+	var info minio.UploadInfo
+	if n <= s3InlineMax {
+		data := head.Bytes()
+		if _, err := hashes.Write(data); err != nil {
+			return Info{}, err
+		}
+		info, err = s.client.PutObject(
+			context.Background(), s.bucket, key,
+			bytes.NewReader(data), int64(len(data)),
+			minio.PutObjectOptions{},
+		)
+	} else {
+		// Genuinely large: stream the rest rather than buffering it, and pin the
+		// part size so an upload costs one bounded buffer instead of whatever
+		// minio-go would pick for an object of unknown length. Passing -1 here
+		// without a PartSize is what OOM-killed a 512Mi pod: every concurrent
+		// upload, however small the artifact, reserved a part buffer.
+		body := io.MultiReader(bytes.NewReader(head.Bytes()), r)
+		info, err = s.client.PutObject(
+			context.Background(), s.bucket, key,
+			io.TeeReader(body, hashes), -1,
+			minio.PutObjectOptions{PartSize: s3PartSize},
+		)
+	}
 	if err != nil {
 		return Info{}, err
 	}
