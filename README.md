@@ -1,6 +1,6 @@
 # forge — multi-format artifact repository
 
-A Nexus-style artifact repository supporting **Maven, npm, Helm, CRAN, and OCI**
+A Nexus-style artifact repository supporting **Maven, npm, Helm, CRAN, PyPI, and OCI**
 in hosted, proxy, and group modes. Single static Go binary; zero external
 dependencies for eval mode; Postgres + S3-compatible object store for production.
 
@@ -39,6 +39,7 @@ go build -o forge ./cmd/forge
 | npm    | ✅ | ✅ | ✅ | `npm`, `pnpm`, `yarn` |
 | Helm   | ✅ | — | ✅ | `helm` 3.x (repo + `oci://`) |
 | CRAN   | ✅ | ✅ | ✅ | `R` install.packages, `renv`, `pak` |
+| PyPI   | ✅ | — | — | `pip` 24.x, `twine` 5.x |
 | OCI    | ✅ | — | — | `oras`, `crane`, `helm push oci://` |
 
 All clients are exercised by the conformance suite against a live forge instance
@@ -69,6 +70,10 @@ helm push mychart-0.1.0.tgz oci://localhost:8080/docker-hosted   # OCI mode
 install.packages("pkg", repos="http://localhost:8080/repository/cran-hosted/")
 # or set as your default mirror:
 options(repos=c(forge="http://localhost:8080/repository/cran-public/"))
+
+# PyPI (Python)
+twine upload --repository-url http://localhost:8080/repository/pypi-hosted/ dist/*
+pip install --index-url http://localhost:8080/repository/pypi-hosted/simple/ mypkg
 
 # OCI / Docker
 oras push localhost:8080/docker-hosted/myimage:v1 artifact.bin
@@ -285,7 +290,7 @@ HTTP /repository/{repo-name}/{path...}
     server.go         resolves repo name → Repository
          │             looks up Format → Handler
          ▼
-  format.Registry     maps "maven"/"npm"/"helm"/"cran"/"oci" → Handler
+  format.Registry     maps "maven"/"npm"/"helm"/"cran"/"pypi"/"oci" → Handler
          │
   Handler.Serve()     receives format.Context (repo, blob, meta, http client, sub-path)
          │
@@ -356,6 +361,7 @@ internal/
                         deprecate, unpublish, audit bridge, login, group fan-out
   format/helm/          Helm repo: chart upload, index.yaml, chart API, OCI mode
   format/cran/          CRAN: DESCRIPTION parse, PACKAGES + PACKAGES.gz + PACKAGES.rds
+  format/pypi/          PyPI: twine upload, PEP 503 simple index (hosted only)
   format/oci/           OCI Distribution Spec v1.0: blobs, manifests, tags, uploads
   server/               HTTP router, auth middleware wiring, admin API, browse/search UI
   obs/                  Prometheus metrics, structured logging, audit log

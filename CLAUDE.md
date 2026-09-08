@@ -21,7 +21,7 @@ go test ./...
 go test ./internal/blob/...
 go test ./internal/meta/...
 
-# End-to-end smoke test (starts server, exercises all formats, 20 checks)
+# End-to-end smoke test (starts server, exercises all formats, 25 checks)
 go build -o forge ./cmd/forge && bash test.sh
 ```
 
@@ -120,6 +120,7 @@ Each lives in `internal/format/{name}/`:
 - **Maven** (`maven.go`): PUT/GET using Maven 2 layout. Generates `maven-metadata.xml` aggregated over all versions present in the blob store. Synthesizes `.md5`/`.sha1`/`.sha256` sidecar responses on the fly from stored checksums. Proxy mode fetches from upstream and caches.
 - **npm** (`npm.go`): Handles `PUT /{pkg}` (publish), `GET /{pkg}` (packument), `GET /{pkg}/-/{tarball}`. Proxy mode rewrites tarball URLs in packuments to point back at forge. Packuments stored in `meta.Store`; tarballs in `blob.Store`.
 - **Helm** (`helm.go`): `POST /api/charts` (upload), `GET /index.yaml` (generated), `GET /{chart}.tgz` (download), `GET /api/charts` (list/delete API). Index generated from `meta.Store` records.
+- **PyPI** (`pypi.go`, `seams.go`): `POST /` (twine multipart upload), `GET /simple/` and `GET /simple/{project}/` (PEP 503 indexes, generated per request — nothing is materialized), `GET /packages/{project}/{file}`. Hosted only; there is no proxy path. Every identity forge keeps uses the PEP 503 normalized name (`Foo.Bar` → `foo-bar`); only filenames keep their original spelling. Values published into the simple pages are validated on upload *and* HTML-escaped on render — see `security_test.go`.
 - **CRAN** (`cran.go`): `PUT /src/contrib/{pkg}_{ver}.tar.gz` (upload, parses DESCRIPTION), `GET /src/contrib/PACKAGES` and `PACKAGES.gz` (generated index). Proxy mode fetches from upstream CRAN.
 
 ## Browse UI — format-aware left pane

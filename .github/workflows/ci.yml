@@ -152,7 +152,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: npm conformance (proxy + hosted)
+      - name: Conformance suite (all formats, real clients in containers)
         run: go test -tags conformance -timeout 600s -v ./internal/conformance/...
 
   security:

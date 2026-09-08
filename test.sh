@@ -114,6 +114,26 @@ check "PACKAGES has package" "$PKGS" "Package: mathutils"
 check "PACKAGES has version" "$PKGS" "Version: 0.2.0"
 check "PACKAGES.gz served" "$(curl -s -o /tmp/p.gz -w '%{http_code}' $BASE/repository/cran-hosted/src/contrib/PACKAGES.gz)" "200"
 
+echo "== PYPI hosted =="
+# twine posts a multipart form: the metadata as fields, the artifact as "content".
+# The name is deliberately spelled differently from how PEP 503 normalizes it, so
+# a mismatch between forge and pip shows up here rather than in someone's CI.
+printf 'wheel-bytes-not-a-real-zip' > /tmp/my_package-1.0.0-py3-none-any.whl
+curl -s -X POST \
+  -F ":action=file_upload" -F "name=My_Package" -F "version=1.0.0" \
+  -F "requires_python=>=3.8" \
+  -F "content=@/tmp/my_package-1.0.0-py3-none-any.whl" \
+  $BASE/repository/pypi-hosted/ >/dev/null
+SIMPLE=$(curl -s $BASE/repository/pypi-hosted/simple/)
+check "simple index lists normalized project" "$SIMPLE" "my-package"
+# pip may ask under any equivalent spelling; all must reach the same page.
+PROJ=$(curl -s $BASE/repository/pypi-hosted/simple/My.Package/)
+check "simple page found under alternate spelling" "$PROJ" "my_package-1.0.0-py3-none-any.whl"
+check "simple page pins the hash" "$PROJ" "#sha256="
+check "simple page carries requires-python" "$PROJ" "data-requires-python"
+curl -s -o /tmp/dl.whl $BASE/repository/pypi-hosted/packages/my-package/my_package-1.0.0-py3-none-any.whl
+check "wheel downloads byte-identical" "$(cat /tmp/dl.whl)" "wheel-bytes-not-a-real-zip"
+
 echo
 echo "==================== RESULTS: $PASS passed, $FAIL failed ===================="
 exit $FAIL

@@ -188,6 +188,7 @@ func main() {
 			{Name: "npm-hosted", Format: "npm", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
 			{Name: "helm-hosted", Format: "helm", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
 			{Name: "cran-hosted", Format: "cran", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
+			{Name: "pypi-hosted", Format: "pypi", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
 			// Proxy: read-through caches of public registries.
 			{Name: "maven-central", Format: "maven", Kind: repo.Proxy,
 				Upstream: "https://repo1.maven.org/maven2", AnonymousRead: true},
