@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -592,8 +593,26 @@ func main() {
 
 	// Keep the drift gauge current so Prometheus/Argo see divergence without
 	// anyone hitting the endpoint.
+	// Background reconcilers are signalled to stop AND waited for. Closing the
+	// channel only asks; an apply cut off midway leaves the state it was
+	// writing half-done. It converges on the next boot, but a shutdown that
+	// interrupts a write is worth not doing when waiting costs nothing.
 	driftDone := make(chan struct{})
-	defer close(driftDone)
+	var configWorkers sync.WaitGroup
+	defer func() {
+		close(driftDone)
+		// Bounded: waiting for an in-flight apply avoids tearing it, but a
+		// watcher that never returns must not hold a terminating pod open
+		// forever. A hung shutdown is worse to operate than the write this
+		// protects, which converges on the next boot anyway.
+		stopped := make(chan struct{})
+		go func() { configWorkers.Wait(); close(stopped) }()
+		select {
+		case <-stopped:
+		case <-time.After(5 * time.Second):
+			slog.Warn("config: reconciler did not stop in time; exiting anyway")
+		}
+	}()
 	if *configDriftEvery > 0 {
 		forgeSrv.StartDriftWatcher(*configDriftEvery, driftDone)
 	}
@@ -605,19 +624,23 @@ func main() {
 		if every <= 0 {
 			every = time.Minute
 		}
-		go config.Watch(*configPath, cfgAppliers, every, driftDone, func(res config.Result, err error) {
-			if err != nil {
-				slog.Error("config: re-apply failed", "err", err)
-				return
-			}
-			slog.Info("config: re-applied after file change",
-				"repos", res.Repositories.Changes(),
-				"cleanup_policies", res.CleanupPolicies.Changes(),
-				"security_policies", res.SecurityPolicies.Changes(),
-				"roles", res.Roles.Changes(),
-				"webhooks", res.Webhooks.Changes(),
-			)
-		})
+		configWorkers.Add(1)
+		go func() {
+			defer configWorkers.Done()
+			config.Watch(*configPath, cfgAppliers, every, driftDone, func(res config.Result, err error) {
+				if err != nil {
+					slog.Error("config: re-apply failed", "err", err)
+					return
+				}
+				slog.Info("config: re-applied after file change",
+					"repos", res.Repositories.Changes(),
+					"cleanup_policies", res.CleanupPolicies.Changes(),
+					"security_policies", res.SecurityPolicies.Changes(),
+					"roles", res.Roles.Changes(),
+					"webhooks", res.Webhooks.Changes(),
+				)
+			})
+		}()
 	}
 	go func() {
 		<-quit
