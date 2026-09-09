@@ -289,19 +289,38 @@ type Fetcher struct {
 	cfg    Config
 	now    func() time.Time // injectable for deterministic testing
 
-	mu       sync.Mutex
-	breakers map[string]*breaker // keyed by "scheme://host"
-
-	flight flightGroup // coalesces concurrent cache-miss fetches per blobKey
+	// Coalescing and circuit-breaking state is deliberately NOT held here.
+	//
+	// Both only mean anything across concurrent requests, and every format
+	// constructs a Fetcher inside its handler — one per request. Per-Fetcher
+	// state therefore made both features inert: measured, ten concurrent
+	// requests for one uncached artifact produced ten upstream fetches, and a
+	// breaker could never accumulate the failures needed to open.
+	//
+	// The state lives at package level instead, keyed the way each concept is
+	// actually scoped: coalescing by blob key, which already carries the
+	// repository name, and breaking by upstream host, which is the granularity
+	// a failing host deserves. Config stays per-Fetcher, so a repository's TTL
+	// or credentials are still read fresh on every request.
+	sharedState
 }
+
+// sharedState is process-wide, so a per-request Fetcher still participates.
+type sharedState struct{}
+
+var (
+	breakerMu sync.Mutex
+	breakers  = map[string]*breaker{} // keyed by "scheme://host"
+
+	inflight flightGroup // coalesces concurrent cache-miss fetches per blobKey
+)
 
 // New returns a Fetcher backed by client with the given config.
 func New(client *http.Client, cfg Config) *Fetcher {
 	return &Fetcher{
-		client:   client,
-		cfg:      cfg,
-		now:      time.Now,
-		breakers: make(map[string]*breaker),
+		client: client,
+		cfg:    cfg,
+		now:    time.Now,
 	}
 }
 
@@ -355,12 +374,12 @@ func (g *flightGroup) do(key string, fn func() (string, bool, error)) (string, b
 }
 
 func (f *Fetcher) getBreaker(host string) *breaker {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	b, ok := f.breakers[host]
+	breakerMu.Lock()
+	defer breakerMu.Unlock()
+	b, ok := breakers[host]
 	if !ok {
 		b = &breaker{host: host}
-		f.breakers[host] = b
+		breakers[host] = b
 	}
 	return b
 }
@@ -438,7 +457,7 @@ func (f *Fetcher) Fetch(blobKey, cacheNS, upURL string, blobs blob.Store, metas 
 	// fetch. The leader runs the closure below; followers block, then fall
 	// through to read the blob the leader just cached. The closure returns
 	// (contentType, hasBlob, err): hasBlob means a servable blob is in the store.
-	ct, hasBlob, err := f.flight.do(blobKey, func() (string, bool, error) {
+	ct, hasBlob, err := inflight.do(blobKey, func() (string, bool, error) {
 		// ── 3. Circuit breaker check ───────────────────────────────────
 		host := upstreamHost(upURL)
 		cb := f.getBreaker(host)
@@ -609,6 +628,16 @@ func ResetHealth() {
 		globalHealth.Delete(k)
 		return true
 	})
+}
+
+// ResetBreakers clears the process-global circuit-breaker state. Like
+// ResetHealth it exists for tests: the breakers outlive any one Fetcher on
+// purpose, so without this a breaker opened by one test would still be open in
+// the next.
+func ResetBreakers() {
+	breakerMu.Lock()
+	defer breakerMu.Unlock()
+	breakers = map[string]*breaker{}
 }
 
 func (f *Fetcher) doRequest(upURL string, condHeaders map[string]string) (*upstreamResult, error) {
