@@ -75,43 +75,49 @@ func attrs(tag string) map[string]string {
 // proxySimpleProject fetches a project's upstream simple page, records where
 // each file really lives, and serves the page with every link pointing back at
 // forge so pip downloads through the cache rather than around it.
-func (h *Handler) proxySimpleProject(w http.ResponseWriter, r *http.Request, c *format.Context, project string) {
+// proxyProjectFiles fetches a project's upstream simple page, records where
+// each file really lives, and returns the usable links. Split out from the
+// rendering because a group repo needs the same records without the HTML.
+//
+// A proxy member's local cache is NOT the answer here: it holds only what has
+// been downloaded so far, so a group built from it would hide versions the
+// group can actually serve.
+func (h *Handler) proxyProjectFiles(c *format.Context, project string) ([]upstreamFile, error) {
 	upURL := strings.TrimRight(c.Repo.Upstream, "/") + "/simple/" + url.PathEscape(project) + "/"
 	key := c.Key("simple/" + project + "/index.html")
 
 	f := proxy.New(c.HTTP, c.ProxyConfig())
 	rc, _, err := f.Fetch(key, c.Repo.Name+":proxy", upURL, c.Blob, c.Meta)
-	if errors.Is(err, proxy.ErrNotFound) {
-		http.Error(w, "no such project: "+project, http.StatusNotFound)
-		return
-	}
 	if err != nil {
-		http.Error(w, "upstream fetch failed", http.StatusBadGateway)
-		return
+		return nil, err
 	}
 	defer rc.Close() //nolint:errcheck
 
 	body, err := io.ReadAll(rc)
 	if err != nil {
-		http.Error(w, "upstream read failed", http.StatusBadGateway)
-		return
+		return nil, err
 	}
+	var out []upstreamFile
+	for _, m := range anchorRe.FindAllStringSubmatch(string(body), -1) {
+		a := attrs(m[1])
+		if a["href"] == "" {
+			continue
+		}
+		if rec, ok := h.mapUpstreamLink(c, project, a["href"], a); ok {
+			out = append(out, rec)
+		}
+	}
+	return out, nil
+}
 
-	base := publicBase(r) + "/repository/" + c.Repo.Name
+// renderSimplePage writes a PEP 503 page whose links point at repoName, which
+// is the group when a group is serving and the proxy itself otherwise.
+func renderSimplePage(w http.ResponseWriter, r *http.Request, repoName, project string, files []upstreamFile) {
+	base := publicBase(r) + "/repository/" + repoName
 	var b strings.Builder
 	safeProject := template.HTMLEscapeString(project)
 	fmt.Fprintf(&b, "<!DOCTYPE html><html><head><meta name=\"pypi:repository-version\" content=\"1.0\"><title>Links for %s</title></head><body>\n<h1>Links for %s</h1>\n", safeProject, safeProject)
-
-	for _, m := range anchorRe.FindAllStringSubmatch(string(body), -1) {
-		a := attrs(m[1])
-		href := a["href"]
-		if href == "" {
-			continue
-		}
-		rec, ok := h.mapUpstreamLink(c, project, href, a)
-		if !ok {
-			continue
-		}
+	for _, rec := range files {
 		fmt.Fprintf(&b, "<a href=\"%s\"", template.HTMLEscapeString(
 			fmt.Sprintf("%s/packages/%s/%s#sha256=%s",
 				base, url.PathEscape(project), url.PathEscape(rec.Filename), url.QueryEscape(rec.SHA256))))
@@ -130,9 +136,23 @@ func (h *Handler) proxySimpleProject(w http.ResponseWriter, r *http.Request, c *
 		fmt.Fprintf(&b, ">%s</a><br/>\n", template.HTMLEscapeString(rec.Filename))
 	}
 	b.WriteString("</body></html>\n")
-
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(b.String())) //nolint:errcheck
+}
+
+// proxySimpleProject serves one project's page from upstream, rewritten so pip
+// downloads through forge rather than around it.
+func (h *Handler) proxySimpleProject(w http.ResponseWriter, r *http.Request, c *format.Context, project string) {
+	files, err := h.proxyProjectFiles(c, project)
+	if errors.Is(err, proxy.ErrNotFound) {
+		http.Error(w, "no such project: "+project, http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "upstream fetch failed", http.StatusBadGateway)
+		return
+	}
+	renderSimplePage(w, r, c.Repo.Name, project, files)
 }
 
 // mapUpstreamLink records where one upstream file lives so a later request for

@@ -211,6 +211,8 @@ func main() {
 				Members: []string{"helm-hosted", "helm-proxy"}, AnonymousRead: true},
 			{Name: "cran-public", Format: "cran", Kind: repo.Group,
 				Members: []string{"cran-hosted", "cran-proxy"}, AnonymousRead: true},
+			{Name: "pypi-public", Format: "pypi", Kind: repo.Group,
+				Members: []string{"pypi-hosted", "pypi-proxy"}, AnonymousRead: true},
 		} {
 			// Seeded repos start online. Enabled has no "unset" sentinel, so the
 			// struct literals above leave it false; set it here before persisting

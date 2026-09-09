@@ -153,3 +153,67 @@ echo "root index refused: OK"
 echo "All PyPI proxy conformance checks passed"
 `, repo))
 }
+
+// TestPyPI_Group_ShadowsUpstream is the dependency-confusion scenario with real
+// pip: an internal package is published under a name that also exists on
+// pypi.org, and the group must serve the internal one. It also checks that a
+// package only upstream has still resolves through the same URL, because a
+// group that shadows by breaking upstream resolution is no use.
+func TestPyPI_Group_ShadowsUpstream(t *testing.T) {
+	srv := conformance.StartForge(t)
+	hosted := srv.ContainerRepo("pypi-hosted")
+	group := srv.ContainerRepo("pypi-public")
+
+	conformance.RunScript(t, "python:3-slim", fmt.Sprintf(`
+set -e
+HOSTED="%s"
+GROUP="%s"
+
+pip install --quiet --disable-pip-version-check build twine setuptools
+
+# An internal package deliberately named after a real pypi.org project.
+mkdir -p /work/six_internal && cd /work
+cat > pyproject.toml <<'EOF'
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "six"
+version = "99.0.0"
+
+[tool.setuptools]
+packages = ["six_internal"]
+EOF
+echo 'ORIGIN = "internal"' > six_internal/__init__.py
+python -m build --wheel >/dev/null
+
+TWINE_USERNAME=forge TWINE_PASSWORD=forge \
+  twine upload --disable-progress-bar --repository-url "$HOSTED" dist/*
+echo "internal 'six' published: OK"
+
+# Through the group, pip must resolve the internal package, not pypi.org's.
+pip install --quiet --disable-pip-version-check --trusted-host host.docker.internal \
+  --index-url "${GROUP}simple/" --no-deps --target /tmp/g six
+python3 - <<'PYEOF'
+import sys
+sys.path.insert(0, "/tmp/g")
+import six_internal
+assert six_internal.ORIGIN == "internal", six_internal.ORIGIN
+try:
+    import six  # the real pypi.org package would provide this module
+    raise SystemExit("upstream six was installed — the group did not shadow it")
+except ImportError:
+    pass
+print("group shadowed upstream 'six': OK")
+PYEOF
+
+# A project only upstream has must still resolve through the same URL.
+pip install --quiet --disable-pip-version-check --trusted-host host.docker.internal \
+  --index-url "${GROUP}simple/" --no-deps --target /tmp/u iniconfig
+test -d /tmp/u/iniconfig || test -f /tmp/u/iniconfig.py
+echo "upstream-only project through the group: OK"
+
+echo "All PyPI group conformance checks passed"
+`, hosted, group))
+}

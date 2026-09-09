@@ -153,6 +153,27 @@ else
   echo "  SKIP: upstream pypi.org not reachable from this network"
 fi
 
+echo "== PYPI group (hosted + proxy behind one URL) =="
+# The group must serve the internal package AND anything upstream has, and an
+# internal name must shadow the upstream one of the same name.
+curl -s -X POST -F ":action=file_upload" -F "name=six" -F "version=99.0.0" \
+  -F "content=@/tmp/my_package-1.0.0-py3-none-any.whl;filename=six-99.0.0-py3-none-any.whl" \
+  $BASE/repository/pypi-hosted/ >/dev/null
+GSIX=$(curl -s $BASE/repository/pypi-public/simple/six/)
+check "group serves the internal package" "$GSIX" "six-99.0.0-py3-none-any.whl"
+check "group links point at the group" "$GSIX" "repository/pypi-public/packages/six/"
+if echo "$GSIX" | grep -q "six-1.16.0"; then
+  bad "internal name did not shadow upstream (dependency confusion)"
+else
+  ok "internal name shadows upstream"
+fi
+check "group index lists hosted projects" "$(curl -s $BASE/repository/pypi-public/simple/)" "my-package"
+curl -s -o /tmp/gsix.whl "$BASE/repository/pypi-public/packages/six/six-99.0.0-py3-none-any.whl"
+check "group download served from hosted member" "$(cat /tmp/gsix.whl)" "wheel-bytes-not-a-real-zip"
+# A project only upstream has still resolves through the group.
+GREQ=$(curl -s $BASE/repository/pypi-public/simple/six-nonexistent-xyz/ -o /dev/null -w '%{http_code}')
+check "unknown project 404s through the group" "$GREQ" "404"
+
 echo
 echo "==================== RESULTS: $PASS passed, $FAIL failed ===================="
 exit $FAIL

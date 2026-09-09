@@ -86,8 +86,6 @@ repositories:
 
   # The upstream is the index host; PyPI serves files from a different host
   # (files.pythonhosted.org), and forge follows the links the index hands it.
-  # Note there is no pypi group below: group is the one kind this format does
-  # not implement yet, and a `kind: group` pypi repo answers 501.
   - name: pypi-proxy
     format: pypi
     kind: proxy
@@ -116,6 +114,17 @@ repositories:
     members:
       - npm-hosted
       - npm-proxy
+
+  # Point pip at this one URL and internal packages shadow anything upstream
+  # publishes under the same name.
+  - name: pypi-public
+    format: pypi
+    kind: group
+    enabled: true
+    anonymousRead: true
+    members:
+      - pypi-hosted
+      - pypi-proxy
 
 cleanupPolicies:
   # Rules combine: a version is deleted if ANY of them matches. keepReleasesOnly

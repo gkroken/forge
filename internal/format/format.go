@@ -393,6 +393,93 @@ type Dep struct {
 // (maven-metadata.xml, Helm index.yaml, CRAN PACKAGES) have nothing to
 // rebuild and simply don't implement it.
 
+// GroupFetch serves the first member of a group that answers successfully, and
+// reports whether any did. Members are probed in configured order through a
+// Capture, so a member's own handler decides what it has — a hosted member
+// reads its blobs, a proxy member fetches and caches.
+//
+// TODO(refactor): maven.groupGet, npm.groupTarball, helm.groupDownload and
+// cran.groupDownload/groupDownloadBin each hand-roll this exact loop. They
+// predate this helper and are left alone deliberately: they carry real
+// conformance coverage, and migrating them is a refactor of its own rather
+// than a rider on a feature change. See docs/notes/group-generics.md.
+func GroupFetch(h Handler, w http.ResponseWriter, r *http.Request, c *Context) bool {
+	for _, name := range c.Repo.Members {
+		mc, ok := c.MemberCtx(name)
+		if !ok {
+			continue
+		}
+		cap := NewCapture()
+		h.Serve(cap, r, mc)
+		if cap.OK() {
+			cap.Replay(w)
+			return true
+		}
+	}
+	return false
+}
+
+// GroupMerge applies a group repository's policy to whatever its members offer.
+//
+// The policy has no format in it, which is why this is generic over the record
+// type: walk members in configured order, let the first member to offer a given
+// component+version win, and drop anything a proxy member offers under a name
+// the group already serves from a hosted member or that a claim covers. That
+// last rule is the dependency-confusion protection — without it a public
+// package can shadow an internal one of the same name.
+//
+// enumerate is supplied by the caller because "what does this member offer"
+// genuinely differs: a hosted member reads its own records, while a proxy member
+// must consult upstream (its local cache is only what has been downloaded so
+// far, which would under-report what the group can actually serve).
+//
+// TODO(refactor): cran.mergeGroupRecords is this function written against
+// cran's own record type, and npm/helm have narrower variants. They should
+// collapse onto this once it has proven itself here.
+func GroupMerge[T any](c *Context, enumerate func(*Context) []T, ident func(T) (component, version string)) []T {
+	type memberResult struct {
+		proxy bool
+		items []T
+	}
+	var collected []memberResult
+	hostedNames := map[string]bool{}
+
+	for _, name := range c.Repo.Members {
+		mc, ok := c.MemberCtx(name)
+		if !ok {
+			continue
+		}
+		items := enumerate(mc)
+		isProxy := mc.Repo.Kind == repo.Proxy
+		if !isProxy {
+			for _, it := range items {
+				comp, _ := ident(it)
+				hostedNames[comp] = true
+			}
+		}
+		collected = append(collected, memberResult{proxy: isProxy, items: items})
+	}
+
+	// Second pass, so a hosted member listed after a proxy still shadows it.
+	seen := map[string]bool{}
+	var out []T
+	for _, m := range collected {
+		for _, it := range m.items {
+			comp, ver := ident(it)
+			if m.proxy && (hostedNames[comp] || (c.NameClaimed != nil && c.NameClaimed(comp))) {
+				continue
+			}
+			key := comp + "\x00" + ver
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
 // GroupBrowse merges BrowseRepo results from every member of a group context.
 // First member that contains a given Name wins; output is sorted by Name.
 func GroupBrowse(h Handler, c *Context) ([]BrowseEntry, error) {

@@ -135,19 +135,3 @@ func TestSimplePages_EscapeStoredValues(t *testing.T) {
 		}
 	}
 }
-
-// TestGroupKindRefused — group is the one kind with no path yet, and it must
-// say so: an empty but valid index would make pip report "no matching
-// distribution" with no hint that the repository kind is the cause.
-func TestGroupKindRefused(t *testing.T) {
-	h, c := New(), securityCtx(t)
-	c.Repo.Kind = repo.Group
-	for _, sub := range []string{"", "simple", "simple/anything", "packages/x/y-1.0.whl"} {
-		w := httptest.NewRecorder()
-		c.Sub = sub
-		h.Serve(w, httptest.NewRequest("GET", "/", nil), c)
-		if w.Code != 501 {
-			t.Errorf("group sub=%q: got %d, want 501", sub, w.Code)
-		}
-	}
-}

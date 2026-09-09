@@ -107,13 +107,8 @@ func validFilename(name string) bool {
 // --- Serve ------------------------------------------------------------------
 
 func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Context) {
-	// Group is the one kind with no path here yet. Said up front, because the
-	// alternative is answering /simple/ with an empty but perfectly valid
-	// index: pip resolves nothing and reports only "no matching distribution",
-	// with no hint that the repository kind is the cause.
 	if c.Repo.Kind == repo.Group {
-		http.Error(w, "pypi groups are not implemented: use the hosted or proxy repository directly",
-			http.StatusNotImplemented)
+		h.serveGroup(w, r, c)
 		return
 	}
 
