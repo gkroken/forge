@@ -136,6 +136,63 @@ traversal, and `Context.Key` containment had **already** neutralised it before
 anyone went looking. Putting that guard in the spine rather than in npm paid for
 itself within the hour.
 
+### 5. Immutable repositories could be mutated · FIXED
+
+`immutable: true` stopped an overwrite in place and nothing else. Publish,
+DELETE (204), publish the same coordinate again with different bytes (201) — the
+artifact changed while the repository still reported itself immutable.
+
+`blob.Immutable` wrapped only `Put`. The server does refuse deletion on
+immutable repos, but at the admin API; a protocol-level
+`DELETE /repository/{repo}/{path}` runs through the format handler to the store,
+which passed it through.
+
+The reason it survived is the interesting part: **there was a test, and it
+asserted the bypass.**
+
+    // Delete then re-put is allowed at the store level (the server blocks
+    // delete on immutable repos; the wrapper only guards live overwrites).
+
+An assumption about a sibling component, written down as expected behaviour and
+true of only one of the two routes that reach the bytes.
+
+### 6. OCI accepted manifests referencing content it did not hold · FIXED
+
+The spec calls for `BLOB_UNKNOWN`; forge returned 201, listed the tag, served
+the manifest, and failed the pull at layer-fetch time — an image the registry
+advertises that nobody can pull. Integrity verify did report both missing blobs
+afterwards, so it was a robustness gap rather than a silent one.
+
+## Subsystems that held up under attack
+
+Probed and found sound, recorded so nobody re-tests them blind:
+
+- **Webhook SSRF.** Every bypass refused: `localhost`, `[::1]`, decimal IP
+  (`2130706433`), `127.1`, `0.0.0.0`, `169.254.169.254`, RFC1918, `file://`, and
+  `localtest.me` — a *public* DNS name resolving to loopback, which proves the
+  guard resolves and checks the resolved address rather than the literal string.
+  A `Control` hook on the dialer re-checks the concrete address at dial time,
+  so DNS rebinding and redirects to internal hosts are caught too.
+- **Webhook secrets and signing.** Creation echoes the secret you just supplied;
+  the list endpoint returns `""`. Signature is
+  `HMAC-SHA256(timestamp + "." + body)` — the replay-resistant construction.
+  Webhook creation is admin-only.
+- **CSRF.** The SSO session cookie is `HttpOnly; SameSite=Strict; Max-Age=28800`,
+  and `Secure` in a secure context. Strict means a browser never sends it
+  cross-site.
+- **Public group over a private member.** Refused in both directions — creating
+  the group, and flipping an existing member private afterwards — each with a
+  message naming the offending pair.
+- **Token lifecycle.** Revocation takes effect on the next request (200 → 401);
+  an already-expired token is refused; selector-scoped grants confine writes to
+  their path (`com/acme/allowed/**` 201, everything else 403).
+- **Quota** (507 at the limit), **retention** (`?dry=true` previews with reasons
+  and deletes nothing; the real run drops snapshots and keeps releases), and the
+  **vulnerability gate** against live OSV data — `warn` returns 200 with
+  `X-Forge-Vulnerabilities`, `block` returns 403 naming the advisory.
+- **OCI digests.** Content not matching its digest is refused with
+  `DIGEST_INVALID`; malformed and traversing digests are refused.
+
 ## Friction worth fixing, but not bugs
 
 - **No self-service credentials.** The token API is admin-only for create, list
@@ -156,6 +213,13 @@ itself within the hour.
   change" line also logs with all-zero counts when nothing changed, which reads
   as "your change did nothing" — it briefly convinced me the watcher was broken
   before the next cycle applied it.
+- **A destructive endpoint ignores unknown query parameters.** I previewed a
+  retention run with `?dryRun=true`, which is not a parameter — the real one is
+  `?dry=true` — so it performed a live cleanup and deleted two artifacts while I
+  believed I was previewing. My mistake, and the docs are correct, but a typo
+  like `?dry=ture` behaves identically. Rejecting unrecognised query parameters
+  with a 400 on the cleanup endpoint would turn a silent data-loss footgun into
+  an error.
 - **Group shadowing is all-or-nothing.** Once `is-odd` exists internally, the
   group serves no upstream version of it. That is the deliberate and safe
   policy, consistent across formats, but a team that vendors one patched version
