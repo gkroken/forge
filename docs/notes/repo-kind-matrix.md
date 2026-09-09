@@ -9,8 +9,8 @@ python3 scripts/repo-kind-matrix.py
 ```
 
 Proxy and group checks talk to the real upstreams, so the run needs network
-access. Last run: **117 passed, 1 failed** — the remainder is F3a (Docker Hub
-token auth). F1 and F2 are fixed.
+access. Last run: **118 passed, 0 failed**. F1, F2 and F3 are all fixed; the
+findings are kept below because how each one hid is more useful than the fix.
 
 ## The checklist
 
@@ -168,7 +168,7 @@ exempt, because they are digest-addressed and a hosted manifest may legitimately
 reference layers a proxy member cached. Ownership bites only for names a hosted
 member actually holds, so a group is still a proxy for everything else.
 
-### F3 — OCI proxy cannot pull from Docker Hub, and caches nothing
+### F3 — OCI proxy could not pull from Docker Hub, and cached nothing · FIXED
 
 `internal/format/oci/oci.go` · `proxyPass`
 
@@ -219,6 +219,30 @@ distinction wrong is exactly the F1b bug:
 
 Do F3b first if only one gets done: it is the reason a proxy exists, and it
 applies to the registries that already work today.
+
+#### Outcome
+
+Both done. F3a walks the Bearer challenge from `/v2/`, exchanges it for a pull
+token and caches tokens per (upstream, image) until `expires_in`; configured
+`ProxyAuth` authenticates the token request itself, which is how private
+upstream images work. F3b routes every proxy read through `proxy.Fetcher`.
+Measured after: Docker Hub `library/alpine` pulls 200, the repo holds cached
+blobs and cache entries where it held none, and a second pull is 0.5ms against
+159ms cold.
+
+Two things the implementation needed that the map missed:
+
+- **`proxy.Fetcher` could not send request headers**, and for OCI the `Accept`
+  header decides whether a registry returns an image manifest or a
+  multi-platform index. `Config.Headers` was added for this. Tag-addressed
+  manifests are also cached per-`Accept` (a hash of the header is in the key),
+  because one key per tag would hand one client the media type another asked
+  for.
+- **`MetadataMaxAge` was dead configuration.** The admin API accepts and stores
+  it, but `proxy.ConfigForRepo` only ever reads `ContentMaxAge`, so no format
+  consulted it. OCI now uses it for the mutable reads (tags, tag manifests).
+  **It remains unused by every other format** — a separate silent no-op worth
+  its own fix.
 
 ### F4 — the docs say OCI proxy is unsupported, and it is not
 

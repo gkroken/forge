@@ -40,7 +40,10 @@ import (
 )
 
 // Handler implements format.Handler for the OCI Distribution Spec.
-type Handler struct{ format.Unsupported }
+type Handler struct {
+	format.Unsupported
+	tokens tokenCache // registry auth tokens, keyed by upstream+image
+}
 
 func New() *Handler               { return &Handler{} }
 func (h *Handler) Format() string { return "oci" }
@@ -387,38 +390,13 @@ func (h *Handler) listTags(w http.ResponseWriter, c *format.Context, image strin
 
 // --- proxy pass-through ----------------------------------------------------
 
+// proxyPass serves a proxy read through the cache (see proxy.go).
 func (h *Handler) proxyPass(w http.ResponseWriter, r *http.Request, c *format.Context, image, op, ref string) {
 	if c.Repo.Upstream == "" {
 		ociError(w, "UNSUPPORTED", "no upstream configured", http.StatusBadGateway)
 		return
 	}
-	upURL, ok := upstreamURL(c, image, op, ref)
-	if !ok {
-		ociError(w, "UNSUPPORTED", "unsupported proxy operation", http.StatusNotFound)
-		return
-	}
-	req, err := http.NewRequest(r.Method, upURL, nil)
-	if err != nil {
-		ociError(w, "UNSUPPORTED", err.Error(), http.StatusBadGateway)
-		return
-	}
-	// Forward Accept header (important for manifests).
-	if accept := r.Header.Get("Accept"); accept != "" {
-		req.Header.Set("Accept", accept)
-	}
-	resp, err := doUpstream(c, req)
-	if err != nil {
-		ociError(w, "UNSUPPORTED", "upstream error: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-	for _, hdr := range []string{"Content-Type", "Docker-Content-Digest", "Content-Length"} {
-		if v := resp.Header.Get(hdr); v != "" {
-			w.Header().Set(hdr, v)
-		}
-	}
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	h.serveProxyRead(w, r, c, image, op, ref)
 }
 
 // --- helpers ---------------------------------------------------------------

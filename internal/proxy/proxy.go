@@ -102,6 +102,12 @@ type Config struct {
 	// e.g. "Basic dXNlcjpwYXNz" or "Bearer mytoken".
 	Auth string
 
+	// Headers are extra request headers sent upstream. OCI needs this: the
+	// Accept header selects which manifest kind a registry returns, so a
+	// fetch without it gets the wrong media type. Conditional-request headers
+	// take precedence over these.
+	Headers map[string]string
+
 	// MaxRetries is the number of additional attempts after a transient failure.
 	MaxRetries int
 
@@ -601,6 +607,9 @@ func (f *Fetcher) doRequest(upURL string, condHeaders map[string]string) (*upstr
 	}
 	if f.cfg.Auth != "" {
 		req.Header.Set("Authorization", f.cfg.Auth)
+	}
+	for k, v := range f.cfg.Headers {
+		req.Header.Set(k, v)
 	}
 	for k, v := range condHeaders {
 		req.Header.Set(k, v)
