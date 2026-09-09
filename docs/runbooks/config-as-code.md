@@ -134,6 +134,30 @@ Add this step after building the binary to catch config regressions per PR:
       ./forge -config-check -config deploy/config/forge.example.yaml
 ```
 
+#### Seeing what a change would do to a RUNNING install
+
+The step above answers "is this file valid", because CI has no state to compare
+against: run with no `-data`, every object reads as a creation and the plan says
+so. That is not the question a reviewer is asking.
+
+Point `-config-check` at the data directory of the install you care about and
+the plan becomes a real diff — creations, updates, and the objects already
+matching:
+
+```bash
+./forge -config-check -config forge.config.yaml -data /var/lib/forge
+#   "config plan"  repos_create:1  repos_update:0  repos_noop:12  conflicts:0
+```
+
+It writes nothing: the data directory is byte-identical afterwards, which is
+why it is safe to run against a live install's directory. On Kubernetes the
+equivalent is a one-shot job or `kubectl exec` into the running pod with the
+candidate file mounted.
+
+For the reverse question — has the running state drifted from the file it was
+applied from — use the drift endpoint (`GET /api/v1/config/drift`) rather than
+this, which compares a *candidate* file instead.
+
 ## Prune semantics and the managed-set guarantee
 
 By default, config reconcile is **additive**: it creates or updates the objects
