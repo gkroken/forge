@@ -9,8 +9,8 @@ python3 scripts/repo-kind-matrix.py
 ```
 
 Proxy and group checks talk to the real upstreams, so the run needs network
-access. Last run: **116 passed, 2 failed** — both remaining failures are OCI
-(F2, F3). F1 is fixed.
+access. Last run: **117 passed, 1 failed** — the remainder is F3a (Docker Hub
+token auth). F1 and F2 are fixed.
 
 ## The checklist
 
@@ -108,7 +108,7 @@ as authoritative and is not served from a stale copy, matching the shared
 Fetcher exactly rather than inventing a second policy. `proxy.Config` gained
 `EffectiveNegativeTTL()` so the two paths share one default.
 
-### F2 — OCI group repositories are silently empty
+### F2 — OCI group repositories were silently empty · FIXED
 
 `internal/format/oci/oci.go` · `Serve`
 
@@ -153,6 +153,20 @@ Notes that decide the design:
 
 Effort: small. The work is a `serveGroup` in the OCI handler plus a tags/list
 renderer; no new spine helpers.
+
+#### What the map got wrong
+
+Writing the tests changed one decision. The map said blobs need no shadowing
+(true) and implied tag-level merging was enough (false). Shadowing only the
+merged `tags/list` is theatre: `docker pull` resolves a tag directly and never
+reads the listing, so an "hidden" upstream image would still pull.
+
+Ownership is therefore applied at the **image name**: once a hosted member holds
+a name, proxy members stop answering for that name for both `tags/list` and
+`manifests`, via `MemberFilter` — which exists for exactly this. Blobs stay
+exempt, because they are digest-addressed and a hosted manifest may legitimately
+reference layers a proxy member cached. Ownership bites only for names a hosted
+member actually holds, so a group is still a proxy for everything else.
 
 ### F3 — OCI proxy cannot pull from Docker Hub, and caches nothing
 

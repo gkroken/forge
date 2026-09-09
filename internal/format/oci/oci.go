@@ -66,6 +66,11 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 		return
 	}
 
+	if c.Repo.Kind == repo.Group {
+		h.serveGroup(w, r, c, image, op)
+		return
+	}
+
 	if c.Repo.Kind == repo.Proxy {
 		// Proxy mode: pass-through to upstream for GET/HEAD, reject writes.
 		switch r.Method {
@@ -387,20 +392,11 @@ func (h *Handler) proxyPass(w http.ResponseWriter, r *http.Request, c *format.Co
 		ociError(w, "UNSUPPORTED", "no upstream configured", http.StatusBadGateway)
 		return
 	}
-	// Reconstruct the upstream /v2/ path.
-	var upPath string
-	switch op {
-	case "manifests":
-		upPath = "/" + image + "/manifests/" + ref
-	case "blobs":
-		upPath = "/" + image + "/blobs/" + ref
-	case "tags/list":
-		upPath = "/" + image + "/tags/list"
-	default:
+	upURL, ok := upstreamURL(c, image, op, ref)
+	if !ok {
 		ociError(w, "UNSUPPORTED", "unsupported proxy operation", http.StatusNotFound)
 		return
 	}
-	upURL := strings.TrimRight(c.Repo.Upstream, "/") + "/v2" + upPath
 	req, err := http.NewRequest(r.Method, upURL, nil)
 	if err != nil {
 		ociError(w, "UNSUPPORTED", err.Error(), http.StatusBadGateway)
@@ -410,7 +406,7 @@ func (h *Handler) proxyPass(w http.ResponseWriter, r *http.Request, c *format.Co
 	if accept := r.Header.Get("Accept"); accept != "" {
 		req.Header.Set("Accept", accept)
 	}
-	resp, err := c.HTTP.Do(req) // #nosec G704 -- upURL is built from admin-configured upstream, not user input
+	resp, err := doUpstream(c, req)
 	if err != nil {
 		ociError(w, "UNSUPPORTED", "upstream error: "+err.Error(), http.StatusBadGateway)
 		return
