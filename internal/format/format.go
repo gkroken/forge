@@ -434,47 +434,44 @@ type Dep struct {
 
 // GroupFetch serves the first member of a group that answers successfully, and
 // reports whether any did. Members are probed in configured order through a
-// Capture, so a member's own handler decides what it has — a hosted member
-// reads its blobs, a proxy member fetches and caches.
-//
-// TODO(refactor): maven.groupGet, npm.groupTarball, helm.groupDownload and
-// cran.groupDownload/groupDownloadBin each hand-roll this exact loop. They
-// predate this helper and are left alone deliberately: they carry real
-// conformance coverage, and migrating them is a refactor of its own rather
-// than a rider on a feature change. See docs/notes/group-generics.md.
+// Sink, so a member's own handler decides what it has — a hosted member reads
+// its blobs, a proxy member fetches and caches — and the response of the one
+// that serves streams straight to the client.
 func GroupFetch(h Handler, w http.ResponseWriter, r *http.Request, c *Context) bool {
 	for _, name := range c.Repo.Members {
 		mc, ok := c.MemberCtx(name)
 		if !ok {
 			continue
 		}
-		cap := NewCapture()
-		h.Serve(cap, r, mc)
-		if cap.OK() {
-			cap.Replay(w)
+		sink := NewSink(w)
+		h.Serve(sink, r, mc)
+		if sink.Served() {
 			return true
 		}
 	}
 	return false
 }
 
-// GroupMerge applies a group repository's policy to whatever its members offer.
+// GroupMerge merges what every member of a group offers into one index.
 //
-// The policy has no format in it, which is why this is generic over the record
-// type: walk members in configured order, let the first member to offer a given
-// component+version win, and drop anything a proxy member offers under a name
-// the group already serves from a hosted member or that a claim covers. That
-// last rule is the dependency-confusion protection — without it a public
-// package can shadow an internal one of the same name.
+// Two rules decide what a proxy member may contribute, and only the second is
+// the dependency-confusion guard:
 //
-// enumerate is supplied by the caller because "what does this member offer"
-// genuinely differs: a hosted member reads its own records, while a proxy member
-// must consult upstream (its local cache is only what has been downloaded so
-// far, which would under-report what the group can actually serve).
+//   - A hosted member always shadows a proxy member for a name it actually
+//     holds. That is group precedence, not a security policy, so it applies
+//     whether or not the guard is on. Gating it on the guard made turning the
+//     guard off produce a malformed index rather than a laxer one — CRAN's
+//     PACKAGES listed the same package twice, once from each member, which DCF
+//     cannot express.
+//   - A claim additionally shadows names nothing has published yet. That is
+//     the policy, and it is the part the guard toggles (NameClaimed is nil
+//     when it is off).
 //
-// TODO(refactor): cran.mergeGroupRecords is this function written against
-// cran's own record type, and npm/helm have narrower variants. They should
-// collapse onto this once it has proven itself here.
+// Members are collected before anything is decided, so a hosted member
+// shadows a proxy listed before it; a single pass silently loses that case.
+// enumerate is a callback because "what does this member offer" is kind-aware:
+// a proxy's local cache is only what has been downloaded and would hide
+// versions the group can really serve.
 func GroupMerge[T any](c *Context, enumerate func(*Context) []T, ident func(T) (component, version string)) []T {
 	type memberResult struct {
 		proxy bool

@@ -257,19 +257,9 @@ func (h *Handler) groupGet(w http.ResponseWriter, r *http.Request, c *format.Con
 			return
 		}
 	}
-	for _, name := range c.Repo.Members {
-		mc, ok := c.MemberCtx(name)
-		if !ok {
-			continue
-		}
-		cap := format.NewCapture()
-		h.get(cap, r, mc)
-		if cap.OK() {
-			cap.Replay(w)
-			return
-		}
+	if !format.GroupFetch(h, w, r, c) {
+		http.NotFound(w, r)
 	}
-	http.NotFound(w, r)
 }
 
 func (h *Handler) groupMetadata(w http.ResponseWriter, c *format.Context) {

@@ -98,7 +98,7 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 		}
 		h.publish(w, r, c)
 	case r.Method == http.MethodGet && strings.HasSuffix(c.Sub, ".tar.gz"):
-		h.download(w, c)
+		h.download(w, r, c)
 	case r.Method == http.MethodDelete && strings.HasPrefix(c.Sub, "src/contrib/") && strings.HasSuffix(c.Sub, ".tar.gz"):
 		if c.Repo.Kind != repo.Hosted {
 			http.Error(w, "cannot delete from non-hosted repository", http.StatusMethodNotAllowed)
@@ -166,9 +166,11 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, c *format.Cont
 	fmt.Fprintf(w, "stored %s %s\n", rec.Package, rec.Version)
 }
 
-func (h *Handler) download(w http.ResponseWriter, c *format.Context) {
+func (h *Handler) download(w http.ResponseWriter, r *http.Request, c *format.Context) {
 	if c.Repo.Kind == repo.Group {
-		h.groupDownload(w, c)
+		if !format.GroupFetch(h, w, r, c) {
+			http.NotFound(w, r)
+		}
 		return
 	}
 	rc, err := c.Blob.Get(c.Key(c.Sub))
@@ -184,36 +186,6 @@ func (h *Handler) download(w http.ResponseWriter, c *format.Context) {
 	defer rc.Close()
 	w.Header().Set("Content-Type", "application/gzip")
 	io.Copy(w, rc)
-}
-
-func (h *Handler) groupDownload(w http.ResponseWriter, c *format.Context) {
-	for _, name := range c.Repo.Members {
-		mc, ok := c.MemberCtx(name)
-		if !ok {
-			continue
-		}
-		if rc, err := mc.Blob.Get(mc.Key(c.Sub)); err == nil {
-			defer rc.Close()
-			w.Header().Set("Content-Type", "application/gzip")
-			io.Copy(w, rc)
-			return
-		}
-		// For proxy members, attempt upstream fetch and cache.
-		if mc.Repo.Kind == repo.Proxy {
-			url := strings.TrimRight(mc.Repo.Upstream, "/") + "/" + c.Sub
-			resp, err := mc.HTTP.Get(url)
-			if err == nil && resp.StatusCode == http.StatusOK {
-				defer resp.Body.Close()
-				var buf bytes.Buffer
-				tee := io.TeeReader(resp.Body, &buf)
-				w.Header().Set("Content-Type", "application/gzip")
-				io.Copy(w, tee)
-				mc.Blob.Put(mc.Key(c.Sub), &buf)
-				return
-			}
-		}
-	}
-	http.NotFound(w, nil)
 }
 
 // isCRANIndexPath reports whether a sub-path is one of CRAN's index files
@@ -300,57 +272,12 @@ func (h *Handler) groupPkgRecords(c *format.Context) []pkgRecord {
 // version of an internally-owned package to R's resolver. Two passes so
 // hosted names shadow regardless of member order.
 func (h *Handler) mergeGroupRecords(c *format.Context, fromProxy, fromHosted func(*format.Context) []pkgRecord) []pkgRecord {
-	type memberRecs struct {
-		proxy bool
-		recs  []pkgRecord
-	}
-	var collected []memberRecs
-	hostedNames := map[string]bool{}
-	for _, name := range c.Repo.Members {
-		mc, ok := c.MemberCtx(name)
-		if !ok {
-			continue
-		}
-		var recs []pkgRecord
+	all := format.GroupMerge(c, func(mc *format.Context) []pkgRecord {
 		if mc.Repo.Kind == repo.Proxy {
-			recs = fromProxy(mc)
-		} else {
-			recs = fromHosted(mc)
-			// Recorded unconditionally: a hosted member winning a name it
-			// actually holds is group precedence, not a security policy.
-			for _, rec := range recs {
-				hostedNames[rec.Package] = true
-			}
+			return fromProxy(mc)
 		}
-		collected = append(collected, memberRecs{mc.Repo.Kind == repo.Proxy, recs})
-	}
-	seen := map[string]bool{}
-	var all []pkgRecord
-	for _, m := range collected {
-		for _, rec := range m.recs {
-			// Two rules, and only the second is the dependency-confusion
-			// guard. A hosted member always shadows a proxy for a name it
-			// holds; a CLAIM additionally shadows names nothing has published
-			// yet, and that part is what the guard toggles.
-			//
-			// Gating both on the guard made disabling it produce a malformed
-			// index rather than a laxer one: PACKAGES listed the same package
-			// twice, once from the hosted member and once from upstream, and
-			// DCF has no way to express that. available.packages() would pick
-			// whichever it saw first.
-			if m.proxy && hostedNames[rec.Package] {
-				continue
-			}
-			if m.proxy && c.NameClaimed != nil && c.NameClaimed(rec.Package) {
-				continue
-			}
-			key := rec.Package + "_" + rec.Version
-			if !seen[key] {
-				seen[key] = true
-				all = append(all, rec)
-			}
-		}
-	}
+		return fromHosted(mc)
+	}, func(rec pkgRecord) (string, string) { return rec.Package, rec.Version })
 	sort.Slice(all, func(i, j int) bool { return all[i].Package < all[j].Package })
 	return all
 }
@@ -720,7 +647,7 @@ func (h *Handler) serveBinary(w http.ResponseWriter, r *http.Request, c *format.
 		}
 		h.publishBin(w, r, c, platform, rver, file)
 	case r.Method == http.MethodGet && (strings.HasSuffix(file, ".zip") || strings.HasSuffix(file, ".tgz")):
-		h.downloadBin(w, c)
+		h.downloadBin(w, r, c)
 	case r.Method == http.MethodDelete && (strings.HasSuffix(file, ".zip") || strings.HasSuffix(file, ".tgz")):
 		if c.Repo.Kind != repo.Hosted {
 			http.Error(w, "cannot delete from non-hosted repository", http.StatusMethodNotAllowed)
@@ -791,9 +718,11 @@ func (h *Handler) publishBin(w http.ResponseWriter, r *http.Request, c *format.C
 
 // downloadBin serves a stored binary package, proxying on cache-miss for proxy
 // repos and fanning out across members for group repos.
-func (h *Handler) downloadBin(w http.ResponseWriter, c *format.Context) {
+func (h *Handler) downloadBin(w http.ResponseWriter, r *http.Request, c *format.Context) {
 	if c.Repo.Kind == repo.Group {
-		h.groupDownloadBin(w, c)
+		if !format.GroupFetch(h, w, r, c) {
+			http.NotFound(w, r)
+		}
 		return
 	}
 	rc, err := c.Blob.Get(c.Key(c.Sub))
@@ -816,39 +745,6 @@ func (h *Handler) downloadBin(w http.ResponseWriter, c *format.Context) {
 
 // groupDownloadBin fans out a binary download across group members, trying
 // proxy members' upstreams on blob-cache miss (mirrors groupDownload).
-func (h *Handler) groupDownloadBin(w http.ResponseWriter, c *format.Context) {
-	ct := "application/gzip"
-	if strings.HasSuffix(c.Sub, ".zip") {
-		ct = "application/zip"
-	}
-	for _, name := range c.Repo.Members {
-		mc, ok := c.MemberCtx(name)
-		if !ok {
-			continue
-		}
-		if rc, err := mc.Blob.Get(mc.Key(c.Sub)); err == nil {
-			defer rc.Close()
-			w.Header().Set("Content-Type", ct)
-			io.Copy(w, rc)
-			return
-		}
-		if mc.Repo.Kind == repo.Proxy {
-			url := strings.TrimRight(mc.Repo.Upstream, "/") + "/" + c.Sub
-			resp, err := mc.HTTP.Get(url)
-			if err == nil && resp.StatusCode == http.StatusOK {
-				defer resp.Body.Close()
-				var buf bytes.Buffer
-				tee := io.TeeReader(resp.Body, &buf)
-				w.Header().Set("Content-Type", ct)
-				io.Copy(w, tee)
-				mc.Blob.Put(mc.Key(c.Sub), &buf) //nolint:errcheck
-				return
-			}
-		}
-	}
-	http.NotFound(w, nil)
-}
-
 // groupBinPkgRecords merges binary package records from all group members for
 // a given platform+rver, deduplicating by Package_Version (first member wins).
 // For proxy members the upstream binary PACKAGES file is fetched and parsed.

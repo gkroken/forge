@@ -434,48 +434,14 @@ func applyField(rec *chartRecord, kv string) {
 // verbatim, so an unfiltered index would route downloads around forge
 // entirely. Two passes so hosted names shadow regardless of member order.
 func (h *Handler) groupRecords(c *format.Context) []chartRecord {
-	type memberRecs struct {
-		proxy bool
-		recs  []chartRecord
-	}
-	var collected []memberRecs
-	hostedNames := map[string]bool{}
-	for _, name := range c.Repo.Members {
-		mc, ok := c.MemberCtx(name)
-		if !ok {
-			continue
-		}
-		var recs []chartRecord
+	return format.GroupMerge(c, func(mc *format.Context) []chartRecord {
+		// Kind-aware: a proxy member's local records are only what has been
+		// downloaded, which would hide charts the group can serve.
 		if mc.Repo.Kind == repo.Proxy {
-			recs = h.upstreamRecords(mc)
-		} else {
-			recs = h.records(mc)
-			// Unconditional: see the note in cran.mergeGroupRecords. A hosted
-			// member shadowing a name it holds is precedence, not policy.
-			for _, rec := range recs {
-				hostedNames[rec.Name] = true
-			}
+			return h.upstreamRecords(mc)
 		}
-		collected = append(collected, memberRecs{mc.Repo.Kind == repo.Proxy, recs})
-	}
-	seen := map[string]bool{}
-	var all []chartRecord
-	for _, m := range collected {
-		for _, rec := range m.recs {
-			if m.proxy && hostedNames[rec.Name] {
-				continue
-			}
-			if m.proxy && c.NameClaimed != nil && c.NameClaimed(rec.Name) {
-				continue
-			}
-			key := rec.Name + "-" + rec.Version
-			if !seen[key] {
-				seen[key] = true
-				all = append(all, rec)
-			}
-		}
-	}
-	return all
+		return h.records(mc)
+	}, func(rec chartRecord) (string, string) { return rec.Name, rec.Version })
 }
 
 // index emits a valid Helm index.yaml grouped by chart name.

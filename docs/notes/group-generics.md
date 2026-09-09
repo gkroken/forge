@@ -1,16 +1,24 @@
 # Group repositories: the generic core, and the four formats still hand-rolling it
 
-**Status:** the generic helpers exist and PyPI uses them. Maven, npm, Helm and
-CRAN still carry their own copies. This note records what the refactor is, why
-it was not done at the same time, and what resists genericization.
+**Status: done (2026-09-09).** Every format routes group downloads through
+`format.GroupFetch`, and Helm and CRAN merge their indexes through
+`format.GroupMerge`. What remains hand-rolled is listed at the end, with the
+reason. This note records what the refactor was and what resists
+genericization.
 
 ## What is actually generic
 
 A group repository does two things, and neither has any format in it:
 
 **1. Download routing.** Walk the members in configured order, ask each one for
-the path, serve the first success. This is `format.GroupFetch`, built on the
-`format.Capture` response recorder that already existed for exactly this.
+the path, serve the first success. This is `format.GroupFetch`, built on
+`format.Sink`, a response writer that forwards a member's response to the
+client only once that member has answered successfully.
+
+`Sink` replaced a recorder that buffered the whole response to decide whether
+to replay it — a group serving a large artifact held all of it in memory, per
+concurrent request, to answer a question the status line already answers. The
+migration was worth doing for that alone.
 
 **2. Index merging.** Merge what the members offer into one index, under one
 policy: member order decides ties, a hosted member shadows a proxy member
@@ -46,19 +54,38 @@ Per-format policy that a generic merge cannot absorb:
 | CRAN | binary trees keyed by platform and R version |
 | PyPI | none; the index is a flat list of links |
 
-## The duplication to remove
+## The duplication that was removed
 
-| Site | Replace with |
+| Site | Now |
 |---|---|
 | `maven.groupGet` member loop | `format.GroupFetch` |
-| `npm.groupTarball` | `format.GroupFetch` |
-| `helm.groupDownload` | `format.GroupFetch` |
-| `cran.groupDownload`, `cran.groupDownloadBin` | `format.GroupFetch` |
-| `cran.mergeGroupRecords` | `format.GroupMerge` + a CRAN renderer |
-| `helm.groupRecords` | `format.GroupMerge` + a Helm renderer |
-| `npm.groupPackument` | `format.GroupMerge` + dist-tag resolution kept in npm |
+| `npm.groupTarball` | `format.GroupFetch` (function deleted) |
+| `helm.groupDownload` | `format.GroupFetch` (function deleted) |
+| `cran.groupDownload`, `cran.groupDownloadBin` | `format.GroupFetch` (both deleted) |
+| `cran.mergeGroupRecords` | `format.GroupMerge` + the existing CRAN sort |
+| `helm.groupRecords` | `format.GroupMerge` |
 
-## Why it was deferred
+Each hand-rolled download loop also carried its own idea of what a proxy member
+does. `npm.groupTarball` re-implemented the upstream fetch without npm's own
+404-vs-unreachable distinction; `cran.groupDownload` and `groupDownloadBin`
+called `HTTP.Get` directly and buffered the whole tarball in memory, bypassing
+the shared fetcher's TTL, negative caching, circuit breaker and stale-on-error;
+`helm.groupDownload` read only the member's blob store, so a proxy member in a
+group could serve nothing it had not already cached. Routing through the
+member's own handler is what makes those go away rather than needing five
+fixes.
+
+## Still hand-rolled, deliberately
+
+`npm.groupPackument` merges packuments rather than a list of records: which
+member's `latest` dist-tag wins is npm policy that a generic merge has no
+opinion about, and the document it produces is not a set of (name, version)
+pairs. `maven.groupMetadataBytes` merges the version list for one artifact
+whose name is fixed by the request path, so it has no name to shadow on —
+Maven's dependency-confusion protection filters the member itself, through
+`MemberFilter`, before the merge is reached.
+
+## Why it was deferred (history)
 
 These four formats have real conformance coverage, so migrating them is its own
 change rather than a rider on a feature.

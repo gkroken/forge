@@ -76,7 +76,7 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 	if strings.Contains(sub, "/-/") {
 		switch r.Method {
 		case http.MethodGet:
-			h.tarball(w, c, sub)
+			h.tarball(w, r, c, sub)
 		case http.MethodDelete:
 			if c.Repo.Kind != repo.Hosted {
 				http.Error(w, "cannot delete from non-hosted repo", http.StatusMethodNotAllowed)
@@ -704,9 +704,11 @@ func (h *Handler) groupPackument(w http.ResponseWriter, r *http.Request, c *form
 	json.NewEncoder(w).Encode(merged)
 }
 
-func (h *Handler) tarball(w http.ResponseWriter, c *format.Context, sub string) {
+func (h *Handler) tarball(w http.ResponseWriter, r *http.Request, c *format.Context, sub string) {
 	if c.Repo.Kind == repo.Group {
-		h.groupTarball(w, c, sub)
+		if !format.GroupFetch(h, w, r, c) {
+			http.NotFound(w, r)
+		}
 		return
 	}
 	key := c.Key(sub)
@@ -737,35 +739,6 @@ func (h *Handler) tarball(w http.ResponseWriter, c *format.Context, sub string) 
 	defer rc.Close()
 	w.Header().Set("Content-Type", "application/octet-stream")
 	io.Copy(w, rc)
-}
-
-func (h *Handler) groupTarball(w http.ResponseWriter, c *format.Context, sub string) {
-	for _, name := range c.Repo.Members {
-		mc, ok := c.MemberCtx(name)
-		if !ok {
-			continue
-		}
-		key := mc.Key(sub)
-		if mc.Repo.Kind == repo.Proxy {
-			upURL := strings.TrimRight(mc.Repo.Upstream, "/") + "/" + sub
-			f := proxy.New(mc.HTTP, mc.ProxyConfig())
-			rc, _, err := f.Fetch(key, mc.Repo.Name+":proxy", upURL, mc.Blob, mc.Meta)
-			if err == nil {
-				defer rc.Close()
-				w.Header().Set("Content-Type", "application/octet-stream")
-				io.Copy(w, rc)
-				return
-			}
-			continue
-		}
-		if rc, err := mc.Blob.Get(key); err == nil {
-			defer rc.Close()
-			w.Header().Set("Content-Type", "application/octet-stream")
-			io.Copy(w, rc)
-			return
-		}
-	}
-	http.NotFound(w, nil)
 }
 
 // --- helpers ---------------------------------------------------------------
