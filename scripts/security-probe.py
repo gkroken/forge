@@ -424,6 +424,39 @@ def probe_group_nesting():
         st == 400 and "nested" in body, f"HTTP {st}: {body[:100]}")
 
 
+def probe_kind_writes():
+    """A repository that mirrors someone else's registry must not accept writes.
+
+    Publish, unpublish and delete are all refused on a non-hosted repository,
+    but npm's dist-tags endpoint was a write path that nobody had guarded: a
+    PUT against a proxy repointed "latest" inside the *cached upstream
+    packument*, and every client installing through that proxy was served the
+    tag the caller chose.
+    """
+    req("POST", "/api/v1/repos", json.dumps({"name": "sp-np-proxy", "format": "npm",
+        "kind": "proxy", "upstream": "https://registry.npmjs.org",
+        "enabled": True}).encode(), ADMIN, {"Content-Type": "application/json"})
+    req("POST", "/api/v1/repos", json.dumps({"name": "sp-np-group", "format": "npm",
+        "kind": "group", "enabled": True,
+        "members": ["sp-npm", "sp-np-proxy"]}).encode(), ADMIN,
+        {"Content-Type": "application/json"})
+    wtok = mktoken("security-probe-kind", [{"repo": r, "actions": ["read", "write", "delete"]}
+                                           for r in ("sp-npm", "sp-np-proxy", "sp-np-group")])
+    st, _, _ = req("GET", "/repository/sp-np-proxy/is-odd", token=wtok)
+    if st != 200:
+        chk("KIND", "disttag", "npm dist-tags write is refused on a proxy", True,
+            "skipped: upstream unreachable")
+        return
+    for repo_name in ("sp-np-proxy", "sp-np-group"):
+        st, body, _ = req("PUT", f"/repository/{repo_name}/-/package/is-odd/dist-tags/latest",
+                          b'"9.9.9-pwned"', wtok, {"Content-Type": "application/json"})
+        chk("KIND", "disttag", f"npm dist-tags write is refused on {repo_name}",
+            st == 405, f"HTTP {st}: {str(body)[:100]}")
+    st, body, _ = req("GET", "/repository/sp-np-proxy/is-odd", token=wtok)
+    chk("KIND", "cache", "the cached upstream packument is unchanged",
+        st == 200 and "pwned" not in str(body), f"HTTP {st}")
+
+
 def main():
     if not ADMIN:
         print("FORGE_ADMIN_TOKEN is required (the bootstrap token the server logs on first start)")
@@ -471,6 +504,8 @@ def main():
     probe_concurrency("sp-npm", tok)
     print("=== GUARD: every route to the bytes, not just one ===")
     probe_write_guards(tok, "sp-immutable-cran")
+    print("=== KIND: writes into a repository that only mirrors ===")
+    probe_kind_writes()
     print("=== GROUP: a repository that serves nothing ===")
     probe_group_nesting()
 

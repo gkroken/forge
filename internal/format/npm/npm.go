@@ -361,8 +361,17 @@ func (h *Handler) distTags(w http.ResponseWriter, r *http.Request, c *format.Con
 	pkg := pkgPart
 	tag := strings.TrimPrefix(tagSuffix, "/")
 
-	var packument map[string]any
-	if ok, _ := c.Meta.GetJSON(h.ns(c), pkg, &packument); !ok {
+	// Writing a dist-tag rewrites the packument this repository serves, which
+	// on a proxy means editing the cached copy of somebody else's registry:
+	// pointing "latest" at a version of your choosing, for every client
+	// installing through it. Publish, unpublish and delete are all refused on
+	// a non-hosted repository; this write path was not.
+	if r.Method != http.MethodGet && c.Repo.Kind != repo.Hosted {
+		http.Error(w, "cannot change dist-tags on a non-hosted repository", http.StatusMethodNotAllowed)
+		return
+	}
+	packument, ok := h.viewPackument(r, c, pkg)
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}
@@ -640,7 +649,10 @@ func (h *Handler) proxyPackument(w http.ResponseWriter, r *http.Request, c *form
 // groupPackument merges packuments from all member repos. First member wins for
 // version and dist-tag conflicts. Tarball URLs are rewritten to point at the
 // group repo so clients download via the group.
-func (h *Handler) groupPackument(w http.ResponseWriter, r *http.Request, c *format.Context, pkg string) {
+// mergedGroupPackument builds the packument a group answers with: every
+// member's document, merged under member order, with tarball URLs pointed back
+// at the group. Reports false when no member has the package.
+func (h *Handler) mergedGroupPackument(r *http.Request, c *format.Context, pkg string) (map[string]any, bool) {
 	merged := map[string]any{
 		"name":      pkg,
 		"versions":  map[string]any{},
@@ -695,13 +707,40 @@ func (h *Handler) groupPackument(w http.ResponseWriter, r *http.Request, c *form
 	}
 
 	if !found {
-		http.NotFound(w, r)
-		return
+		return nil, false
 	}
 	merged["versions"] = versions
 	merged["dist-tags"] = distTags
+	return merged, true
+}
+
+func (h *Handler) groupPackument(w http.ResponseWriter, r *http.Request, c *format.Context, pkg string) {
+	merged, ok := h.mergedGroupPackument(r, c, pkg)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(merged)
+}
+
+// viewPackument is the document this repository would answer a client with,
+// by kind. Everything that reads a packument goes through it: the dist-tags
+// endpoint had its own copy that read local storage only, so `npm dist-tag ls`
+// against a proxy or a group answered 404 for packages those repositories
+// serve perfectly well.
+func (h *Handler) viewPackument(r *http.Request, c *format.Context, pkg string) (map[string]any, bool) {
+	switch c.Repo.Kind {
+	case repo.Group:
+		return h.mergedGroupPackument(r, c, pkg)
+	case repo.Proxy:
+		doc, err := h.fetchPackument(publicBase(r), c, pkg)
+		return doc, err == nil
+	default:
+		var stored map[string]any
+		ok, _ := c.Meta.GetJSON(h.ns(c), pkg, &stored)
+		return stored, ok
+	}
 }
 
 func (h *Handler) tarball(w http.ResponseWriter, r *http.Request, c *format.Context, sub string) {

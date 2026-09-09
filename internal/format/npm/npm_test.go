@@ -3,6 +3,7 @@ package npm
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -696,5 +697,77 @@ func TestPublish_BadAttachmentEncoding(t *testing.T) {
 	New().Serve(rw, req, c)
 	if rw.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for bad attachment, got %d", rw.Code)
+	}
+}
+
+// dist-tags is a write path into the packument this repository serves. On a
+// proxy that is the cached copy of somebody else's registry: a PUT there
+// repoints "latest" for every client installing through the proxy. Publish,
+// unpublish and delete are all refused on a non-hosted repository; this one
+// was not, and the poisoned tag was served straight back.
+func TestDistTags_WriteRefusedOnNonHostedRepos(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"name":"is-odd","dist-tags":{"latest":"3.0.1"},
+			"versions":{"3.0.1":{"name":"is-odd","version":"3.0.1",
+			"dist":{"tarball":"`+"http://upstream/is-odd/-/is-odd-3.0.1.tgz"+`"}}}}`)
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	mgr := repo.NewManager()
+	for _, rp := range []repo.Repository{
+		{Name: "npm-hosted", Format: "npm", Kind: repo.Hosted},
+		{Name: "npm-proxy", Format: "npm", Kind: repo.Proxy, Upstream: upstream.URL},
+		{Name: "npm-group", Format: "npm", Kind: repo.Group, Members: []string{"npm-hosted", "npm-proxy"}},
+	} {
+		if err := mgr.Add(rp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := New()
+	call := func(method, repoName, sub, body string) *httptest.ResponseRecorder {
+		rp, _ := mgr.Get(repoName)
+		rec := httptest.NewRecorder()
+		var rdr io.Reader
+		if body != "" {
+			rdr = strings.NewReader(body)
+		}
+		req := httptest.NewRequest(method, "/"+sub, rdr)
+		h.Serve(rec, req, &format.Context{
+			Repo: rp, Meta: m, Blob: b, Sub: sub, Repos: mgr, HTTP: upstream.Client(),
+		})
+		return rec
+	}
+
+	// Warm the proxy cache, the way a real client would.
+	if rec := call("GET", "npm-proxy", "is-odd", ""); rec.Code != 200 {
+		t.Fatalf("proxy packument = %d", rec.Code)
+	}
+
+	for _, repoName := range []string{"npm-proxy", "npm-group"} {
+		rec := call("PUT", repoName, "-/package/is-odd/dist-tags/latest", `"9.9.9-pwned"`)
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("PUT dist-tags on %s = %d, want 405", repoName, rec.Code)
+		}
+		rec = call("DELETE", repoName, "-/package/is-odd/dist-tags/latest", "")
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("DELETE dist-tags on %s = %d, want 405", repoName, rec.Code)
+		}
+	}
+	// The served packument is untouched.
+	rec := call("GET", "npm-proxy", "is-odd", "")
+	if strings.Contains(rec.Body.String(), "pwned") {
+		t.Errorf("proxy packument was poisoned: %s", rec.Body.String())
+	}
+
+	// Reading dist-tags must work on the kinds that serve the package at all.
+	for _, repoName := range []string{"npm-proxy", "npm-group"} {
+		rec := call("GET", repoName, "-/package/is-odd/dist-tags", "")
+		if rec.Code != 200 || !strings.Contains(rec.Body.String(), "3.0.1") {
+			t.Errorf("GET dist-tags on %s = %d, %q", repoName, rec.Code, rec.Body.String())
+		}
 	}
 }
