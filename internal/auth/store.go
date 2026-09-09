@@ -32,6 +32,10 @@ func (s *metaStore) Create(desc string, grants []Grant, expiresAt *time.Time, ow
 	return tok, display, nil
 }
 
+// lastUsedResolution is how stale a token's LastUsed may be before Verify
+// rewrites it.
+const lastUsedResolution = time.Minute
+
 func (s *metaStore) Verify(secret string) (*Token, error) {
 	hash := hashDisplay(secret)
 	if hash == "" {
@@ -45,9 +49,17 @@ func (s *metaStore) Verify(secret string) (*Token, error) {
 	if st.ExpiresAt != nil && time.Now().After(*st.ExpiresAt) {
 		return nil, nil // expired
 	}
+	// LastUsed is stamped at a coarse resolution on purpose. Writing it on
+	// every request made the token the hottest record in the store — one disk
+	// write per authenticated call, on the busiest path there is — for a field
+	// nobody reads more precisely than "recently". A minute's resolution keeps
+	// the answer useful and drops the writes by orders of magnitude under the
+	// parallel fetching npm and mvn do.
 	now := time.Now().UTC()
-	st.Token.LastUsed = &now
-	_ = s.meta.PutJSON(nsTokenByHash, hash, storedToken{Token: st.Token, SecretHash: hash})
+	if st.Token.LastUsed == nil || now.Sub(*st.Token.LastUsed) >= lastUsedResolution {
+		st.Token.LastUsed = &now
+		_ = s.meta.PutJSON(nsTokenByHash, hash, storedToken{Token: st.Token, SecretHash: hash})
+	}
 	return &st.Token, nil
 }
 

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"forge/internal/auth"
+	"forge/internal/meta"
 	"forge/internal/repo"
 )
 
@@ -195,4 +196,54 @@ func TestVerify_IsStableUnderConcurrency(t *testing.T) {
 	if failures > 0 {
 		t.Errorf("%d of %d concurrent verifications of a valid token failed", failures, n)
 	}
+}
+
+// LastUsed is stamped at a coarse resolution: writing it on every request made
+// the token record the hottest in the store — one disk write per authenticated
+// call, on the busiest path there is — for a field nobody reads more precisely
+// than "recently".
+func TestVerify_LastUsedIsThrottled(t *testing.T) {
+	m, err := meta.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	counted := &countingMeta{Store: m}
+	store := auth.NewMetaStore(counted)
+	_, secret, err := store.Create("busy", []auth.Grant{
+		{Repo: "r", Actions: []auth.Action{auth.ActionRead}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	counted.writes.Store(0)
+	for i := 0; i < 50; i++ {
+		if tok, err := store.Verify(secret); err != nil || tok == nil {
+			t.Fatalf("verify %d failed: %v", i, err)
+		}
+	}
+	// The first call stamps it; the remaining 49 fall inside the window.
+	if n := counted.writes.Load(); n > 1 {
+		t.Errorf("50 verifications caused %d writes, want at most 1: a hot token "+
+			"must not rewrite its record on every request", n)
+	}
+
+	// LastUsed is still recorded, or the field would be useless.
+	toks, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(toks) != 1 || toks[0].LastUsed == nil {
+		t.Errorf("LastUsed was never recorded: %+v", toks)
+	}
+}
+
+// countingMeta counts writes so the test can assert on I/O, not on timing.
+type countingMeta struct {
+	meta.Store
+	writes atomic.Int64
+}
+
+func (c *countingMeta) PutJSON(ns, key string, v any) error {
+	c.writes.Add(1)
+	return c.Store.PutJSON(ns, key, v)
 }
