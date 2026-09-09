@@ -517,6 +517,15 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	// OCI is never routed here, so its content-addressed shared-layer re-pushes
 	// stay unaffected.
 	if rp.IsImmutable() {
+		// Refuse deletes up front so the client gets a clear 409 rather than
+		// whatever each format makes of ErrImmutable from the store. The
+		// wrapper still refuses them underneath, which is what keeps the
+		// guarantee true for any future path that reaches the bytes.
+		if r.Method == http.MethodDelete {
+			http.Error(w, "repository is immutable; artifacts are write-once and cannot be deleted",
+				http.StatusConflict)
+			return
+		}
 		c.Blob = blob.Immutable(s.Blob)
 	}
 	h.Serve(w, r, c)
