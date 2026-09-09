@@ -121,15 +121,90 @@ kind is unimplemented.
 This is the silent-absence pattern: the repository looks real in the API and the
 UI and simply serves nothing.
 
-### F3 — OCI proxy cannot pull from Docker Hub
+#### Map
+
+Most of this is already built: `format.GroupFetch` and `format.GroupMerge`
+landed with PyPI groups, and OCI needs no new policy — only the three
+operations wired to them.
+
+| Operation | Behaviour | Mechanism |
+|---|---|---|
+| `GET/HEAD {image}/manifests/{ref}` | first member that has it wins | `format.GroupFetch` |
+| `GET/HEAD {image}/blobs/{digest}` | first member that has it | `format.GroupFetch` |
+| `GET {image}/tags/list` | union of member tag lists | `format.GroupMerge`, keyed (image, tag) |
+| any write | 405 | reject before dispatch |
+
+Notes that decide the design:
+
+- **Blobs need no shadowing.** A blob is addressed by its own digest, so member
+  order changes latency, never correctness. Shadowing matters only for
+  tag-addressed reads: `myorg/app:latest` published internally must beat a
+  public image of the same name, which is the container-image form of the
+  dependency-confusion property S1/S2 already pins for the other five formats.
+- **`tags/list` is the only merge.** It is also the only place a hosted tag can
+  hide a proxy tag, so it is where `GroupMerge`'s `hostedNames`/`NameClaimed`
+  rules actually apply.
+- **A manifest and its blobs may come from different members.** That is fine
+  and needs no special handling: the client requests each by path, and
+  `GroupFetch` independently finds whichever member holds it.
+- **`_catalog` is not implemented for any kind** — it is absent from the op
+  switch entirely, so it 404s as "unknown OCI operation". Worth deciding
+  separately from groups.
+
+Effort: small. The work is a `serveGroup` in the OCI handler plus a tags/list
+renderer; no new spine helpers.
+
+### F3 — OCI proxy cannot pull from Docker Hub, and caches nothing
 
 `internal/format/oci/oci.go` · `proxyPass`
 
-The pass-through works against registries that allow anonymous access —
-`registry.k8s.io/pause:3.9` returns 200 through forge. Docker Hub returns
-`401 UNAUTHORIZED`, because it requires a token handshake against
-`auth.docker.io` that `proxyPass` does not perform. Docker Hub is the upstream
-most people would configure first.
+Two separate problems, and the second is the larger one.
+
+**F3a — no auth-token handshake.** The pass-through works against registries
+that allow anonymous access: `registry.k8s.io/pause:3.9` returns 200 through
+forge. Docker Hub returns `401 UNAUTHORIZED` because it requires a token
+obtained from `auth.docker.io`, which `proxyPass` never requests. Docker Hub is
+the upstream most people would configure first.
+
+**F3b — it is a reverse proxy, not a cache.** `proxyPass` builds an upstream
+request, forwards three headers and `io.Copy`s the body to the client. It never
+touches `blob.Store` or `meta.Store`. Measured: after pulling a manifest and a
+config blob twice through an OCI proxy, the repository had **0 cached blobs and
+no cache entries**, while `maven-central` had cached its artifacts after one
+fetch. So every pull goes upstream, and the proxy provides no rate-limit
+relief, no offline resilience, no stale-on-error and no negative caching — the
+reasons to run one in front of Docker Hub in the first place.
+
+Note this is the same shape as F1b: a check that a second read returns the same
+bytes cannot distinguish a cache from a passthrough. `P2` passed here too.
+
+#### Map
+
+**F3a — token handshake** (independent, unblocks Docker Hub):
+
+1. On a 401 from upstream, parse `WWW-Authenticate: Bearer realm=…,service=…`.
+2. `GET {realm}?service={service}&scope=repository:{image}:pull`, sending the
+   repo's `ProxyAuth` as Basic credentials when set (that is also how private
+   upstream images work).
+3. Retry the original request with `Authorization: Bearer {token}`.
+4. Cache tokens per (upstream, scope) until `expires_in`. This is the standard
+   Docker Registry v2 flow, so it also covers ghcr.io and quay.io.
+
+**F3b — real caching** (the bigger win). Route proxy reads through the shared
+`proxy.Fetcher`, as every other format does, which brings TTL, ETag
+revalidation, negative caching, stale-on-error, request coalescing and the
+circuit breaker at once. The cache keys differ by mutability, and getting that
+distinction wrong is exactly the F1b bug:
+
+| Read | Mutability | Caching |
+|---|---|---|
+| `blobs/{digest}` | immutable | cache forever, key `{repo}/blobs/{digest}` |
+| `manifests/{digest}` | immutable | cache forever |
+| `manifests/{tag}` | **mutable** | TTL + revalidation — a tag that never expires pins `:latest` to whatever was first pulled |
+| `tags/list` | mutable | short TTL |
+
+Do F3b first if only one gets done: it is the reason a proxy exists, and it
+applies to the registries that already work today.
 
 ### F4 — the docs say OCI proxy is unsupported, and it is not
 
