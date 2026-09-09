@@ -40,7 +40,6 @@
 package proxy
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -462,6 +461,9 @@ func (f *Fetcher) Fetch(blobKey, cacheNS, upURL string, blobs blob.Store, metas 
 
 		// ── 5. Upstream fetch (with retries and optional auth) ──────────
 		upResp, fetchErr := f.fetchUpstream(upURL, condHeaders)
+		// Every branch below either streams the body into the store or drops
+		// it; this releases whatever is left so a connection is never leaked.
+		defer upResp.close()
 		if fetchErr != nil {
 			cb.failure(now)
 			metas.PutJSON(cacheNS, HealthKey, HealthRecord{OK: false, CheckedAt: now, ErrMsg: fetchErr.Error()}) //nolint:errcheck
@@ -491,7 +493,8 @@ func (f *Fetcher) Fetch(blobKey, cacheNS, upURL string, blobs blob.Store, metas 
 				LastModified: upResp.lastMod,
 				ContentType:  ct,
 			}
-			blobs.Put(blobKey, bytes.NewReader(upResp.body))
+			// Streamed, so memory is one copy buffer rather than one artifact.
+			blobs.Put(blobKey, upResp.body) //nolint:errcheck
 			metas.PutJSON(cacheNS, blobKey, newEntry)
 			metas.PutJSON(cacheNS, HealthKey, HealthRecord{OK: true, CheckedAt: now}) //nolint:errcheck
 			if f.cfg.RecordMiss != nil {
@@ -537,7 +540,20 @@ type upstreamResult struct {
 	etag        string
 	lastMod     string
 	contentType string
-	body        []byte
+	// body is the live upstream response, streamed straight into the blob
+	// store rather than buffered. Reading it fully into memory made a single
+	// fetch cost the artifact's whole size: a 700 MB upstream artifact took a
+	// live server to 1.84 GB of RSS, and container layers are routinely that
+	// large. The caller must Close it; it is nil for 304 and after an error.
+	body io.ReadCloser
+}
+
+// close releases the upstream body if one is still open.
+func (u *upstreamResult) close() {
+	if u != nil && u.body != nil {
+		u.body.Close() //nolint:errcheck
+		u.body = nil
+	}
 }
 
 // fetchUpstream performs the upstream GET, retrying on network errors and 5xx.
@@ -559,6 +575,7 @@ func (f *Fetcher) fetchUpstream(upURL string, condHeaders map[string]string) (*u
 		}
 		if result.statusCode >= 500 {
 			lastErr = fmt.Errorf("upstream returned %d", result.statusCode)
+			result.close() // discarding this attempt; do not leak the connection
 			continue
 		}
 		if retrying && f.cfg.RetryGauge != nil {
@@ -618,20 +635,18 @@ func (f *Fetcher) doRequest(upURL string, condHeaders map[string]string) (*upstr
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotModified {
+		resp.Body.Close() //nolint:errcheck
 		return &upstreamResult{statusCode: http.StatusNotModified}, nil
 	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
+	// The body stays open: the caller streams it into the blob store and closes
+	// it. Buffering here would cost one artifact of memory per in-flight fetch.
 	return &upstreamResult{
 		statusCode:  resp.StatusCode,
 		etag:        resp.Header.Get("ETag"),
 		lastMod:     resp.Header.Get("Last-Modified"),
 		contentType: resp.Header.Get("Content-Type"),
-		body:        body,
+		body:        resp.Body,
 	}, nil
 }
