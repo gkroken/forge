@@ -341,6 +341,89 @@ def probe_oci(token, repo):
             st == 400 and "DIGEST_INVALID" in body, f"HTTP {st} {body[:80]}")
 
 
+# ── CONC ──────────────────────────────────────────────────────────────────────
+# Verify() stamps LastUsed on every authenticated request, so the token record
+# is the hottest in the store. With a truncating write underneath, 35 of 40
+# concurrent requests carrying a VALID token came back 401 — and a concurrent
+# npm publish lost half its versions as a side effect. Clients fetch in
+# parallel; this needs no attacker.
+def probe_concurrency(repo_name, token):
+    import concurrent.futures as cf
+
+    def one(_):
+        st, _, _ = req("GET", f"/api/v1/repos/{repo_name}/components", token=token)
+        return st
+
+    with cf.ThreadPoolExecutor(max_workers=40) as ex:
+        codes = list(ex.map(one, range(40)))
+    bad = [c for c in codes if c != 200]
+    chk("CONC", "auth", "40 concurrent requests with a valid token all succeed",
+        not bad, f"{len(bad)} failed: {sorted(set(bad))}")
+
+    # Distinct versions published at once must all survive in the index.
+    def publish(i):
+        v = f"9.0.{i}"
+        doc = {"name": "conc", "versions": {v: {"name": "conc", "version": v, "dist": {}}},
+               "_attachments": {f"conc-{v}.tgz": {"data": base64.b64encode(b"x").decode()}}}
+        st, _, _ = req("PUT", f"/repository/{repo_name}/conc", json.dumps(doc).encode(), token,
+                       {"Content-Type": "application/json"})
+        return st
+
+    with cf.ThreadPoolExecutor(max_workers=12) as ex:
+        list(ex.map(publish, range(12)))
+    st, body, _ = req("GET", f"/repository/{repo_name}/conc", token=token)
+    try:
+        have = set(json.loads(body).get("versions", {}))
+    except Exception:
+        have = set()
+    missing = [f"9.0.{i}" for i in range(12) if f"9.0.{i}" not in have]
+    chk("CONC", "publish", "12 concurrent publishes all land in the index",
+        not missing, f"missing {missing}")
+
+
+# ── GUARD ─────────────────────────────────────────────────────────────────────
+# handleRepo applies the write-once wrapper and the quota gate, and was once the
+# only path that did: the browser upload form and the Nexus migration each built
+# their own context and wrote through neither.
+def probe_write_guards(token, immutable_repo):
+    p = f"/repository/{immutable_repo}/src/contrib/guard_1.0.0.tar.gz"
+    req("PUT", p, tgz({"guard/DESCRIPTION": b"Package: guard\nVersion: 1.0.0\nLicense: MIT\n"}), token)
+    st, _, _ = req("PUT", p, tgz({"guard/DESCRIPTION": b"Package: guard\nVersion: 1.0.0\nLicense: X\n"}), token)
+    chk("GUARD", "protocol", "an immutable repo refuses an overwrite", st == 409, f"HTTP {st}")
+
+    # The same coordinate through the browser upload form. Assert on the STORED
+    # BYTES, not on page text: an earlier version of this check looked for
+    # "immutable" in the response and passed against a vulnerable build, because
+    # the page carries the repository's own immutable badge regardless of what
+    # the upload did.
+    _, before, _ = req("GET", p, token=token, raw=True)
+    body = (b"--X\r\nContent-Disposition: form-data; name=\"file\"; filename=\"guard_1.0.0.tar.gz\"\r\n"
+            b"Content-Type: application/octet-stream\r\n\r\n"
+            + tgz({"guard/DESCRIPTION": b"Package: guard\nVersion: 1.0.0\nLicense: VIA-UI\n"})
+            + b"\r\n--X--\r\n")
+    st, page, _ = req("POST", f"/ui/repos/{immutable_repo}/upload", body, ADMIN,
+                      {"Content-Type": "multipart/form-data; boundary=X"})
+    _, after, _ = req("GET", p, token=token, raw=True)
+    unchanged = isinstance(before, bytes) and before == after
+    chk("GUARD", "ui-upload", "the upload form cannot rewrite an immutable artifact",
+        unchanged and "Upload successful" not in page,
+        f"HTTP {st}, bytes changed={not unchanged}: {page[:100]}")
+
+
+# ── GROUP ─────────────────────────────────────────────────────────────────────
+def probe_group_nesting():
+    req("POST", "/api/v1/repos", json.dumps({"name": "sp-g-host", "format": "npm",
+        "kind": "hosted", "enabled": True}).encode(), ADMIN, {"Content-Type": "application/json"})
+    req("POST", "/api/v1/repos", json.dumps({"name": "sp-g-inner", "format": "npm",
+        "kind": "group", "enabled": True, "members": ["sp-g-host"]}).encode(), ADMIN,
+        {"Content-Type": "application/json"})
+    st, body, _ = req("POST", "/api/v1/repos", json.dumps({"name": "sp-g-outer", "format": "npm",
+        "kind": "group", "enabled": True, "members": ["sp-g-inner"]}).encode(), ADMIN,
+        {"Content-Type": "application/json"})
+    chk("GROUP", "nesting", "a group containing a group is refused, not silently empty",
+        st == 400 and "nested" in body, f"HTTP {st}: {body[:100]}")
+
+
 def main():
     if not ADMIN:
         print("FORGE_ADMIN_TOKEN is required (the bootstrap token the server logs on first start)")
@@ -359,8 +442,9 @@ def main():
         mkrepo(name, fmt)
     mkrepo("sp-victim", "npm")
     mkrepo("sp-immutable", "maven", immutable=True)
+    mkrepo("sp-immutable-cran", "cran", immutable=True)
     all_grants = [{"repo": r, "actions": ["read", "write", "delete"]}
-                  for r in list(repos) + ["sp-victim", "sp-immutable"]]
+                  for r in list(repos) + ["sp-victim", "sp-immutable", "sp-immutable-cran"]]
     tok = mktoken("security-probe", all_grants)
     read_tok = mktoken("security-probe-read", [{"repo": "sp-npm", "actions": ["read"]}])
     if not tok or not read_tok:
@@ -383,6 +467,12 @@ def main():
     probe_destructive_params("sp-npm")
     print("=== OCI: digest and reference validation ===")
     probe_oci(tok, "sp-oci")
+    print("=== CONC: state that tears when requests overlap ===")
+    probe_concurrency("sp-npm", tok)
+    print("=== GUARD: every route to the bytes, not just one ===")
+    probe_write_guards(tok, "sp-immutable-cran")
+    print("=== GROUP: a repository that serves nothing ===")
+    probe_group_nesting()
 
     fails = [r for r in RESULTS if not r[3]]
     print(f"\n===== {len(RESULTS) - len(fails)} passed, {len(fails)} failed =====")

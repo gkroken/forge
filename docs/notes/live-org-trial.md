@@ -230,6 +230,52 @@ wrong answer rather than an error:
 The second one is the same shape as the CI monitors earlier in this work:
 something that cannot run reports as something that passed.
 
+### 7. Concurrency: a truncating write made valid tokens fail auth · FIXED
+
+The worst bug of the run, and the one nothing else would have found. 35 of 40
+concurrent requests carrying a VALID token came back 401.
+
+`meta.PutJSON` used `os.WriteFile`, which truncates before writing, and every
+reader unmarshals whatever it finds. `Verify()` stamps `LastUsed` on every
+authenticated request, making the token the hottest record in the store — so
+authentication is where a general defect surfaced. It was never token-specific:
+any record read while being rewritten could tear.
+
+`blob.FS` already wrote through a temp file and a rename; `meta` did not. The
+two stores had different durability guarantees and only one was correct.
+
+Nothing here needs an attacker — npm and mvn fetch in parallel. A concurrent
+npm publish lost half its versions purely as a side effect of the spurious
+401s.
+
+### 8. Coalescing and circuit breaking were both inert · FIXED
+
+Measured: ten concurrent requests for one uncached artifact produced **ten**
+upstream fetches. A circuit breaker could never accumulate the failures that
+open it.
+
+The logic was correct; the ownership was not. Both kept state on the `Fetcher`,
+and every format constructs one inside its handler — per request — so each
+request coalesced only with itself. The package doc already stated the
+requirement, and all six formats did the opposite. Neither feature announces
+itself when absent: they fail by simply not helping.
+
+### 9. Guards applied on one route to the bytes, not all · FIXED
+
+`handleRepo` applies the write-once wrapper and the quota gate, and was the only
+path that did. The browser upload form and the Nexus migration each built their
+own context and wrote through neither: an immutable repository could be
+overwritten through the upload form, and a full one kept accepting uploads.
+
+`migration_transfer`'s own comment called its dispatcher "handleRepo minus HTTP
+middleware" — true, and the trap: neither guard is middleware.
+
+### 10. A group containing a group served nothing · FIXED
+
+Accepted at creation, then contributed nothing, because `MemberCtx` skips a
+group member. The outer group answered 404 for packages the inner group served.
+Now refused with a message naming the inner group.
+
 ## Friction worth fixing, but not bugs
 
 - **No self-service credentials.** The token API is admin-only for create, list
