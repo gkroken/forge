@@ -9,7 +9,8 @@ python3 scripts/repo-kind-matrix.py
 ```
 
 Proxy and group checks talk to the real upstreams, so the run needs network
-access. Last run: **114 passed, 4 failed** — the four are recorded below.
+access. Last run: **116 passed, 2 failed** — both remaining failures are OCI
+(F2, F3). F1 is fixed.
 
 ## The checklist
 
@@ -61,22 +62,23 @@ registers your internal name on a public registry owns your builds."
 
 Everything passes for maven, npm, helm, cran and pypi across hosted, proxy and
 group — **including S1/S2 shadowing for all five**, verified against the real
-public registries (Maven Central, npmjs, CRAN, Bitnami, pypi.org). Four checks
-fail, all in npm proxy and OCI.
+public registries (Maven Central, npmjs, CRAN, Bitnami, pypi.org). Two checks
+still fail, both in OCI. F1 (npm proxy) is fixed; it is kept below because the
+way it hid is more useful than the fix.
 
-### F1 — npm proxy turns an upstream 404 into a 502, and never negative-caches
+### F1 — npm proxy: 404 became 502, nothing was negative-cached, and cached packuments never expired · FIXED
 
 `internal/format/npm/npm.go` · `fetchPackument` / `proxyPackument`
 
-`fetchPackument` returns a bare `bool`, so "upstream said 404" and "upstream is
-unreachable" are the same value, and `proxyPackument` maps both to
+`fetchPackument` returned a bare `bool`, so "upstream said 404" and "upstream is
+unreachable" were the same value, and `proxyPackument` mapped both to
 `502 upstream unavailable`. Every other format returns 404 here.
 
 Two consequences, the second worse than the first:
 
 - npm clients see a registry error instead of "not found".
-- Nothing writes a negative-cache entry, so **every** lookup of a nonexistent
-  package goes to the upstream registry. Maven and PyPI both pass P6; npm is
+- Nothing wrote a negative-cache entry, so **every** lookup of a nonexistent
+  package went to the upstream registry. Maven and PyPI both pass P6; npm is
   the only format that re-asks upstream forever. A typo'd dependency in CI
   hammers npmjs.org on every build.
 
@@ -85,11 +87,26 @@ Root cause is structural: the packument path predates the shared
 caching, circuit breaking, or coalescing. The tarball path a few lines below
 uses the fetcher and handles `proxy.ErrNotFound` correctly.
 
-Note while reading this code: on a 404 with a cached copy, `fetchPackument`
-serves the stale packument (`if hasStored { return stored, true }`). For a
-package *unpublished* upstream that means forge serves it indefinitely. That is
-defensible stale-on-error behaviour for a cache, but it is a decision worth
-making deliberately rather than inheriting from the error collapse above.
+**F1b, found while writing the regression test for F1 — and worse than it.**
+`packument()` returned any stored copy immediately, for proxies too. Everything
+in `fetchPackument` — the TTL check, the conditional GET, ETag revalidation,
+stale-on-error — only ran when *nothing* was cached. So a proxied packument was
+permanent: versions published upstream after the first fetch stayed invisible
+for the life of the cache. A test that ages the cache entry past its TTL and
+counts upstream requests measured exactly one hit, where there should have been
+a revalidation.
+
+This is why the matrix's P2 ("second read consistent") passed while the proxy
+was badly broken: a check that a cache *returns the same bytes* cannot tell a
+working cache from one that never expires.
+
+**Fix.** `fetchPackument` now returns an `error`, so `proxy.ErrNotFound` and
+"upstream unreachable" are distinct; a 404 writes a negative-cache entry and is
+answered locally for the negative-TTL window; and `packument()` routes proxy
+reads through `fetchPackument` so the TTL path actually runs. A 404 is treated
+as authoritative and is not served from a stale copy, matching the shared
+Fetcher exactly rather than inventing a second policy. `proxy.Config` gained
+`EffectiveNegativeTTL()` so the two paths share one default.
 
 ### F2 — OCI group repositories are silently empty
 

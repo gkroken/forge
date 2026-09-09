@@ -439,14 +439,20 @@ func (h *Handler) packument(w http.ResponseWriter, r *http.Request, c *format.Co
 		h.groupPackument(w, r, c, pkg)
 		return
 	}
+	// A proxy always goes through fetchPackument, even when a copy is cached:
+	// that is where the TTL check, the conditional GET and stale-on-error live,
+	// and a fresh entry is still answered locally without touching upstream.
+	// Serving a stored copy directly here instead made every cached packument
+	// permanent — the TTL never ran, so versions published upstream after the
+	// first fetch stayed invisible for the life of the cache.
+	if c.Repo.Kind == repo.Proxy {
+		h.proxyPackument(w, r, c, pkg)
+		return
+	}
 	var stored map[string]any
 	if ok, _ := c.Meta.GetJSON(h.ns(c), pkg, &stored); ok {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(stored)
-		return
-	}
-	if c.Repo.Kind == repo.Proxy {
-		h.proxyPackument(w, r, c, pkg)
 		return
 	}
 	http.NotFound(w, r)
@@ -457,16 +463,25 @@ func (h *Handler) packument(w http.ResponseWriter, r *http.Request, c *format.Co
 // For proxy repos the packument is stored (URL-rewritten) in meta and its
 // freshness is tracked via a proxy.CacheEntry in the "{repo}:proxy" namespace.
 // Stale packuments trigger a conditional GET (If-None-Match); a 304 refreshes
-// the TTL without re-parsing. On upstream failure the stale packument is served.
-// baseURL is used to rewrite tarball URLs (e.g. "http://forge.example.com").
-func (h *Handler) fetchPackument(baseURL string, c *format.Context, pkg string) (map[string]any, bool) {
+// the TTL without re-parsing. baseURL is used to rewrite tarball URLs.
+//
+// The error distinguishes the two failures callers must not confuse:
+// proxy.ErrNotFound means upstream said the package does not exist (answer 404,
+// and suppress further lookups for the negative-TTL window), while any other
+// error means upstream could not be reached (answer 502). Collapsing them made
+// every miss a 502 and re-asked upstream forever, since nothing was cached.
+//
+// 404 handling matches the shared Fetcher deliberately: a 404 is authoritative
+// and is NOT served from a stale copy, so a package unpublished upstream stops
+// being served here too. Stale-on-error covers unreachable upstreams only.
+func (h *Handler) fetchPackument(baseURL string, c *format.Context, pkg string) (map[string]any, error) {
 	var stored map[string]any
 	hasStored, _ := c.Meta.GetJSON(h.ns(c), pkg, &stored)
 
 	if hasStored {
 		// Hosted or cached proxy: check TTL.
 		if c.Repo.Kind != repo.Proxy {
-			return stored, true
+			return stored, nil
 		}
 		var ce proxy.CacheEntry
 		hasCE, _ := c.Meta.GetJSON(h.proxyNS(c), pkg, &ce)
@@ -475,22 +490,35 @@ func (h *Handler) fetchPackument(baseURL string, c *format.Context, pkg string) 
 			if c.Metrics != nil {
 				c.Metrics.CacheHits.WithLabelValues(c.Repo.Name).Inc()
 			}
-			return stored, true // fresh cache hit
+			return stored, nil // fresh cache hit
 		}
 		// Stale: attempt revalidation below; fall back to stored on any error.
 	}
 
 	if c.Repo.Kind != repo.Proxy {
-		return nil, false
+		return nil, proxy.ErrNotFound
+	}
+
+	// Negative cache: a package upstream does not have is not re-asked for the
+	// whole negative-TTL window. Without this every lookup of a nonexistent
+	// package — a typo in a CI dependency, say — hits the upstream registry.
+	cfg := proxy.ConfigForRepo(c.Repo)
+	if !cfg.DisableNegativeCache {
+		var neg proxy.CacheEntry
+		if ok, _ := c.Meta.GetJSON(h.proxyNS(c), pkg, &neg); ok && neg.NotFound {
+			if time.Since(neg.FetchedAt) < cfg.EffectiveNegativeTTL() {
+				return nil, proxy.ErrNotFound
+			}
+		}
 	}
 
 	upURL := strings.TrimRight(c.Repo.Upstream, "/") + "/" + url.PathEscape(pkg)
 	req, err := http.NewRequest(http.MethodGet, upURL, nil)
 	if err != nil {
 		if hasStored {
-			return stored, true
+			return stored, nil
 		}
-		return nil, false
+		return nil, fmt.Errorf("%w: %v", proxy.ErrUpstreamFailed, err)
 	}
 	if c.Repo.ProxyAuth != "" {
 		req.Header.Set("Authorization", c.Repo.ProxyAuth)
@@ -507,9 +535,9 @@ func (h *Handler) fetchPackument(baseURL string, c *format.Context, pkg string) 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		if hasStored {
-			return stored, true // stale-on-error
+			return stored, nil // stale-on-error
 		}
-		return nil, false
+		return nil, fmt.Errorf("%w: %v", proxy.ErrUpstreamFailed, err)
 	}
 	defer resp.Body.Close()
 
@@ -520,22 +548,29 @@ func (h *Handler) fetchPackument(baseURL string, c *format.Context, pkg string) 
 		if c.Metrics != nil {
 			c.Metrics.CacheHits.WithLabelValues(c.Repo.Name).Inc()
 		}
-		return stored, true
+		return stored, nil
+	}
+
+	// A 404 is authoritative: record it so the next lookup is answered locally,
+	// and do not fall back to a stale copy (the shared Fetcher does the same).
+	if resp.StatusCode == http.StatusNotFound {
+		c.Meta.PutJSON(h.proxyNS(c), pkg, proxy.CacheEntry{FetchedAt: time.Now(), NotFound: true}) //nolint:errcheck
+		return nil, proxy.ErrNotFound
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		if hasStored {
-			return stored, true // stale-on-error
+			return stored, nil // stale-on-error
 		}
-		return nil, false
+		return nil, fmt.Errorf("%w: upstream returned %d", proxy.ErrUpstreamFailed, resp.StatusCode)
 	}
 
 	var doc map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
 		if hasStored {
-			return stored, true
+			return stored, nil
 		}
-		return nil, false
+		return nil, fmt.Errorf("%w: malformed packument: %v", proxy.ErrUpstreamFailed, err)
 	}
 
 	// Rewrite tarball URLs to point at this proxy.
@@ -567,14 +602,18 @@ func (h *Handler) fetchPackument(baseURL string, c *format.Context, pkg string) 
 	if c.OnCacheFill != nil {
 		c.OnCacheFill(c.Key(pkg))
 	}
-	return doc, true
+	return doc, nil
 }
 
 func (h *Handler) proxyNS(c *format.Context) string { return c.Repo.Name + ":proxy" }
 
 func (h *Handler) proxyPackument(w http.ResponseWriter, r *http.Request, c *format.Context, pkg string) {
-	doc, ok := h.fetchPackument(publicBase(r), c, pkg)
-	if !ok {
+	doc, err := h.fetchPackument(publicBase(r), c, pkg)
+	if errors.Is(err, proxy.ErrNotFound) {
+		http.Error(w, "package not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
 		http.Error(w, "upstream unavailable", http.StatusBadGateway)
 		return
 	}
@@ -602,9 +641,9 @@ func (h *Handler) groupPackument(w http.ResponseWriter, r *http.Request, c *form
 		if !ok {
 			continue
 		}
-		doc, ok := h.fetchPackument(publicBase(r), mc, pkg)
-		if !ok {
-			continue
+		doc, ferr := h.fetchPackument(publicBase(r), mc, pkg)
+		if ferr != nil {
+			continue // a member without the package must not fail the group
 		}
 		found = true
 		if !topSet {
@@ -795,9 +834,9 @@ func (h *Handler) Inspect(c *format.Context, baseURL, pkg string) (format.Compon
 		if c.Repo.Kind != repo.Proxy {
 			return format.ComponentDetail{}, false
 		}
-		var ok2 bool
-		packument, ok2 = h.fetchPackument(baseURL, c, pkg)
-		if !ok2 {
+		var ferr error
+		packument, ferr = h.fetchPackument(baseURL, c, pkg)
+		if ferr != nil {
 			return format.ComponentDetail{}, false
 		}
 	}

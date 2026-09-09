@@ -166,6 +166,12 @@ func (c Config) negativeTTL() time.Duration {
 	return DefaultNegativeTTL
 }
 
+// EffectiveNegativeTTL reports the negative-cache window this config actually
+// uses, including the package default when unset. Exported so a format that
+// caches on its own path (npm packuments) suppresses 404s for the same window
+// as the shared Fetcher, instead of hard-coding a second default.
+func (c Config) EffectiveNegativeTTL() time.Duration { return c.negativeTTL() }
+
 func (c Config) maxRetries() int {
 	if c.MaxRetries > 0 {
 		return c.MaxRetries
