@@ -9,6 +9,7 @@ import (
 
 	"forge/internal/config"
 	"forge/internal/repo"
+	"forge/internal/testutil"
 )
 
 // waitFor polls cond until it holds or the deadline passes.
@@ -44,8 +45,7 @@ func TestWatch_ReAppliesOnFileChange(t *testing.T) {
 	}
 
 	done := make(chan struct{})
-	defer close(done)
-	go config.Watch(path, a, 10*time.Millisecond, done, func(config.Result, error) {})
+	testutil.RunWorker(t, func() { close(done) }, func() { config.Watch(path, a, 10*time.Millisecond, done, func(config.Result, error) {}) })
 
 	// A new repo appears in the file → it must appear in the manager.
 	write("repositories:\n  - name: one\n    format: npm\n    kind: hosted\n    enabled: true\n" +
@@ -77,8 +77,7 @@ func TestWatch_IgnoresLiveStateChanges(t *testing.T) {
 
 	var passes atomic.Int64
 	done := make(chan struct{})
-	defer close(done)
-	go config.Watch(path, a, 10*time.Millisecond, done, func(config.Result, error) { passes.Add(1) })
+	testutil.RunWorker(t, func() { close(done) }, func() { config.Watch(path, a, 10*time.Millisecond, done, func(config.Result, error) { passes.Add(1) }) })
 
 	// Let the watcher take its first pass (which applies once by design, so a
 	// change landing between the boot apply and the watcher starting is never
@@ -110,11 +109,12 @@ func TestWatch_RetriesAfterBadWrite(t *testing.T) {
 	}
 	var errs atomic.Int64
 	done := make(chan struct{})
-	defer close(done)
-	go config.Watch(path, a, 10*time.Millisecond, done, func(_ config.Result, err error) {
-		if err != nil {
-			errs.Add(1)
-		}
+	testutil.RunWorker(t, func() { close(done) }, func() {
+		config.Watch(path, a, 10*time.Millisecond, done, func(_ config.Result, err error) {
+			if err != nil {
+				errs.Add(1)
+			}
+		})
 	})
 
 	// Broken YAML → reported, not applied.

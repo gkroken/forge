@@ -13,6 +13,7 @@ import (
 	"forge/internal/meta"
 	"forge/internal/obs"
 	"forge/internal/queue"
+	"forge/internal/testutil"
 )
 
 func newMetaStore(t *testing.T) meta.Store {
@@ -104,7 +105,7 @@ func TestConcurrentPublish(t *testing.T) {
 	defer cancel()
 
 	// Start the indexer worker.
-	go New(m).Work(ctx, q) //nolint:errcheck
+	testutil.RunWorker(t, cancel, func() { New(m).Work(ctx, q) }) //nolint:errcheck
 
 	// Publish N versions concurrently.
 	var wg sync.WaitGroup
@@ -158,7 +159,7 @@ func TestWorker_WithMetrics(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go New(m).WithMetrics(metrics).Work(ctx, q) //nolint:errcheck
+	testutil.RunWorker(t, cancel, func() { New(m).WithMetrics(metrics).Work(ctx, q) }) //nolint:errcheck
 
 	payload, _ := json.Marshal(RegenPayload{RepoName: "repo1", Pkg: "pkg"})
 	q.Enqueue(ctx, "npm.regen", RegenPayload{RepoName: "repo1", Pkg: "pkg"}) //nolint:errcheck
@@ -183,7 +184,7 @@ func TestRegister_CustomHandlerDispatched(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go w.Work(ctx, q) //nolint:errcheck
+	testutil.RunWorker(t, cancel, func() { w.Work(ctx, q) }) //nolint:errcheck
 
 	q.Enqueue(ctx, "webhook.deliver", map[string]string{"subID": "s1"}) //nolint:errcheck
 	q.Drain()
@@ -224,7 +225,7 @@ func TestWithTaskRing_RecordsCompletion(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go New(m).WithTaskRing(ring).Work(ctx, q) //nolint:errcheck
+	testutil.RunWorker(t, cancel, func() { New(m).WithTaskRing(ring).Work(ctx, q) }) //nolint:errcheck
 
 	q.Enqueue(ctx, "npm.regen", RegenPayload{RepoName: "repo1", Pkg: "pkg"}) //nolint:errcheck
 	q.Drain()

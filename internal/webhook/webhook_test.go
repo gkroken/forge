@@ -17,6 +17,7 @@ import (
 
 	"forge/internal/meta"
 	"forge/internal/queue"
+	"forge/internal/testutil"
 	"forge/internal/webhook"
 )
 
@@ -131,7 +132,7 @@ func TestDispatchAndHandle_DeliversSigned(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go q.Work(ctx, eng.Handle) //nolint:errcheck
+	testutil.RunWorker(t, cancel, func() { q.Work(ctx, eng.Handle) }) //nolint:errcheck
 
 	eng.Dispatch(ctx, webhook.Event{
 		Type: webhook.EventArtifactPublished, Repo: "maven-hosted", Path: "g/a/1.0/a.jar",
@@ -166,7 +167,7 @@ func TestHandle_DisabledSubscriptionDropped(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go q.Work(ctx, eng.Handle) //nolint:errcheck
+	testutil.RunWorker(t, cancel, func() { q.Work(ctx, eng.Handle) }) //nolint:errcheck
 
 	// Enqueue directly via Dispatch — disabled sub won't match, so nothing is
 	// enqueued; assert no delivery after a settle window.
@@ -200,7 +201,7 @@ func TestHandle_BoundedRetry(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go q.Work(ctx, eng.Handle) //nolint:errcheck
+	testutil.RunWorker(t, cancel, func() { q.Work(ctx, eng.Handle) }) //nolint:errcheck
 
 	eng.Dispatch(ctx, webhook.Event{Type: webhook.EventArtifactPublished, Repo: "maven-hosted"})
 
@@ -240,7 +241,7 @@ func TestEmitCleanupCompleted_DeliversSummary(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go q.Work(ctx, eng.Handle) //nolint:errcheck
+	testutil.RunWorker(t, cancel, func() { q.Work(ctx, eng.Handle) }) //nolint:errcheck
 
 	eng.EmitCleanupCompleted(ctx, "maven-hosted", "keep-10", 3, 4096, "manual")
 
@@ -297,7 +298,7 @@ func TestRetryAfter_HonouredAndDeliveryIDStable(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go q.Work(ctx, eng.Handle) //nolint:errcheck
+	testutil.RunWorker(t, cancel, func() { q.Work(ctx, eng.Handle) }) //nolint:errcheck
 
 	eng.Dispatch(ctx, webhook.Event{Type: webhook.EventArtifactPublished, Repo: "maven-hosted"})
 
@@ -336,7 +337,7 @@ func TestHistory_RecordsSuccess(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go q.Work(ctx, eng.Handle) //nolint:errcheck
+	testutil.RunWorker(t, cancel, func() { q.Work(ctx, eng.Handle) }) //nolint:errcheck
 
 	eng.Dispatch(ctx, webhook.Event{Type: webhook.EventArtifactPublished, Repo: "maven-hosted"})
 
@@ -388,7 +389,7 @@ func TestHistory_DeadLetterOnExhaustion(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go q.Work(ctx, eng.Handle) //nolint:errcheck
+	testutil.RunWorker(t, cancel, func() { q.Work(ctx, eng.Handle) }) //nolint:errcheck
 
 	eng.Dispatch(ctx, webhook.Event{Type: webhook.EventArtifactPublished, Repo: "maven-hosted"})
 
