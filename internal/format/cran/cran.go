@@ -316,10 +316,10 @@ func (h *Handler) mergeGroupRecords(c *format.Context, fromProxy, fromHosted fun
 			recs = fromProxy(mc)
 		} else {
 			recs = fromHosted(mc)
-			if c.NameClaimed != nil {
-				for _, rec := range recs {
-					hostedNames[rec.Package] = true
-				}
+			// Recorded unconditionally: a hosted member winning a name it
+			// actually holds is group precedence, not a security policy.
+			for _, rec := range recs {
+				hostedNames[rec.Package] = true
 			}
 		}
 		collected = append(collected, memberRecs{mc.Repo.Kind == repo.Proxy, recs})
@@ -328,7 +328,20 @@ func (h *Handler) mergeGroupRecords(c *format.Context, fromProxy, fromHosted fun
 	var all []pkgRecord
 	for _, m := range collected {
 		for _, rec := range m.recs {
-			if m.proxy && c.NameClaimed != nil && (hostedNames[rec.Package] || c.NameClaimed(rec.Package)) {
+			// Two rules, and only the second is the dependency-confusion
+			// guard. A hosted member always shadows a proxy for a name it
+			// holds; a CLAIM additionally shadows names nothing has published
+			// yet, and that part is what the guard toggles.
+			//
+			// Gating both on the guard made disabling it produce a malformed
+			// index rather than a laxer one: PACKAGES listed the same package
+			// twice, once from the hosted member and once from upstream, and
+			// DCF has no way to express that. available.packages() would pick
+			// whichever it saw first.
+			if m.proxy && hostedNames[rec.Package] {
+				continue
+			}
+			if m.proxy && c.NameClaimed != nil && c.NameClaimed(rec.Package) {
 				continue
 			}
 			key := rec.Package + "_" + rec.Version

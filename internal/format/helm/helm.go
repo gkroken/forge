@@ -397,10 +397,10 @@ func (h *Handler) groupRecords(c *format.Context) []chartRecord {
 			recs = h.upstreamRecords(mc)
 		} else {
 			recs = h.records(mc)
-			if c.NameClaimed != nil {
-				for _, rec := range recs {
-					hostedNames[rec.Name] = true
-				}
+			// Unconditional: see the note in cran.mergeGroupRecords. A hosted
+			// member shadowing a name it holds is precedence, not policy.
+			for _, rec := range recs {
+				hostedNames[rec.Name] = true
 			}
 		}
 		collected = append(collected, memberRecs{mc.Repo.Kind == repo.Proxy, recs})
@@ -409,7 +409,10 @@ func (h *Handler) groupRecords(c *format.Context) []chartRecord {
 	var all []chartRecord
 	for _, m := range collected {
 		for _, rec := range m.recs {
-			if m.proxy && c.NameClaimed != nil && (hostedNames[rec.Name] || c.NameClaimed(rec.Name)) {
+			if m.proxy && hostedNames[rec.Name] {
+				continue
+			}
+			if m.proxy && c.NameClaimed != nil && c.NameClaimed(rec.Name) {
 				continue
 			}
 			key := rec.Name + "-" + rec.Version

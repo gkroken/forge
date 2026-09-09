@@ -744,3 +744,76 @@ func TestValuesImageRefs_NoValues(t *testing.T) {
 		t.Error("expected error when values.yaml is absent")
 	}
 }
+
+// The guard-off counterpart: switching off dependency-confusion protection
+// relaxes the CLAIM rule only. A hosted member still wins a chart name it
+// actually holds, or the merged index carries both the internal chart and an
+// upstream chart of the same name and a client picks between them.
+func TestGroup_IndexMerge_HostedStillWinsWithGuardOff(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/index.yaml" {
+			fmt.Fprint(w, `apiVersion: v1
+entries:
+  webapp:
+    - name: webapp
+      version: 9.9.9
+      digest: z
+      created: 2024-01-01T00:00:00Z
+      urls:
+        - webapp-9.9.9.tgz
+  free:
+    - name: free
+      version: 2.0.0
+      digest: y
+      created: 2024-01-01T00:00:00Z
+      urls:
+        - free-2.0.0.tgz
+`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m.PutJSON("helm-hosted:helm", "webapp-1.0.0", //nolint:errcheck
+		chartRecord{Name: "webapp", Version: "1.0.0", Digest: "abc",
+			Created: "2024-01-01T00:00:00Z", Filename: "webapp-1.0.0.tgz"})
+
+	mgr := repo.NewManager()
+	for _, r := range []repo.Repository{
+		{Name: "helm-hosted", Format: "helm", Kind: repo.Hosted},
+		{Name: "helm-proxy", Format: "helm", Kind: repo.Proxy, Upstream: upstream.URL},
+		{Name: "helm-group", Format: "helm", Kind: repo.Group, Members: []string{"helm-proxy", "helm-hosted"}},
+	} {
+		if err := mgr.Add(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	groupRepo, _ := mgr.Get("helm-group")
+	c := &format.Context{
+		Repo: groupRepo, Meta: m, Blob: b, Sub: "index.yaml", Repos: mgr,
+		HTTP:        upstream.Client(),
+		NameClaimed: nil, // the guard is switched off
+	}
+
+	var webappVersions []string
+	var sawFree bool
+	for _, rec := range New().groupRecords(c) {
+		if rec.Name == "webapp" {
+			webappVersions = append(webappVersions, rec.Version)
+		}
+		if rec.Name == "free" {
+			sawFree = true
+		}
+	}
+	if len(webappVersions) != 1 || webappVersions[0] != "1.0.0" {
+		t.Errorf("webapp versions = %v, want just the hosted 1.0.0 even with the guard off",
+			webappVersions)
+	}
+	if !sawFree {
+		t.Error("free was dropped; unrelated upstream charts must still merge")
+	}
+}

@@ -60,12 +60,19 @@ Per-format policy that a generic merge cannot absorb:
 
 ## Why it was deferred
 
-These four formats have real conformance coverage, and `cran.mergeGroupRecords`
-in particular has a subtlety worth preserving deliberately rather than by
-accident: it gates hosted-name shadowing on `NameClaimed` being set, whereas
-`format.GroupMerge` shadows unconditionally. That is a behaviour change, not a
-move, and it belongs in a commit that says so — not as a rider on adding Python
-support.
+These four formats have real conformance coverage, so migrating them is its own
+change rather than a rider on a feature.
+
+One difference that used to block the migration is now gone. `cran` and `helm`
+gated hosted-name shadowing on `NameClaimed` being set, whereas
+`format.GroupMerge` shadows unconditionally — and that gate turned out to be a
+bug rather than a policy: with the dependency-confusion guard switched off, a
+CRAN group listed the same package twice, once from the hosted member and once
+from upstream, which DCF cannot express. Both now separate the two rules the
+way GroupMerge does: a hosted member always wins a name it holds (precedence),
+and a claim additionally shadows names nothing has published yet (policy, and
+the part the guard toggles). The semantics therefore match, and the migration is
+now a move.
 
 Do it as its own change, one format per commit, with the conformance suite green
 between each.

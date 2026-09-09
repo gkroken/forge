@@ -1317,3 +1317,67 @@ func makeMacOSBinPkg(t *testing.T, pkg, version string) []byte {
 	gz.Close()
 	return buf.Bytes()
 }
+
+// The counterpart with the guard OFF (NameClaimed nil). Turning off
+// dependency-confusion protection must relax the CLAIM rule only — a hosted
+// member still wins a name it actually holds, because that is group precedence,
+// not policy.
+//
+// Gating both on the guard produced a malformed index rather than a laxer one:
+// PACKAGES listed the same package twice, once from the hosted member and once
+// from upstream, which DCF cannot express and available.packages() resolves by
+// whichever it reads first.
+func TestGroup_PackagesMerge_HostedStillWinsWithGuardOff(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/src/contrib/PACKAGES" {
+			w.Header().Set("Content-Type", "text/plain")
+			fmt.Fprint(w,
+				"Package: local-pkg\nVersion: 9.9.9\nLicense: UPSTREAM\n\n"+
+					"Package: free-pkg\nVersion: 2.0.0\n\n")
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m.PutJSON("cran-hosted+cran", "local-pkg_1.0.0", pkgRecord{Package: "local-pkg", Version: "1.0.0"}) //nolint:errcheck
+
+	mgr := repo.NewManager()
+	for _, r := range []repo.Repository{
+		{Name: "cran-hosted", Format: "cran", Kind: repo.Hosted},
+		{Name: "cran-proxy", Format: "cran", Kind: repo.Proxy, Upstream: upstream.URL},
+		{Name: "cran-group", Format: "cran", Kind: repo.Group, Members: []string{"cran-proxy", "cran-hosted"}},
+	} {
+		if err := mgr.Add(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	groupRepo, _ := mgr.Get("cran-group")
+	c := &format.Context{
+		Repo: groupRepo, Meta: m, Blob: b, Repos: mgr, HTTP: upstream.Client(),
+		NameClaimed: nil, // the guard is switched off
+	}
+
+	recs := New().groupPkgRecords(c)
+	var localCount int
+	got := map[string]string{}
+	for _, rec := range recs {
+		if rec.Package == "local-pkg" {
+			localCount++
+		}
+		got[rec.Package] = rec.Version
+	}
+	if localCount != 1 {
+		t.Errorf("local-pkg appears %d times; PACKAGES cannot express a duplicate "+
+			"package entry and R resolves it by whichever it reads first", localCount)
+	}
+	if got["local-pkg"] != "1.0.0" {
+		t.Errorf("local-pkg = %q, want the hosted 1.0.0 even with the guard off", got["local-pkg"])
+	}
+	if got["free-pkg"] != "2.0.0" {
+		t.Errorf("free-pkg = %q, want 2.0.0 — unrelated upstream packages still merge", got["free-pkg"])
+	}
+}
