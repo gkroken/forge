@@ -244,11 +244,11 @@ Two things the implementation needed that the map missed:
   **It remains unused by every other format** — a separate silent no-op worth
   its own fix.
 
-### F4 — the docs say OCI proxy is unsupported, and it is not
+### F4 — the docs said OCI proxy was unsupported, and it was not · FIXED
 
-`README.md` marks OCI as proxy `—`, but proxy mode is implemented and works
-against token-free registries (F3). The row understates what exists while F2/F3
-overstate how far it goes. Both should say what is true.
+`README.md` marked OCI as proxy `—` while proxy mode was implemented and worked
+against token-free registries. With F2 and F3 done the row is now `✅ ✅ ✅`,
+which is finally true of all three kinds.
 
 ## Test bugs found while writing this
 

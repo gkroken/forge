@@ -40,7 +40,7 @@ go build -o forge ./cmd/forge
 | Helm   | ✅ | — | ✅ | `helm` 3.x (repo + `oci://`) |
 | CRAN   | ✅ | ✅ | ✅ | `R` install.packages, `renv`, `pak` |
 | PyPI   | ✅ | ✅ | ✅ | `pip` 24.x, `twine` 5.x |
-| OCI    | ✅ | — | — | `oras`, `crane`, `helm push oci://` |
+| OCI    | ✅ | ✅ | ✅ | `oras`, `crane`, `helm push oci://` |
 
 All clients are exercised by the conformance suite against a live forge instance
 (see `internal/conformance/`). The suite runs in CI on every push.
@@ -76,6 +76,9 @@ twine upload --repository-url http://localhost:8080/repository/pypi-hosted/ dist
 pip install --index-url http://localhost:8080/repository/pypi-hosted/simple/ mypkg
 # or through the group (internal packages shadow upstream ones of the same name):
 pip install --index-url http://localhost:8080/repository/pypi-public/simple/ six
+
+# OCI / Docker — a proxy caches upstream images (Docker Hub, ghcr.io, quay.io)
+docker pull localhost:8080/repository/docker-public/library/alpine:latest
 
 # OCI / Docker
 oras push localhost:8080/docker-hosted/myimage:v1 artifact.bin
