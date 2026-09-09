@@ -99,3 +99,47 @@ func TestRepoBlob_WrapsOnlyImmutableRepos(t *testing.T) {
 		t.Error("an immutable repo accepted an overwrite through repoBlob")
 	}
 }
+
+// A group cannot contain a group. MemberCtx refuses a group member, so nesting
+// used to be accepted and then contribute nothing: a group-of-groups answered
+// 404 for packages its inner group served, with no error at creation and no log
+// — the silent-absence pattern, in the repository model itself.
+func TestGroupNesting_IsRefused(t *testing.T) {
+	srv := newAdminServer(t)
+	mustAdd := func(r repo.Repository) {
+		t.Helper()
+		if err := srv.Repos.Add(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustAdd(repo.Repository{Name: "inner-host", Format: "npm", Kind: repo.Hosted, Enabled: true})
+	mustAdd(repo.Repository{Name: "inner-group", Format: "npm", Kind: repo.Group, Enabled: true,
+		Members: []string{"inner-host"}})
+
+	for _, tc := range []struct {
+		desc    string
+		group   repo.Repository
+		wantMsg string
+	}{
+		{"a group member", repo.Repository{Name: "outer", Format: "npm", Kind: repo.Group,
+			Members: []string{"inner-group"}}, "cannot be nested"},
+		{"itself as a member", repo.Repository{Name: "selfy", Format: "npm", Kind: repo.Group,
+			Members: []string{"selfy"}}, "lists itself"},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			msg := validateGroupPolicy(tc.group, srv.Repos)
+			if !strings.Contains(msg, tc.wantMsg) {
+				t.Errorf("validateGroupPolicy = %q, want it to mention %q", msg, tc.wantMsg)
+			}
+		})
+	}
+
+	// A group over hosted and proxy members is still fine.
+	mustAdd(repo.Repository{Name: "inner-proxy", Format: "npm", Kind: repo.Proxy,
+		Enabled: true, Upstream: "https://registry.npmjs.org"})
+	ok := repo.Repository{Name: "fine", Format: "npm", Kind: repo.Group,
+		Members: []string{"inner-host", "inner-proxy"}}
+	if msg := validateGroupPolicy(ok, srv.Repos); msg != "" {
+		t.Errorf("an ordinary group was refused: %s", msg)
+	}
+}

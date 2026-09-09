@@ -140,7 +140,28 @@ func validateRepo(r repo.Repository) string {
 // members include a private repo (anonymousRead=false). Without this check
 // an anonymous client can read private artifacts through the group.
 func validateGroupPolicy(group repo.Repository, mgr *repo.Manager) string {
-	if group.Kind != repo.Group || !group.AnonymousRead {
+	if group.Kind != repo.Group {
+		return ""
+	}
+	// A group cannot contain a group. MemberCtx refuses a group member, so
+	// nesting was accepted at creation and then contributed nothing: a
+	// group-of-groups answered 404 for packages its inner group served, with no
+	// error and no log. Refusing here is the honest version — the same reason a
+	// format that cannot serve a repository kind says so instead of returning
+	// an empty index.
+	for _, memberName := range group.Members {
+		if memberName == group.Name {
+			return fmt.Sprintf("group %q lists itself as a member", group.Name)
+		}
+		if member, ok := mgr.Get(memberName); ok && member.Kind == repo.Group {
+			return fmt.Sprintf(
+				"group %q lists group %q as a member: groups cannot be nested, and a "+
+					"nested member would silently contribute nothing. List %q's members "+
+					"directly instead.",
+				group.Name, memberName, memberName)
+		}
+	}
+	if !group.AnonymousRead {
 		return ""
 	}
 	for _, memberName := range group.Members {
