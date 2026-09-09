@@ -116,6 +116,16 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 	}
 }
 
+// nameVersionFromFilename splits CRAN's "{Package}_{Version}.tar.gz".
+func nameVersionFromFilename(sub string) (pkg, version string, ok bool) {
+	base := strings.TrimSuffix(path.Base(sub), ".tar.gz")
+	pkg, version, ok = strings.Cut(base, "_")
+	if !ok || pkg == "" || version == "" {
+		return "", "", false
+	}
+	return pkg, version, true
+}
+
 func (h *Handler) publish(w http.ResponseWriter, r *http.Request, c *format.Context) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -126,6 +136,20 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, c *format.Cont
 	if err != nil {
 		http.Error(w, "invalid package: "+err.Error(), http.StatusBadRequest)
 		return
+	}
+	// CRAN's own convention is that a source package is named
+	// {Package}_{Version}.tar.gz. Enforcing it keeps the index honest: the blob
+	// is stored under the URL's filename while the index entry comes from
+	// DESCRIPTION, so without this check a package could be advertised under a
+	// name whose file does not exist — clients get a 404 for a package the
+	// index promises, and in a group that entry shadows the real one upstream.
+	if wantPkg, wantVer, ok := nameVersionFromFilename(c.Sub); ok {
+		if rec.Package != wantPkg || rec.Version != wantVer {
+			http.Error(w, fmt.Sprintf(
+				"DESCRIPTION declares %s_%s but the file is named %s_%s.tar.gz; they must match",
+				rec.Package, rec.Version, wantPkg, wantVer), http.StatusBadRequest)
+			return
+		}
 	}
 	if _, err := c.Blob.Put(c.Key(c.Sub), bytes.NewReader(body)); err != nil {
 		if errors.Is(err, blob.ErrImmutable) {
@@ -592,8 +616,13 @@ func scanDescription(data []byte) pkgRecord {
 	fields := map[string]string{}
 	var curKey string
 	for _, line := range strings.Split(string(data), "\n") {
-		if line == "" {
-			continue
+		// In DCF a blank line ENDS the record, and a DESCRIPTION file holds
+		// exactly one. Skipping blank lines instead let a second record in the
+		// same file overwrite the first: a package uploaded as victim_1.0.0
+		// was indexed under whatever name the trailing record declared, and
+		// the real one vanished from PACKAGES entirely.
+		if strings.TrimRight(line, "\r") == "" {
+			break
 		}
 		if (line[0] == ' ' || line[0] == '\t') && curKey != "" {
 			fields[curKey] += " " + strings.TrimSpace(line)

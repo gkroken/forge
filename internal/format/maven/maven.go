@@ -423,17 +423,32 @@ func (h *Handler) metadataFor(artifactSub string, versions []string) ([]byte, bo
 	return buildMetadataXML(groupArtifact[:lastDot], groupArtifact[lastDot+1:], versions), true
 }
 
+// xmlText escapes a value for an XML text node.
+//
+// Coordinates reach this from request paths, so a version directory containing
+// "<" produced malformed maven-metadata.xml — which every Maven client then
+// failed to parse, breaking resolution of that artifact for everyone. Nothing
+// here was escaped previously.
+func xmlText(v string) string {
+	var b bytes.Buffer
+	if err := xml.EscapeText(&b, []byte(v)); err != nil {
+		return "" // EscapeText only fails on writer errors; a bytes.Buffer has none
+	}
+	return b.String()
+}
+
 func buildMetadataXML(groupID, artifactID string, versions []string) []byte {
 	latest := versions[len(versions)-1]
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>` + "\n")
 	fmt.Fprintf(&b, "<metadata>\n  <groupId>%s</groupId>\n  <artifactId>%s</artifactId>\n",
-		groupID, artifactID)
+		xmlText(groupID), xmlText(artifactID))
 	b.WriteString("  <versioning>\n")
-	fmt.Fprintf(&b, "    <latest>%s</latest>\n    <release>%s</release>\n", latest, latest)
+	fmt.Fprintf(&b, "    <latest>%s</latest>\n    <release>%s</release>\n",
+		xmlText(latest), xmlText(latest))
 	b.WriteString("    <versions>\n")
 	for _, v := range versions {
-		fmt.Fprintf(&b, "      <version>%s</version>\n", v)
+		fmt.Fprintf(&b, "      <version>%s</version>\n", xmlText(v))
 	}
 	b.WriteString("    </versions>\n  </versioning>\n</metadata>\n")
 	return []byte(b.String())
@@ -549,24 +564,24 @@ func buildSnapshotMetadataXML(sm snapshotMeta) []byte {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>` + "\n")
 	fmt.Fprintf(&b, "<metadata>\n  <groupId>%s</groupId>\n  <artifactId>%s</artifactId>\n  <version>%s</version>\n",
-		sm.GroupID, sm.ArtifactID, sm.Version)
+		xmlText(sm.GroupID), xmlText(sm.ArtifactID), xmlText(sm.Version))
 	b.WriteString("  <versioning>\n")
 	if sm.Timestamp != "" {
 		fmt.Fprintf(&b, "    <snapshot>\n      <timestamp>%s</timestamp>\n      <buildNumber>%d</buildNumber>\n    </snapshot>\n",
-			sm.Timestamp, sm.BuildNumber)
+			xmlText(sm.Timestamp), sm.BuildNumber)
 	}
 	if sm.Updated != "" {
-		fmt.Fprintf(&b, "    <lastUpdated>%s</lastUpdated>\n", sm.Updated)
+		fmt.Fprintf(&b, "    <lastUpdated>%s</lastUpdated>\n", xmlText(sm.Updated))
 	}
 	if len(sm.Versions) > 0 {
 		b.WriteString("    <snapshotVersions>\n")
 		for _, sv := range sm.Versions {
 			b.WriteString("      <snapshotVersion>\n")
 			if sv.Classifier != "" {
-				fmt.Fprintf(&b, "        <classifier>%s</classifier>\n", sv.Classifier)
+				fmt.Fprintf(&b, "        <classifier>%s</classifier>\n", xmlText(sv.Classifier))
 			}
 			fmt.Fprintf(&b, "        <extension>%s</extension>\n        <value>%s</value>\n        <updated>%s</updated>\n",
-				sv.Extension, sv.Value, sv.Updated)
+				xmlText(sv.Extension), xmlText(sv.Value), xmlText(sv.Updated))
 			b.WriteString("      </snapshotVersion>\n")
 		}
 		b.WriteString("    </snapshotVersions>\n")
