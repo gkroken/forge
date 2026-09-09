@@ -8,7 +8,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"path"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -66,7 +68,25 @@ type Context struct {
 }
 
 // Key namespaces a blob key under the repo so repos never collide in storage.
-func (c *Context) Key(sub string) string { return c.Repo.Name + "/" + sub }
+// Key builds the blob-store key for a path inside this repository.
+//
+// The sub-path is cleaned so it can never climb out of the repository, because
+// not every sub-path arrives from a URL. net/http cleans "../" out of request
+// paths before routing, which protects handlers that key off the URL — but a
+// handler keying off the request BODY (npm's attachment names) gets no such
+// help, and one that did let a publisher write over another repository's
+// artifacts. Cleaning here means no handler can make that mistake again.
+func (c *Context) Key(sub string) string {
+	if sub == "" {
+		return c.Repo.Name + "/"
+	}
+	// Clean against "/" so any "..", however deep, resolves within the repo.
+	cleaned := path.Clean("/" + sub)
+	if strings.HasSuffix(sub, "/") && !strings.HasSuffix(cleaned, "/") {
+		cleaned += "/" // preserve a trailing slash: some keys are prefixes
+	}
+	return c.Repo.Name + cleaned
+}
 
 // MemberCtx returns a sub-context for the named member repository.
 // Returns (nil, false) if the member doesn't exist, is itself a group

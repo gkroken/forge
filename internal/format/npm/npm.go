@@ -167,7 +167,22 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, c *format.Cont
 			http.Error(w, "bad attachment encoding", http.StatusBadRequest)
 			return
 		}
-		if _, err := c.Blob.Put(c.Key(pkg+"/-/"+fname), bytes.NewReader(data)); err != nil {
+		// The attachment name comes from the request BODY, so unlike a URL path
+		// nothing has cleaned it. Using it to build a blob key let a publisher
+		// with write access to one repository write anywhere in the blob store
+		// — including over another repository's cached artifacts, which the
+		// group then served to everyone.
+		//
+		// It is also not the name to store under: npm names a scoped
+		// attachment "@scope/name-1.0.0.tgz" while the packument advertises
+		// "name-1.0.0.tgz", so trusting it published scoped packages to a path
+		// no client would ever request.
+		ver, ok := versionFromAttachmentName(pkg, fname)
+		if !ok {
+			http.Error(w, "invalid attachment name: "+fname, http.StatusBadRequest)
+			return
+		}
+		if _, err := c.Blob.Put(tarballKey(c, pkg, ver), bytes.NewReader(data)); err != nil {
 			if errors.Is(err, blob.ErrImmutable) {
 				http.Error(w, err.Error(), http.StatusConflict)
 				return
@@ -772,6 +787,37 @@ func publicBase(r *http.Request) string {
 		scheme = "https"
 	}
 	return scheme + "://" + r.Host
+}
+
+// tarballKey is the one place a tarball's location is decided. Publish,
+// download, retention and integrity must all agree, so they all derive it here
+// rather than each rebuilding the path.
+func tarballKey(c *format.Context, pkg, version string) string {
+	return c.Key(pkg + "/-/" + lastPathSeg(pkg) + "-" + version + ".tgz")
+}
+
+// versionFromAttachmentName recovers the version from an npm attachment name,
+// accepting both spellings npm has used ("@scope/name-1.0.0.tgz" and
+// "name-1.0.0.tgz") and rejecting anything carrying a path separator.
+func versionFromAttachmentName(pkg, fname string) (string, bool) {
+	if strings.ContainsAny(fname, `\`) || strings.Contains(fname, "..") {
+		return "", false
+	}
+	base, ok := strings.CutSuffix(fname, ".tgz")
+	if !ok {
+		return "", false
+	}
+	for _, prefix := range []string{pkg + "-", lastPathSeg(pkg) + "-"} {
+		if ver, ok := strings.CutPrefix(base, prefix); ok && ver != "" {
+			// A version never contains a separator; anything that does is an
+			// attempt to steer the path.
+			if strings.ContainsAny(ver, `/\`) {
+				return "", false
+			}
+			return ver, true
+		}
+	}
+	return "", false
 }
 
 func lastPathSeg(p string) string {
