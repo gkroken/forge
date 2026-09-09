@@ -723,7 +723,9 @@ func extractFile(tgz []byte, want string) ([]byte, error) {
 			return nil, err
 		}
 		if path.Base(hdr.Name) == want {
-			return io.ReadAll(tr)
+			// Bounded: the archive is attacker-supplied and its members
+			// decompress without limit. See format.ReadMetadata.
+			return format.ReadMetadata(tr)
 		}
 	}
 	return nil, fmt.Errorf("%s not found in archive", want)

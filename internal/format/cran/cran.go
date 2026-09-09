@@ -604,7 +604,12 @@ func parseDescription(tgz []byte) (pkgRecord, error) {
 			return pkgRecord{}, err
 		}
 		if path.Base(hdr.Name) == "DESCRIPTION" {
-			data, _ := io.ReadAll(tr)
+			// Bounded: see format.ReadMetadata. A tiny .tar.gz can hold a
+			// gigabyte DESCRIPTION.
+			data, err := format.ReadMetadata(tr)
+			if err != nil {
+				return pkgRecord{}, err
+			}
 			return scanDescription(data), nil
 		}
 	}
@@ -972,7 +977,8 @@ func parseDescriptionFromZip(data []byte) (pkgRecord, error) {
 				return pkgRecord{}, err
 			}
 			defer rc.Close()
-			content, err := io.ReadAll(rc)
+			// Bounded: a zip member decompresses without limit too.
+			content, err := format.ReadMetadata(rc)
 			if err != nil {
 				return pkgRecord{}, err
 			}
