@@ -50,6 +50,28 @@ func TestPutJSON_ReadersNeverSeeAPartialDocument(t *testing.T) {
 			}
 		}(w)
 	}
+	// List must never surface the temp files the atomic write creates. They are
+	// named ".meta-*" and List filters on ".json", but a listing taken mid-write
+	// is exactly when a leak would show.
+	var strayKeys int64
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 300; i++ {
+			keys, err := m.List("ns")
+			if err != nil {
+				continue
+			}
+			for _, k := range keys {
+				if k != "k" {
+					mu.Lock()
+					strayKeys++
+					mu.Unlock()
+				}
+			}
+		}
+	}()
+
 	for r := 0; r < 8; r++ {
 		wg.Add(1)
 		go func() {
@@ -70,6 +92,10 @@ func TestPutJSON_ReadersNeverSeeAPartialDocument(t *testing.T) {
 	}
 	wg.Wait()
 
+	if strayKeys > 0 {
+		t.Errorf("List returned %d keys that are not records; an in-progress "+
+			"atomic write leaked its temp file into the namespace", strayKeys)
+	}
 	if badReads > 0 || missingReads > 0 {
 		t.Errorf("readers saw %d torn and %d missing documents; a record being "+
 			"rewritten must stay readable", badReads, missingReads)

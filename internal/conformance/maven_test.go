@@ -4,7 +4,9 @@ package conformance_test
 
 import (
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"forge/internal/conformance"
@@ -108,7 +110,36 @@ mvn -B --no-transfer-progress -gs /tmp/gs.xml -s /tmp/us.xml \
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 for cached artifact, got %d", resp.StatusCode)
+		// A 502 here is worth distinguishing. If the artifact really were
+		// cached, this read would be served locally and could not reach
+		// upstream at all — so a 502 says the cache fill did not happen, even
+		// though mvn just resolved the same artifact through this proxy. That
+		// is a different bug from "upstream had a bad minute", and the two have
+		// been indistinguishable in CI: this has failed roughly one run in ten
+		// with no way to tell which it was.
+		t.Errorf("expected 200 for cached artifact, got %d", resp.StatusCode)
+		t.Fatalf("cache state at failure: %s", cacheDiagnosis(srv))
+	}
+}
+
+// cacheDiagnosis reports whether forge actually holds the artifact, so a
+// failure says which of the two possible causes it was.
+func cacheDiagnosis(srv *conformance.Server) string {
+	resp, err := http.Get(srv.BaseURL + "/api/v1/repos/maven-central/components?limit=200") //nolint:noctx
+	if err != nil {
+		return "could not query components: " + err.Error()
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case strings.Contains(string(body), "javax.inject"):
+		return "forge HAS the component cached, so the failed read re-fetched " +
+			"upstream and upstream failed — a transient, not a caching bug"
+	default:
+		return "forge does NOT have the component cached even though mvn " +
+			"resolved it through this proxy — the cache fill did not happen, " +
+			"which is a real defect rather than an upstream hiccup. Components: " +
+			string(body[:min(len(body), 400)])
 	}
 }
 
