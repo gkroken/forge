@@ -332,6 +332,16 @@ func (h *Handler) putManifest(w http.ResponseWriter, r *http.Request, c *format.
 		mt = "application/vnd.oci.image.manifest.v1+json"
 	}
 
+	// Everything the manifest references must already be here. The spec
+	// requires BLOB_UNKNOWN otherwise, and without the check a tag is accepted,
+	// listed and served while the pull fails at layer-fetch time — an image
+	// advertised by the registry that no client can actually pull.
+	if missing, ok := h.missingReference(c, data); !ok {
+		ociError(w, "BLOB_UNKNOWN", "manifest references "+missing+", which has not been uploaded",
+			http.StatusBadRequest)
+		return
+	}
+
 	if _, err := c.Blob.Put(h.manifestKey(c, dgst), bytes.NewReader(data)); err != nil {
 		ociError(w, "MANIFEST_INVALID", err.Error(), http.StatusInternalServerError)
 		return
@@ -351,6 +361,47 @@ func (h *Handler) putManifest(w http.ResponseWriter, r *http.Request, c *format.
 	w.Header().Set("Location", fmt.Sprintf("/v2/%s/%s/manifests/%s", c.Repo.Name, image, dgst))
 	w.Header().Set("Docker-Content-Digest", dgst)
 	w.WriteHeader(http.StatusCreated)
+}
+
+// missingReference reports the first descriptor a manifest points at that is
+// not present, or ok=true when every reference resolves.
+//
+// Both manifest shapes are covered: an image manifest names a config blob and
+// layer blobs, while an image index names other manifests. A descriptor forge
+// cannot parse is not treated as missing — refusing an unfamiliar media type
+// would break clients pushing shapes this registry simply passes through.
+func (h *Handler) missingReference(c *format.Context, data []byte) (string, bool) {
+	var m struct {
+		Config    struct{ Digest string }   `json:"config"`
+		Layers    []struct{ Digest string } `json:"layers"`
+		Manifests []struct{ Digest string } `json:"manifests"`
+	}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return "", true // not a shape we understand; let it through as before
+	}
+	if d := m.Config.Digest; d != "" {
+		if _, exists, _ := c.Blob.Stat(h.blobKey(c, d)); !exists {
+			return "config blob " + d, false
+		}
+	}
+	for _, l := range m.Layers {
+		if l.Digest == "" {
+			continue
+		}
+		if _, exists, _ := c.Blob.Stat(h.blobKey(c, l.Digest)); !exists {
+			return "layer " + l.Digest, false
+		}
+	}
+	// An index points at manifests, which are stored under their own key.
+	for _, sub := range m.Manifests {
+		if sub.Digest == "" {
+			continue
+		}
+		if _, exists, _ := c.Blob.Stat(h.manifestKey(c, sub.Digest)); !exists {
+			return "manifest " + sub.Digest, false
+		}
+	}
+	return "", true
 }
 
 func (h *Handler) deleteManifest(w http.ResponseWriter, c *format.Context, image, ref string) {

@@ -504,3 +504,59 @@ func TestVulnGateTarget(t *testing.T) {
 		}
 	}
 }
+
+// A manifest may only reference content the registry already holds. Without
+// this the tag is accepted, listed by tags/list and served — and then the pull
+// fails at layer-fetch time, so the registry advertises an image nobody can
+// pull. The spec calls for BLOB_UNKNOWN.
+func TestPutManifest_RejectsMissingReferences(t *testing.T) {
+	h, c := New(), newCtx(t)
+	absent := "sha256:" + strings.Repeat("c", 64)
+
+	man := fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json",`+
+		`"config":{"digest":%q,"size":10},"layers":[]}`, absent)
+	c.Sub = "app/manifests/dangling"
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(man))
+	req.Header.Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+	h.Serve(w, req, c)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("manifest citing an absent config blob = %d, want 400", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "BLOB_UNKNOWN") {
+		t.Errorf("error code = %s, want BLOB_UNKNOWN", w.Body.String())
+	}
+
+	// The tag must not exist afterwards.
+	c.Sub = "app/tags/list"
+	w = httptest.NewRecorder()
+	h.Serve(w, httptest.NewRequest(http.MethodGet, "/", nil), c)
+	if strings.Contains(w.Body.String(), "dangling") {
+		t.Errorf("a refused manifest still produced a tag: %s", w.Body.String())
+	}
+}
+
+// A manifest whose references are all present must still be accepted.
+func TestPutManifest_AcceptsResolvedReferences(t *testing.T) {
+	h, c := New(), newCtx(t)
+	cfg := []byte(`{"architecture":"amd64","os":"linux"}`)
+	dgst := computeDigest(cfg)
+
+	c.Sub = fmt.Sprintf("app/blobs/uploads/?digest=%s", dgst)
+	w := httptest.NewRecorder()
+	h.Serve(w, httptest.NewRequest(http.MethodPost, "/?digest="+dgst, bytes.NewReader(cfg)), c)
+	if w.Code >= 300 {
+		t.Fatalf("blob upload: %d %s", w.Code, w.Body.String())
+	}
+
+	man := fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json",`+
+		`"config":{"digest":%q,"size":%d},"layers":[]}`, dgst, len(cfg))
+	c.Sub = "app/manifests/v1"
+	w = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(man))
+	req.Header.Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+	h.Serve(w, req, c)
+	if w.Code != http.StatusCreated {
+		t.Errorf("manifest with a present config = %d, want 201: %s", w.Code, w.Body.String())
+	}
+}
