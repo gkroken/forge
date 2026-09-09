@@ -19,6 +19,7 @@ type authEnv struct {
 	repo       string
 	publicRepo string
 	readToken  string
+	adminToken string
 }
 
 // newAuthEnv builds a server with auth on, one private repository and one
@@ -50,8 +51,15 @@ func newAuthEnv(t *testing.T) authEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, adminSecret, err := store.Create("admin", []auth.Grant{
+		{Repo: "*", Actions: []auth.Action{auth.ActionRead, auth.ActionWrite, auth.ActionDelete, auth.ActionAdmin}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	s := server.New(mgr, formats.Registry(), b, m, store)
-	return authEnv{srv: s.Routes(), repo: "private-npm", publicRepo: "public-npm", readToken: secret}
+	return authEnv{srv: s.Routes(), repo: "private-npm", publicRepo: "public-npm",
+		readToken: secret, adminToken: adminSecret}
 }
 
 // The browse endpoints report what a repository holds. They are not artifact

@@ -182,6 +182,30 @@ func validateMemberPolicy(updated repo.Repository, mgr *repo.Manager) string {
 	return ""
 }
 
+// rejectUnknownParams refuses a request carrying query parameters the handler
+// does not recognise.
+//
+// This exists because of a near-miss: previewing a retention run with
+// "?dryRun=true" — not a real parameter; the flag is "?dry=true" — silently
+// performed a LIVE cleanup and deleted artifacts. A destructive endpoint that
+// ignores a misspelled safety flag turns a typo into data loss, so on these
+// routes an unrecognised parameter is an error rather than a shrug.
+func rejectUnknownParams(w http.ResponseWriter, r *http.Request, allowed ...string) bool {
+	ok := make(map[string]bool, len(allowed))
+	for _, a := range allowed {
+		ok[a] = true
+	}
+	for k := range r.URL.Query() {
+		if !ok[k] {
+			jsonError(w, fmt.Sprintf(
+				"unknown query parameter %q; this endpoint can delete artifacts, so it accepts only: %s",
+				k, strings.Join(allowed, ", ")), http.StatusBadRequest)
+			return false
+		}
+	}
+	return true
+}
+
 // handleAdminRepos dispatches /api/v1/repos, /api/v1/repos/{name}, and
 // /api/v1/repos/{name}/components (browse — no admin required).
 func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
@@ -506,6 +530,9 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request, name stri
 		}
 	}
 
+	if !rejectUnknownParams(w, r, "dry") {
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	start := time.Now()
 	if r.URL.Query().Get("dry") == "true" {
@@ -753,6 +780,9 @@ func (s *Server) handleRunPolicy(w http.ResponseWriter, r *http.Request, name st
 	}
 	if !ok {
 		http.Error(w, "cleanup policy not found: "+name, http.StatusNotFound)
+		return
+	}
+	if !rejectUnknownParams(w, r, "dry") {
 		return
 	}
 	dry := r.URL.Query().Get("dry") == "true"
