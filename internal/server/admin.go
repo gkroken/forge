@@ -136,71 +136,23 @@ func validateRepo(r repo.Repository) string {
 	return ""
 }
 
-// validateGroupPolicy rejects a public group (anonymousRead=true) whose
-// members include a private repo (anonymousRead=false). Without this check
-// an anonymous client can read private artifacts through the group.
+// validateGroupPolicy and validateMemberPolicy are the two directions of one
+// invariant about the set of repositories, which repo.Manager owns and
+// enforces on every Add and Update. They stay here only so the admin API can
+// answer 400 with the reason, rather than the 409/404 an Add or Update error
+// maps to.
 func validateGroupPolicy(group repo.Repository, mgr *repo.Manager) string {
 	if group.Kind != repo.Group {
 		return ""
 	}
-	// A group cannot contain a group. MemberCtx refuses a group member, so
-	// nesting was accepted at creation and then contributed nothing: a
-	// group-of-groups answered 404 for packages its inner group served, with no
-	// error and no log. Refusing here is the honest version — the same reason a
-	// format that cannot serve a repository kind says so instead of returning
-	// an empty index.
-	for _, memberName := range group.Members {
-		if memberName == group.Name {
-			return fmt.Sprintf("group %q lists itself as a member", group.Name)
-		}
-		if member, ok := mgr.Get(memberName); ok && member.Kind == repo.Group {
-			return fmt.Sprintf(
-				"group %q lists group %q as a member: groups cannot be nested, and a "+
-					"nested member would silently contribute nothing. List %q's members "+
-					"directly instead.",
-				group.Name, memberName, memberName)
-		}
-	}
-	if !group.AnonymousRead {
-		return ""
-	}
-	for _, memberName := range group.Members {
-		member, ok := mgr.Get(memberName)
-		if !ok {
-			continue // unknown member — let the handler return 404
-		}
-		if !member.AnonymousRead {
-			return fmt.Sprintf(
-				"group %q has anonymousRead=true but member %q has anonymousRead=false: "+
-					"anonymous clients would read private content through the group",
-				group.Name, memberName,
-			)
-		}
-	}
-	return ""
+	return mgr.PolicyViolation(group)
 }
 
-// validateMemberPolicy rejects disabling anonymousRead on a repo that is
-// already included in a public group.
 func validateMemberPolicy(updated repo.Repository, mgr *repo.Manager) string {
-	if updated.AnonymousRead {
+	if updated.Kind == repo.Group {
 		return ""
 	}
-	for _, g := range mgr.All() {
-		if g.Kind != repo.Group || !g.AnonymousRead {
-			continue
-		}
-		for _, m := range g.Members {
-			if m == updated.Name {
-				return fmt.Sprintf(
-					"cannot set anonymousRead=false on %q: public group %q would expose it to anonymous clients; "+
-						"update the group first",
-					updated.Name, g.Name,
-				)
-			}
-		}
-	}
-	return ""
+	return mgr.PolicyViolation(updated)
 }
 
 // rejectUnknownParams refuses a request carrying query parameters the handler

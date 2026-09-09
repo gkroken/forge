@@ -6,20 +6,12 @@
 //	hosted - you publish into it; it is the source of truth
 //	proxy  - read-through cache of an upstream registry
 //	group  - a merged read-only view over several members
-//
-// Package repo defines the repository model shared by every format.
-//
-// A Repository is the unit Nexus calls a "repo": it has a name, a Format
-// (maven/npm/helm/cran/oci), and a Kind:
-//
-//	hosted - you publish into it; it is the source of truth
-//	proxy  - read-through cache of an upstream registry
-//	group  - a merged read-only view over several members
 package repo
 
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -199,7 +191,103 @@ func (m *Manager) WithStore(s metaStore) error {
 			m.byName[r.Name] = r
 		}
 	}
+	m.closePublicGroupsOverPrivateMembers()
 	return nil
+}
+
+// PolicyViolation reports why r must not exist alongside the repositories
+// already configured, or "" when it is fine.
+//
+// These are invariants about the set of repositories, so they live here rather
+// than in an HTTP handler. The admin API used to own them, and every other way
+// of creating a repository — the browser admin form, a Config-as-Code apply, a
+// Nexus migration, and forge's own startup seed — went straight to Add and
+// inherited none of them. With -auth the seeded groups were anonymousRead=true
+// over private hosted members, so an anonymous client read private artifacts
+// through the group while the same request to the member itself answered 401.
+func (m *Manager) PolicyViolation(r Repository) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.policyViolation(r)
+}
+
+// policyViolation assumes the caller holds m.mu.
+func (m *Manager) policyViolation(r Repository) string {
+	if r.Kind == Group {
+		for _, memberName := range r.Members {
+			if memberName == r.Name {
+				return fmt.Sprintf("group %q lists itself as a member", r.Name)
+			}
+			// A group cannot contain a group: MemberCtx refuses a group member,
+			// so a nested one contributed nothing and the group answered 404
+			// for packages its inner group served, with no error and no log.
+			if member, ok := m.byName[memberName]; ok && member.Kind == Group {
+				return fmt.Sprintf(
+					"group %q lists group %q as a member: groups cannot be nested, and a "+
+						"nested member would silently contribute nothing. List %q's members "+
+						"directly instead.",
+					r.Name, memberName, memberName)
+			}
+		}
+		if r.AnonymousRead {
+			for _, memberName := range r.Members {
+				member, ok := m.byName[memberName]
+				if !ok {
+					continue // unknown member — the handler answers 404 for it
+				}
+				if !member.AnonymousRead {
+					return fmt.Sprintf(
+						"group %q has anonymousRead=true but member %q has anonymousRead=false: "+
+							"anonymous clients would read private content through the group",
+						r.Name, memberName)
+				}
+			}
+		}
+		return ""
+	}
+
+	// The same rule from the other side: a repository cannot go private while a
+	// public group still lists it, or the group keeps serving it to anonymous
+	// clients.
+	if !r.AnonymousRead {
+		for _, g := range m.byName {
+			if g.Kind != Group || !g.AnonymousRead || g.Name == r.Name {
+				continue
+			}
+			for _, memberName := range g.Members {
+				if memberName == r.Name {
+					return fmt.Sprintf(
+						"cannot set anonymousRead=false on %q: public group %q would expose it to "+
+							"anonymous clients; update the group first",
+						r.Name, g.Name)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// closePublicGroupsOverPrivateMembers downgrades any loaded group that is
+// public over a private member. A stored configuration predating the check, or
+// written by a path that skipped it, would otherwise keep serving private
+// content to anonymous clients. Failing closed beats refusing to start: the
+// operator keeps their install and gets a warning until they fix it.
+func (m *Manager) closePublicGroupsOverPrivateMembers() {
+	for name, g := range m.byName {
+		if g.Kind != Group || !g.AnonymousRead {
+			continue
+		}
+		for _, memberName := range g.Members {
+			member, ok := m.byName[memberName]
+			if ok && !member.AnonymousRead {
+				g.AnonymousRead = false
+				m.byName[name] = g
+				slog.Warn("group had anonymous read over a private member; anonymous read disabled for this run",
+					"group", name, "member", memberName)
+				break
+			}
+		}
+	}
 }
 
 // Len returns the number of configured repositories.
@@ -218,6 +306,9 @@ func (m *Manager) Add(r Repository) error {
 	if _, exists := m.byName[r.Name]; exists {
 		return fmt.Errorf("repository %q already exists", r.Name)
 	}
+	if msg := m.policyViolation(r); msg != "" {
+		return fmt.Errorf("%s", msg)
+	}
 	m.byName[r.Name] = r
 	if m.store != nil {
 		return m.store.PutJSON(repoNS, r.Name, r)
@@ -234,6 +325,9 @@ func (m *Manager) Update(r Repository) error {
 	defer m.mu.Unlock()
 	if _, exists := m.byName[r.Name]; !exists {
 		return fmt.Errorf("repository %q not found", r.Name)
+	}
+	if msg := m.policyViolation(r); msg != "" {
+		return fmt.Errorf("%s", msg)
 	}
 	m.byName[r.Name] = r
 	if m.store != nil {

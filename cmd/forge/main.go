@@ -206,27 +206,38 @@ func main() {
 				Upstream: "https://pypi.org", AnonymousRead: true},
 			// OCI / Docker
 			{Name: "docker-hosted", Format: "oci", Kind: repo.Hosted, AnonymousRead: !*enableAuth},
-			// Group: merged read-only views (hosted first so internal artifacts shadow upstream).
+			// Group: merged read-only views (hosted first so internal artifacts
+			// shadow upstream). A group is exactly as public as its least public
+			// member: each of these includes a hosted member, so with -auth they
+			// need a token too. Seeding them anonymousRead=true while the hosted
+			// member was private handed anonymous clients the private member's
+			// artifacts through the group, which repo.Manager now refuses.
 			{Name: "maven-public", Format: "maven", Kind: repo.Group,
-				Members: []string{"maven-hosted", "maven-central"}, AnonymousRead: true},
+				Members: []string{"maven-hosted", "maven-central"}, AnonymousRead: !*enableAuth},
 			{Name: "npm-public", Format: "npm", Kind: repo.Group,
-				Members: []string{"npm-hosted", "npm-proxy"}, AnonymousRead: true},
+				Members: []string{"npm-hosted", "npm-proxy"}, AnonymousRead: !*enableAuth},
 			{Name: "helm-public", Format: "helm", Kind: repo.Group,
-				Members: []string{"helm-hosted", "helm-proxy"}, AnonymousRead: true},
+				Members: []string{"helm-hosted", "helm-proxy"}, AnonymousRead: !*enableAuth},
 			{Name: "cran-public", Format: "cran", Kind: repo.Group,
-				Members: []string{"cran-hosted", "cran-proxy"}, AnonymousRead: true},
+				Members: []string{"cran-hosted", "cran-proxy"}, AnonymousRead: !*enableAuth},
 			{Name: "pypi-public", Format: "pypi", Kind: repo.Group,
-				Members: []string{"pypi-hosted", "pypi-proxy"}, AnonymousRead: true},
+				Members: []string{"pypi-hosted", "pypi-proxy"}, AnonymousRead: !*enableAuth},
 			{Name: "docker-public", Format: "oci", Kind: repo.Group,
-				Members: []string{"docker-hosted"}, AnonymousRead: true},
+				Members: []string{"docker-hosted"}, AnonymousRead: !*enableAuth},
 		} {
 			// Seeded repos start online. Enabled has no "unset" sentinel, so the
 			// struct literals above leave it false; set it here before persisting
 			// or a fresh data dir comes up with every repo offline (503).
 			r.Enabled = true
 			// Add only if not already persisted (idempotent first-run seeding).
+			// A refusal that is not "already there" is a seed forge cannot
+			// honour, and saying so beats a repository quietly missing.
 			if err := mgr.Add(r); err != nil {
-				slog.Debug("skipping repo seed (already exists)", "name", r.Name)
+				if _, exists := mgr.Get(r.Name); exists {
+					slog.Debug("skipping repo seed (already exists)", "name", r.Name)
+				} else {
+					slog.Warn("could not seed repository", "name", r.Name, "err", err)
+				}
 			}
 		}
 	}

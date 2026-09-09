@@ -457,6 +457,40 @@ def probe_kind_writes():
         st == 200 and "pwned" not in str(body), f"HTTP {st}")
 
 
+def probe_group_exposure():
+    """A group is exactly as public as its least public member.
+
+    forge's own seeded groups were anonymousRead=true over private hosted
+    members, so with -auth an anonymous client read private artifacts through
+    the group while the same request to the member itself answered 401. The
+    admin API refused that combination; the seed, the browser form, a
+    Config-as-Code apply and a Nexus migration all went straight to the
+    repository manager and inherited nothing. The rule lives in the manager
+    now, so this asks the API and then asks the running seed.
+    """
+    mkrepo("sp-priv-member", "maven")
+    st, body, _ = req("POST", "/api/v1/repos", json.dumps({"name": "sp-open-group",
+        "format": "maven", "kind": "group", "enabled": True, "anonymousRead": True,
+        "members": ["sp-priv-member"]}).encode(), ADMIN, {"Content-Type": "application/json"})
+    chk("AUTHZ", "group-public", "a public group over a private member is refused",
+        st == 400 and "anonymous" in str(body), f"HTTP {st}: {str(body)[:120]}")
+
+    # And the shipped seed does not ship the thing we just refused.
+    st, body, _ = req("GET", "/api/v1/repos", token=ADMIN)
+    exposed = []
+    if st == 200:
+        repos = {r["name"]: r for r in json.loads(body)}
+        for r in repos.values():
+            if r.get("kind") != "group" or not r.get("anonymousRead"):
+                continue
+            for member in r.get("members") or []:
+                m = repos.get(member)
+                if m and not m.get("anonymousRead"):
+                    exposed.append(f"{r['name']} -> {member}")
+    chk("AUTHZ", "group-seed", "no configured group is public over a private member",
+        st == 200 and not exposed, str(exposed)[:200])
+
+
 def main():
     if not ADMIN:
         print("FORGE_ADMIN_TOKEN is required (the bootstrap token the server logs on first start)")
@@ -504,6 +538,8 @@ def main():
     probe_concurrency("sp-npm", tok)
     print("=== GUARD: every route to the bytes, not just one ===")
     probe_write_guards(tok, "sp-immutable-cran")
+    print("=== AUTHZ: a group is as public as its least public member ===")
+    probe_group_exposure()
     print("=== KIND: writes into a repository that only mirrors ===")
     probe_kind_writes()
     print("=== GROUP: a repository that serves nothing ===")

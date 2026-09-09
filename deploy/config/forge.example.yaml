@@ -97,11 +97,17 @@ repositories:
   # Members are searched in order; the first hit wins. Point builds at the
   # group, so a dependency can move between hosted and proxy without clients
   # changing anything.
+  #
+  # A group is exactly as public as its least public member. Each of these
+  # includes a private hosted member, so anonymousRead stays false: with it on,
+  # an anonymous client reads the private member's artifacts through the group
+  # while the same request to the member itself is refused. forge refuses that
+  # combination on create and on update.
   - name: maven-public
     format: maven
     kind: group
     enabled: true
-    anonymousRead: true
+    anonymousRead: false
     members:
       - maven-hosted
       - maven-central
@@ -110,7 +116,7 @@ repositories:
     format: npm
     kind: group
     enabled: true
-    anonymousRead: true
+    anonymousRead: false
     members:
       - npm-hosted
       - npm-proxy
@@ -121,7 +127,7 @@ repositories:
     format: pypi
     kind: group
     enabled: true
-    anonymousRead: true
+    anonymousRead: false
     members:
       - pypi-hosted
       - pypi-proxy
