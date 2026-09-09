@@ -9,8 +9,9 @@ python3 scripts/repo-kind-matrix.py
 ```
 
 Proxy and group checks talk to the real upstreams, so the run needs network
-access. Last run: **118 passed, 0 failed**. F1, F2 and F3 are all fixed; the
-findings are kept below because how each one hid is more useful than the fix.
+access. Last run: **123 passed, 0 failed**, and the script is re-runnable
+against the same server. F1–F6 are all fixed; the findings are kept below
+because how each one hid is more useful than the fix.
 
 ## The checklist
 
@@ -42,6 +43,7 @@ The format only decides which URL expresses them.
 | P5 | Publishing to a proxy is refused |
 | P6 | A missing artifact is negative-cached, so a second lookup does not hit upstream |
 | P7 | Browse/components lists only what is cached, not the upstream catalogue |
+| P8 | Distinct content and metadata ages are accepted and both are honoured |
 
 ### Group
 
@@ -52,6 +54,7 @@ The format only decides which URL expresses them.
 | G3 | An artifact no member has returns 404 |
 | G4 | Publishing to a group is refused |
 | G5 | A dead proxy member does not take the group down |
+| C1/C2 | OCI `_catalog` lists images, merges members, and pages with `n`/`last` |
 | S1/S2 | **A hosted member shadows a proxy member offering the same name** |
 
 S1/S2 is the dependency-confusion property and the most important row in this
@@ -264,3 +267,39 @@ Recorded because each one initially looked like a product bug:
 - **PyPI group resilience.** Failed only because the delete phase had removed
   the fixture it reused. Phases share state, so later checks must not reuse
   names earlier phases delete.
+
+### F5 — MetadataMaxAge was dead configuration · FIXED
+
+`proxy.ConfigForRepo` only ever read `ContentMaxAge`, so the `metadataMaxAge`
+the admin API and config files accepted did nothing for any format. The two
+ages exist because they age differently: an artifact at a fixed coordinate never
+changes, while the index listing it grows on every upstream publish. One TTL
+forces one of them to be wrong.
+
+`Context.ProxyMetadataConfig()` now applies it, and every format uses it for its
+index read — maven-metadata.xml, the npm packument, Helm's index.yaml, CRAN's
+PACKAGES*, PyPI simple pages, and OCI tags/manifest-by-tag — while artifact
+reads keep `ContentMaxAge`. An unset or zero value falls back to the content
+age rather than meaning "expire immediately".
+
+Found while fixing F3, where the same distinction decides whether `:latest`
+pins to the first pull.
+
+### F6 — OCI `_catalog` was unimplemented · FIXED
+
+It was absent from the op switch, so `GET /_catalog` answered "unknown OCI
+operation" for all three kinds. Now: hosted lists its image names, a group
+merges its members (a member that refuses to list contributes nothing rather
+than failing the group), and a proxy passes through. `n`/`last` pagination and
+the `Link: rel="next"` header are implemented, since clients page rather than
+asking for an entire registry, and an empty registry renders `[]` rather than
+`null`.
+
+## A flaw in this harness, fixed
+
+The first version could only run once against a server: it created repositories
+and then failed with 409 on a re-run, and its negative-cache check compared the
+second lookup's latency against the first, which only holds from a cold cache.
+Both are fixed — setup treats 409 as "already there", and the cache check
+accepts either a clear speed-up or an absolutely-local second lookup. The
+script now passes 123/123 cold and warm.

@@ -192,10 +192,25 @@ func (h *Handler) groupDownload(w http.ResponseWriter, c *format.Context) {
 	http.NotFound(w, nil)
 }
 
+// isCRANIndexPath reports whether a sub-path is one of CRAN's index files
+// rather than a package tarball.
+func isCRANIndexPath(sub string) bool {
+	base := sub
+	if i := strings.LastIndex(sub, "/"); i >= 0 {
+		base = sub[i+1:]
+	}
+	return base == "PACKAGES" || base == "PACKAGES.gz" || base == "PACKAGES.rds"
+}
+
 func (h *Handler) proxy(w http.ResponseWriter, c *format.Context) {
 	upURL := strings.TrimRight(c.Repo.Upstream, "/") + "/" + c.Sub
 	key := c.Key(c.Sub)
+	// PACKAGES* are the index and gain an entry on every upstream publish;
+	// a .tar.gz at a given version never changes.
 	cfg := c.ProxyConfig()
+	if isCRANIndexPath(c.Sub) {
+		cfg = c.ProxyMetadataConfig()
+	}
 	f := proxy.New(c.HTTP, cfg)
 	rc, ct, err := f.Fetch(key, c.Repo.Name+":proxy", upURL, c.Blob, c.Meta)
 	if errors.Is(err, proxy.ErrNotFound) {

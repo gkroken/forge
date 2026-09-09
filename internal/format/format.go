@@ -99,6 +99,25 @@ func (c *Context) MemberCtx(name string) (*Context, bool) {
 // ProxyConfig builds a proxy.Config for this repo, wiring Prometheus counters
 // (from Metrics), per-repo ring buffer (from RepoStats), global stats
 // (from GlobalStats), and the shared retry gauge (from RetryGauge).
+// ProxyMetadataConfig is ProxyConfig with the repository's MetadataMaxAge
+// applied, for reads of an ecosystem's index rather than its artifacts.
+//
+// The two ages exist because they age differently: an artifact at a given
+// coordinate never changes, while the index that lists it gains entries every
+// time upstream publishes. A single TTL forces one to be wrong — either
+// immutable content is re-validated needlessly, or new releases stay invisible.
+//
+// MetadataMaxAge was settable through the admin API and config for a long time
+// while nothing read it: ConfigForRepo only ever consults ContentMaxAge, so the
+// setting silently did nothing for every format.
+func (c *Context) ProxyMetadataConfig() proxy.Config {
+	cfg := c.ProxyConfig()
+	if c.Repo.MetadataMaxAge != nil && *c.Repo.MetadataMaxAge > 0 {
+		cfg.TTL = *c.Repo.MetadataMaxAge
+	}
+	return cfg
+}
+
 func (c *Context) ProxyConfig() proxy.Config {
 	cfg := proxy.ConfigForRepo(c.Repo)
 	cfg.RetryGauge = c.RetryGauge

@@ -25,6 +25,8 @@ func upstreamURL(c *format.Context, image, op, ref string) (string, bool) {
 		p = "/" + image + "/blobs/" + ref
 	case "tags/list":
 		p = "/" + image + "/tags/list"
+	case "_catalog":
+		p = "/_catalog"
 	default:
 		return "", false
 	}
@@ -118,6 +120,8 @@ func (h *Handler) proxyCacheKey(c *format.Context, image, op, ref, accept string
 		return c.Key("proxy-manifests/" + image + "/" + ref + "__" + hex.EncodeToString(sum[:4]))
 	case "tags/list":
 		return c.Key("proxy-tags/" + image)
+	case "_catalog":
+		return c.Key("proxy-catalog")
 	}
 	return c.Key(op + "/" + image + "/" + ref)
 }
@@ -127,14 +131,14 @@ func (h *Handler) proxyCacheKey(c *format.Context, image, op, ref, accept string
 // than content.
 func (h *Handler) proxyFetchConfig(c *format.Context, image, accept string, mutable bool) proxy.Config {
 	cfg := c.ProxyConfig()
+	if mutable {
+		cfg = c.ProxyMetadataConfig()
+	}
 	if auth := h.authFor(c, image); auth != "" {
 		cfg.Auth = auth
 	}
 	if accept != "" {
 		cfg.Headers = map[string]string{"Accept": accept}
-	}
-	if mutable && c.Repo.MetadataMaxAge != nil && *c.Repo.MetadataMaxAge > 0 {
-		cfg.TTL = *c.Repo.MetadataMaxAge
 	}
 	return cfg
 }
@@ -246,4 +250,29 @@ func (h *Handler) writeProxyResponse(w http.ResponseWriter, r *http.Request, op,
 		return
 	}
 	w.Write(body) //nolint:errcheck
+}
+
+// upstreamCatalog reads a proxy member's image list. Most public registries
+// refuse _catalog outright, which is not an error worth surfacing: the member
+// simply contributes nothing to a merged catalog.
+func (h *Handler) upstreamCatalog(c *format.Context) []string {
+	upURL, ok := upstreamURL(c, "", "_catalog", "")
+	if !ok || c.Repo.Upstream == "" {
+		return nil
+	}
+	resp, err := h.upstreamGet(c, "", upURL, "application/json")
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	var doc struct {
+		Repositories []string `json:"repositories"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&doc); err != nil {
+		return nil
+	}
+	return doc.Repositories
 }

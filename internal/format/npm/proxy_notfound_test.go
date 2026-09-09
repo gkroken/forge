@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"forge/internal/blob"
 	"forge/internal/format"
@@ -199,5 +200,52 @@ func TestProxy_StalePackumentIsRevalidated(t *testing.T) {
 	}
 	if !strings.Contains(rw.Body.String(), "2.0.0") {
 		t.Errorf("revalidated packument is missing the new upstream version:\n%s", rw.Body.String())
+	}
+}
+
+// TestProxy_MetadataMaxAgeIsHonoured — the setting has to reach the packument
+// path, not just exist. With a long content age and a short metadata age, the
+// packument must revalidate on the metadata clock; before this was wired, both
+// used ContentMaxAge and the setting did nothing at all.
+func TestProxy_MetadataMaxAgeIsHonoured(t *testing.T) {
+	var hits atomic.Int64
+	var second atomic.Bool
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		versions := map[string]any{"1.0.0": map[string]any{
+			"name": "ttlpkg", "version": "1.0.0",
+			"dist": map[string]any{"tarball": "https://up.example.com/ttlpkg-1.0.0.tgz"}}}
+		if second.Load() {
+			versions["2.0.0"] = map[string]any{
+				"name": "ttlpkg", "version": "2.0.0",
+				"dist": map[string]any{"tarball": "https://up.example.com/ttlpkg-2.0.0.tgz"}}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": "ttlpkg", "versions": versions})
+	}))
+	defer up.Close()
+
+	c := proxyCtx(t, up.URL, up.Client())
+	content := 24 * time.Hour
+	metadata := 40 * time.Millisecond
+	c.Repo.ContentMaxAge = &content
+	c.Repo.MetadataMaxAge = &metadata
+
+	if rw := get(t, c, "ttlpkg"); rw.Code != http.StatusOK {
+		t.Fatalf("warm the cache: %d", rw.Code)
+	}
+	before := hits.Load()
+	get(t, c, "ttlpkg") // within the metadata TTL: no upstream contact
+	if hits.Load() != before {
+		t.Errorf("fresh packument contacted upstream")
+	}
+
+	second.Store(true)
+	time.Sleep(3 * metadata)
+
+	rw := get(t, c, "ttlpkg")
+	if !strings.Contains(rw.Body.String(), "2.0.0") {
+		t.Errorf("packument did not revalidate on the metadata clock (%d upstream hits); "+
+			"MetadataMaxAge is being ignored and the 24h content age is in force:\n%s",
+			hits.Load(), rw.Body.String())
 	}
 }

@@ -86,7 +86,8 @@ func (h *Handler) proxyProjectFiles(c *format.Context, project string) ([]upstre
 	upURL := strings.TrimRight(c.Repo.Upstream, "/") + "/simple/" + url.PathEscape(project) + "/"
 	key := c.Key("simple/" + project + "/index.html")
 
-	f := proxy.New(c.HTTP, c.ProxyConfig())
+	// A simple page is the index: it gains a link on every upstream release.
+	f := proxy.New(c.HTTP, c.ProxyMetadataConfig())
 	rc, _, err := f.Fetch(key, c.Repo.Name+":proxy", upURL, c.Blob, c.Meta)
 	if err != nil {
 		return nil, err

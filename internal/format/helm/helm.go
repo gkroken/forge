@@ -172,7 +172,8 @@ func (h *Handler) records(c *format.Context) []chartRecord {
 func (h *Handler) upstreamRecords(c *format.Context) []chartRecord {
 	key := c.Key("index.yaml")
 	upURL := strings.TrimRight(c.Repo.Upstream, "/") + "/index.yaml"
-	f := proxy.New(c.HTTP, c.ProxyConfig())
+	// index.yaml is the index, not the chart: it ages on every upstream publish.
+	f := proxy.New(c.HTTP, c.ProxyMetadataConfig())
 	rc, _, err := f.Fetch(key, c.Repo.Name+":proxy", upURL, c.Blob, c.Meta)
 	if err != nil {
 		return nil

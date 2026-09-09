@@ -308,7 +308,12 @@ func (h *Handler) groupMetadataBytes(c *format.Context) ([]byte, bool) {
 
 func (h *Handler) proxyFetch(w http.ResponseWriter, r *http.Request, c *format.Context, key string) {
 	upURL := strings.TrimRight(c.Repo.Upstream, "/") + "/" + c.Sub
+	// maven-metadata.xml lists versions and grows as upstream publishes; a jar
+	// or pom at a fixed coordinate never changes.
 	cfg := c.ProxyConfig()
+	if strings.HasPrefix(path.Base(c.Sub), "maven-metadata.xml") {
+		cfg = c.ProxyMetadataConfig()
+	}
 	f := proxy.New(c.HTTP, cfg)
 	rc, ct, err := f.Fetch(key, c.Repo.Name+":proxy", upURL, c.Blob, c.Meta)
 	if errors.Is(err, proxy.ErrNotFound) {

@@ -485,7 +485,8 @@ func (h *Handler) fetchPackument(baseURL string, c *format.Context, pkg string) 
 		}
 		var ce proxy.CacheEntry
 		hasCE, _ := c.Meta.GetJSON(h.proxyNS(c), pkg, &ce)
-		ttl := proxy.ConfigForRepo(c.Repo).TTL
+		// A packument is the index: it gains a version on every publish.
+		ttl := c.ProxyMetadataConfig().TTL
 		if hasCE && time.Since(ce.FetchedAt) < ttl {
 			if c.Metrics != nil {
 				c.Metrics.CacheHits.WithLabelValues(c.Repo.Name).Inc()

@@ -30,7 +30,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -78,6 +80,9 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 		// Proxy mode: pass-through to upstream for GET/HEAD, reject writes.
 		switch r.Method {
 		case http.MethodGet, http.MethodHead:
+			// _catalog is registry-wide and many upstreams refuse it; a failure
+			// there must read as "upstream would not list", not as forge being
+			// broken, so it is passed through like any other read.
 			h.proxyPass(w, r, c, image, op, ref)
 		default:
 			ociError(w, "UNSUPPORTED", "writes not supported on proxy repositories", http.StatusMethodNotAllowed)
@@ -122,6 +127,9 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 
 	case "tags/list":
 		h.listTags(w, c, image)
+
+	case "_catalog":
+		h.listCatalog(w, r, c)
 
 	default:
 		ociError(w, "UNSUPPORTED", "unknown OCI operation", http.StatusNotFound)
@@ -388,6 +396,62 @@ func (h *Handler) listTags(w http.ResponseWriter, c *format.Context, image strin
 	json.NewEncoder(w).Encode(map[string]any{"name": image, "tags": tags})
 }
 
+// listCatalog implements GET /_catalog: every image name this registry holds.
+// Distinct from tags/list, which lists the tags of one image.
+func (h *Handler) listCatalog(w http.ResponseWriter, r *http.Request, c *format.Context) {
+	keys, _ := c.Meta.List(h.ns(c))
+	seen := map[string]bool{}
+	var images []string
+	for _, k := range keys {
+		rest, ok := strings.CutPrefix(k, "tags/")
+		if !ok {
+			continue
+		}
+		// "tags/{image}/{tag}" — an image name may itself contain slashes.
+		i := strings.LastIndex(rest, "/")
+		if i <= 0 {
+			continue
+		}
+		if name := rest[:i]; !seen[name] {
+			seen[name] = true
+			images = append(images, name)
+		}
+	}
+	sort.Strings(images)
+	writeCatalog(w, r, images)
+}
+
+// writeCatalog applies the spec's n/last pagination and renders the response.
+// Clients like crane page through a large registry rather than asking for all
+// of it at once, and a registry that ignores "n" hands back everything.
+func writeCatalog(w http.ResponseWriter, r *http.Request, images []string) {
+	q := r.URL.Query()
+	if last := q.Get("last"); last != "" {
+		i := sort.SearchStrings(images, last)
+		for i < len(images) && images[i] <= last {
+			i++
+		}
+		images = images[i:]
+	}
+	truncated := false
+	if nStr := q.Get("n"); nStr != "" {
+		if n, err := strconv.Atoi(nStr); err == nil && n >= 0 && n < len(images) {
+			images = images[:n]
+			truncated = true
+		}
+	}
+	if images == nil {
+		images = []string{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if truncated && len(images) > 0 {
+		// Link tells the client where to continue; without it paging stops here.
+		w.Header().Set("Link", fmt.Sprintf(`<%s?n=%s&last=%s>; rel="next"`,
+			r.URL.Path, q.Get("n"), url.QueryEscape(images[len(images)-1])))
+	}
+	json.NewEncoder(w).Encode(map[string]any{"repositories": images}) //nolint:errcheck
+}
+
 // --- proxy pass-through ----------------------------------------------------
 
 // proxyPass serves a proxy read through the cache (see proxy.go).
@@ -456,6 +520,10 @@ func ociError(w http.ResponseWriter, code, message string, status int) {
 //	"myapp/blobs/uploads/uuid"        → image="myapp", op="blobs/uploads",  ref="uuid"
 //	"org/image/tags/list"             → image="org/image", op="tags/list",  ref=""
 func parseOCISub(sub string) (image, op, ref string, ok bool) {
+	// The registry-wide catalog has no image name.
+	if sub == "_catalog" || sub == "_catalog/" {
+		return "", "_catalog", "", true
+	}
 	if idx := strings.Index(sub, "/manifests/"); idx >= 0 {
 		return sub[:idx], "manifests", sub[idx+len("/manifests/"):], true
 	}

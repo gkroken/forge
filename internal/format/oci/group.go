@@ -44,6 +44,9 @@ func (h *Handler) serveGroup(w http.ResponseWriter, r *http.Request, c *format.C
 	case "tags/list":
 		h.groupTags(w, h.ownershipCtx(c, image), image)
 
+	case "_catalog":
+		h.groupCatalog(w, r, c)
+
 	default:
 		ociError(w, "UNSUPPORTED", "unknown OCI operation", http.StatusNotFound)
 	}
@@ -117,6 +120,52 @@ func (h *Handler) groupTags(w http.ResponseWriter, c *format.Context, image stri
 	sort.Strings(tags)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"name": image, "tags": tags}) //nolint:errcheck
+}
+
+// groupCatalog merges the image names every member exposes. A member that
+// refuses to list (most public registries do) simply contributes nothing rather
+// than failing the group.
+func (h *Handler) groupCatalog(w http.ResponseWriter, r *http.Request, c *format.Context) {
+	merged := format.GroupMerge(c,
+		func(mc *format.Context) []imageTag { return h.memberCatalog(mc) },
+		func(t imageTag) (string, string) { return t.Image, "" })
+
+	images := make([]string, 0, len(merged))
+	for _, t := range merged {
+		images = append(images, t.Image)
+	}
+	sort.Strings(images)
+	writeCatalog(w, r, images)
+}
+
+// memberCatalog lists one member's image names.
+func (h *Handler) memberCatalog(mc *format.Context) []imageTag {
+	var names []string
+	if mc.Repo.Kind == repo.Proxy {
+		names = h.upstreamCatalog(mc)
+	} else {
+		keys, _ := mc.Meta.List(h.ns(mc))
+		seen := map[string]bool{}
+		for _, k := range keys {
+			rest, ok := strings.CutPrefix(k, "tags/")
+			if !ok {
+				continue
+			}
+			i := strings.LastIndex(rest, "/")
+			if i <= 0 {
+				continue
+			}
+			if name := rest[:i]; !seen[name] {
+				seen[name] = true
+				names = append(names, name)
+			}
+		}
+	}
+	out := make([]imageTag, 0, len(names))
+	for _, n := range names {
+		out = append(out, imageTag{Image: n})
+	}
+	return out
 }
 
 // memberTags asks one member which tags it has for an image. A hosted member
