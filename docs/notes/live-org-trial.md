@@ -193,6 +193,43 @@ Probed and found sound, recorded so nobody re-tests them blind:
 - **OCI digests.** Content not matching its digest is refused with
   `DIGEST_INVALID`; malformed and traversing digests are refused.
 
+## The probes are a script now
+
+`scripts/security-probe.py` runs 55 checks against a live server, one per
+defect found here, grouped by the class of mistake rather than by feature —
+because in every case the class had more instances than the first one found:
+
+    AUTHZ  an endpoint that reports what a private repository holds
+    PATH   a stored path built from request BODY content
+    INDEX  a generated index assembled by string formatting from publisher text
+    ALLOC  an unbounded read of data the process does not control
+    IMMUT  a write-once guarantee covering only one route to the bytes
+    SSRF   an outbound request to an address the caller chose
+    PARAM  a safety flag on a destructive endpoint
+
+Validated by reverting two fixes and confirming it fails: the npm traversal
+(3 checks, HTTP 201 where 400 is required) and the decompression bomb (547 MB
+of growth). Passing twice in a row against a fixed build proves nothing on its
+own.
+
+Three defects in the probe itself, worth recording because each produced a
+wrong answer rather than an error:
+
+- **It followed redirects.** `/ui/admin` answers 303 to the login page, and
+  urllib followed it and reported the login page's 200 — so a guarded page
+  looked like a served one and the probe reported a leak that was not there.
+- **It could not find the server's PID**, because `fuser` writes PIDs to stdout
+  and its `8090/tcp:` label to stderr, and the parse read both. The memory
+  probe therefore printed `[SKIP]` — and a skip was not counted as a failure,
+  so the only check that can see a memory bug never ran and the suite still
+  reported success.
+- **It sampled memory before and after** rather than during. The allocation is
+  transient, so on a vulnerable build memory appeared to *shrink* and the check
+  passed. It now samples peak RSS on a background thread.
+
+The second one is the same shape as the CI monitors earlier in this work:
+something that cannot run reports as something that passed.
+
 ## Friction worth fixing, but not bugs
 
 - **No self-service credentials.** The token API is admin-only for create, list
