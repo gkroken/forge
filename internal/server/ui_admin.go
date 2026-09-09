@@ -321,6 +321,13 @@ func (s *Server) handleUIAdmin(w http.ResponseWriter, r *http.Request, sub strin
 	if sub == "" {
 		sub = "/"
 	}
+	// Every page under /ui/admin is admin-only. Most branches enforce that in
+	// their own handler; the landing page did not, and it renders the
+	// repository list — so an anonymous request got every repository name,
+	// private ones included.
+	if !s.Enforcer.RequireAdminUI(w, r) {
+		return
+	}
 	switch {
 	case sub == "/" || sub == "":
 		s.uiAdminHome(w, r)

@@ -277,7 +277,15 @@ func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 			// #nosec G710 -- target has a fixed internal "/ui/browse/" prefix; repoName is a single non-slash path segment, so this is always same-origin
 			http.Redirect(w, r, "/ui/browse/"+repoName, http.StatusFound)
 		}
+	// The browse pages render the repository list and a repository's contents.
+	// Their JSON endpoints below are gated per-repository; these shells embed
+	// the same inventory in server-rendered HTML and were reachable with no
+	// credentials at all, listing every repository by name — the same
+	// disclosure the JSON gate closed, through a door nobody checked.
 	case p == "/browse":
+		if !s.Enforcer.RequireAdminUI(w, r) {
+			return
+		}
 		s.uiBrowsePage(w, r, "")
 	case strings.HasPrefix(p, "/browse/"):
 		rest := strings.TrimPrefix(p, "/browse/")
@@ -305,6 +313,9 @@ func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 			s.uiBrowseDetail(w, r, repoName)
 		default:
 			// /ui/browse/{name} — the browse page with that repo pre-selected
+			if !s.Enforcer.RequireAdminUI(w, r) {
+				return
+			}
 			s.uiBrowsePage(w, r, rest)
 		}
 	case p == "/admin" || strings.HasPrefix(p, "/admin/"):

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"forge/internal/auth"
@@ -106,5 +107,31 @@ func TestBrowsePublicRepoStaysAnonymous(t *testing.T) {
 		"/api/v1/repos/"+env.publicRepo+"/components", nil))
 	if w.Code != http.StatusOK {
 		t.Errorf("anonymous browse of a public repo = %d, want 200", w.Code)
+	}
+}
+
+// The JSON endpoints were gated first; the server-rendered pages that embed the
+// same repository inventory were not, and returned 200 to anyone — listing every
+// repository by name, private ones included. Same disclosure, different door.
+func TestUIPagesRequireASession(t *testing.T) {
+	env := newAuthEnv(t)
+	for _, path := range []string{
+		"/ui/admin",
+		"/ui/browse",
+		"/ui/browse/" + env.repo,
+		"/ui/dashboard",
+	} {
+		t.Run(path, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			env.srv.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+			if w.Code == http.StatusOK {
+				t.Errorf("anonymous GET %s = 200; the page renders the repository "+
+					"inventory and must require a session", path)
+			}
+			if body := w.Body.String(); strings.Contains(body, env.repo) &&
+				!strings.Contains(w.Header().Get("Location"), env.repo) {
+				t.Errorf("anonymous GET %s leaked a repository name in its body", path)
+			}
+		})
 	}
 }
