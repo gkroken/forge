@@ -3,6 +3,8 @@ package auth_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"forge/internal/auth"
@@ -161,4 +163,36 @@ func TestEnforcerCaller(t *testing.T) {
 			t.Errorf("Caller = %+v, want nil when auth is off", tok)
 		}
 	})
+}
+
+// Verify stamps LastUsed on every authenticated request, so the token record is
+// rewritten constantly. With a non-atomic write underneath, concurrent requests
+// carrying a VALID token were rejected: 35 of 40 came back 401 against a live
+// server. Clients fetch in parallel — npm and mvn both do — so this was
+// reachable by ordinary use, not by an attack.
+func TestVerify_IsStableUnderConcurrency(t *testing.T) {
+	store := newStore(t)
+	_, secret, err := store.Create("busy", []auth.Grant{
+		{Repo: "r", Actions: []auth.Action{auth.ActionRead}}}, nil, "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const n = 64
+	var wg sync.WaitGroup
+	var failures int64
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tok, err := store.Verify(secret)
+			if err != nil || tok == nil {
+				atomic.AddInt64(&failures, 1)
+			}
+		}()
+	}
+	wg.Wait()
+	if failures > 0 {
+		t.Errorf("%d of %d concurrent verifications of a valid token failed", failures, n)
+	}
 }

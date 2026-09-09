@@ -81,7 +81,37 @@ func (f *FS) PutJSON(ns, key string, v any) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, b, 0o600) // #nosec G306
+	// Write to a temporary file and rename it into place. os.WriteFile
+	// truncates first, so a concurrent reader could observe an empty or
+	// half-written document — and every reader here unmarshals what it finds.
+	//
+	// That was not theoretical: Verify() stamps LastUsed on every authenticated
+	// request, so the token record is rewritten constantly, and 35 of 40
+	// concurrent requests carrying a VALID token were rejected with 401 because
+	// the reader hit a truncated file. Any concurrently-read record could be
+	// mangled the same way — packuments, chart records, proxy cache entries.
+	//
+	// rename(2) is atomic within a filesystem, so a reader sees either the old
+	// document or the new one and never a partial one. blob.FS already stored
+	// bytes this way; meta did not.
+	tmp, err := os.CreateTemp(filepath.Dir(p), ".meta-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the rename succeeds
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close() //nolint:errcheck
+		return err
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close() //nolint:errcheck
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, p)
 }
 
 func (f *FS) List(ns string) ([]string, error) {
