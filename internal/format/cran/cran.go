@@ -67,6 +67,9 @@ type pkgRecord struct {
 }
 
 func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Context) {
+	if !format.MutationAllowed(w, r, c) {
+		return
+	}
 	switch {
 	case r.Method == http.MethodGet && c.Sub == "src/contrib/PACKAGES":
 		if c.Repo.Kind == repo.Proxy {
@@ -92,18 +95,10 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Write(buildPackagesRDS(h.allPkgRecords(c)))
 	case r.Method == http.MethodPut && strings.HasPrefix(c.Sub, "src/contrib/") && strings.HasSuffix(c.Sub, ".tar.gz"):
-		if c.Repo.Kind != repo.Hosted {
-			http.Error(w, "cannot publish to non-hosted repo", http.StatusMethodNotAllowed)
-			return
-		}
 		h.publish(w, r, c)
 	case r.Method == http.MethodGet && strings.HasSuffix(c.Sub, ".tar.gz"):
 		h.download(w, r, c)
 	case r.Method == http.MethodDelete && strings.HasPrefix(c.Sub, "src/contrib/") && strings.HasSuffix(c.Sub, ".tar.gz"):
-		if c.Repo.Kind != repo.Hosted {
-			http.Error(w, "cannot delete from non-hosted repository", http.StatusMethodNotAllowed)
-			return
-		}
 		h.deletePkg(w, c)
 	case strings.HasPrefix(c.Sub, "bin/"):
 		h.serveBinary(w, r, c)
@@ -641,18 +636,10 @@ func (h *Handler) serveBinary(w http.ResponseWriter, r *http.Request, c *format.
 	case r.Method == http.MethodGet && (file == "PACKAGES" || file == "PACKAGES.gz" || file == "PACKAGES.rds"):
 		h.serveBinIndex(w, c, platform, rver, file)
 	case r.Method == http.MethodPut && (strings.HasSuffix(file, ".zip") || strings.HasSuffix(file, ".tgz")):
-		if c.Repo.Kind != repo.Hosted {
-			http.Error(w, "cannot publish to non-hosted repo", http.StatusMethodNotAllowed)
-			return
-		}
 		h.publishBin(w, r, c, platform, rver, file)
 	case r.Method == http.MethodGet && (strings.HasSuffix(file, ".zip") || strings.HasSuffix(file, ".tgz")):
 		h.downloadBin(w, r, c)
 	case r.Method == http.MethodDelete && (strings.HasSuffix(file, ".zip") || strings.HasSuffix(file, ".tgz")):
-		if c.Repo.Kind != repo.Hosted {
-			http.Error(w, "cannot delete from non-hosted repository", http.StatusMethodNotAllowed)
-			return
-		}
 		h.deleteBin(w, c, platform, rver, file)
 	default:
 		http.Error(w, "unsupported binary request", http.StatusNotFound)

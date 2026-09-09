@@ -432,6 +432,29 @@ type Dep struct {
 // (maven-metadata.xml, Helm index.yaml, CRAN PACKAGES) have nothing to
 // rebuild and simply don't implement it.
 
+// MutationAllowed reports whether a mutating request may proceed, and writes
+// the refusal itself when it may not. Only a hosted repository accepts writes:
+// a proxy mirrors somebody else's registry and a group is a read-only view of
+// its members.
+//
+// It exists to be called once at the top of a Serve, not per route. Formats
+// that guarded route by route each grew a hole eventually — npm's dist-tags
+// endpoint was added later and nobody thought of it, so a PUT repointed
+// "latest" inside a proxy's cached packument for every client installing
+// through it. A route added tomorrow is refused by default instead.
+func MutationAllowed(w http.ResponseWriter, r *http.Request, c *Context) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	}
+	if c.Repo.Kind == repo.Hosted {
+		return true
+	}
+	http.Error(w, "cannot write to a "+string(c.Repo.Kind)+" repository: write to the hosted repository instead",
+		http.StatusMethodNotAllowed)
+	return false
+}
+
 // GroupFetch serves the first member of a group that answers successfully, and
 // reports whether any did. Members are probed in configured order through a
 // Sink, so a member's own handler decides what it has — a hosted member reads

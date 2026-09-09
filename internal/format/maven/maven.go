@@ -120,20 +120,15 @@ func compKeyFromSub(sub string) (string, bool) {
 // --- HTTP handlers ---------------------------------------------------------
 
 func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Context) {
+	if !format.MutationAllowed(w, r, c) {
+		return
+	}
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
 		h.get(w, r, c)
 	case http.MethodPut:
-		if c.Repo.Kind != repo.Hosted {
-			http.Error(w, "cannot publish to a non-hosted repository", http.StatusMethodNotAllowed)
-			return
-		}
 		h.put(w, r, c)
 	case http.MethodDelete:
-		if c.Repo.Kind != repo.Hosted {
-			http.Error(w, "cannot delete from a non-hosted repository", http.StatusMethodNotAllowed)
-			return
-		}
 		h.deleteArtifact(w, c)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

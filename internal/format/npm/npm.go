@@ -66,9 +66,17 @@ func (h *Handler) tagsNS(c *format.Context) string { return c.Repo.Name + ":npm:
 func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Context) {
 	sub, _ := url.PathUnescape(c.Sub)
 
-	// Registry API endpoints live under the "-/" namespace and are not package ops.
+	// Registry API endpoints live under the "-/" namespace and are not package
+	// ops. They are exempt from the repository-kind write guard because `npm
+	// login` and `npm audit` are a PUT and a POST that change nothing here and
+	// are perfectly reasonable against a proxy; serveAPI guards the one
+	// endpoint under "-/" that does write.
 	if strings.HasPrefix(sub, "-/") {
 		h.serveAPI(w, r, c, sub)
+		return
+	}
+
+	if !format.MutationAllowed(w, r, c) {
 		return
 	}
 
@@ -78,10 +86,6 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 		case http.MethodGet:
 			h.tarball(w, r, c, sub)
 		case http.MethodDelete:
-			if c.Repo.Kind != repo.Hosted {
-				http.Error(w, "cannot delete from non-hosted repo", http.StatusMethodNotAllowed)
-				return
-			}
 			h.deleteTarball(w, c, sub)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -94,16 +98,8 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 	case http.MethodGet:
 		h.packument(w, r, c, sub)
 	case http.MethodPut:
-		if c.Repo.Kind != repo.Hosted {
-			http.Error(w, "cannot publish to non-hosted repo", http.StatusMethodNotAllowed)
-			return
-		}
 		h.publish(w, r, c, sub)
 	case http.MethodDelete:
-		if c.Repo.Kind != repo.Hosted {
-			http.Error(w, "cannot delete from non-hosted repo", http.StatusMethodNotAllowed)
-			return
-		}
 		h.unpublish(w, c, sub)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

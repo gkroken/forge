@@ -64,6 +64,9 @@ type chartRecord struct {
 func (h *Handler) ns(c *format.Context) string { return c.Repo.Name + ":helm" }
 
 func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Context) {
+	if !format.MutationAllowed(w, r, c) {
+		return
+	}
 	switch {
 	case r.Method == http.MethodGet && c.Sub == "index.yaml":
 		h.index(w, c)
@@ -72,16 +75,8 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 	case r.Method == http.MethodGet && strings.HasPrefix(c.Sub, "api/charts/"):
 		h.listOne(w, c, strings.TrimPrefix(c.Sub, "api/charts/"))
 	case r.Method == http.MethodPost && c.Sub == "api/charts":
-		if c.Repo.Kind != repo.Hosted {
-			http.Error(w, "cannot publish to non-hosted repo", http.StatusMethodNotAllowed)
-			return
-		}
 		h.upload(w, r, c)
 	case r.Method == http.MethodDelete && strings.HasPrefix(c.Sub, "api/charts/"):
-		if c.Repo.Kind != repo.Hosted {
-			http.Error(w, "cannot delete from non-hosted repo", http.StatusMethodNotAllowed)
-			return
-		}
 		h.delete(w, c, strings.TrimPrefix(c.Sub, "api/charts/"))
 	case r.Method == http.MethodGet && strings.HasSuffix(c.Sub, ".tgz"):
 		h.download(w, r, c)
