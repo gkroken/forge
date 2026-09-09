@@ -34,19 +34,8 @@ const bytesPerGB = 1 << 30
 // upload). A single write that finds usage under the quota is always allowed to
 // complete, even if it crosses the line; the next write is refused.
 func (s *Server) quotaBlocks(w http.ResponseWriter, r *http.Request, rp repo.Repository) bool {
-	if rp.Kind != repo.Hosted || rp.QuotaGB == nil || *rp.QuotaGB <= 0 {
-		return false
-	}
-	quotaBytes := int64(*rp.QuotaGB * bytesPerGB)
-	used := s.usedBytes(rp.Name)
-	// Fold in the declared body size when the client sends one, so a single large
-	// upload can't silently blow far past the quota in one shot. Unknown length
-	// (-1) or chunked bodies fall back to the pure soft check.
-	incoming := r.ContentLength
-	if incoming < 0 {
-		incoming = 0
-	}
-	if used+incoming <= quotaBytes {
+	used, quotaBytes, over := s.quotaExceeded(rp, r.ContentLength)
+	if !over {
 		return false
 	}
 	s.recordQuotaBlock(r, rp, used, quotaBytes)
@@ -60,6 +49,29 @@ func (s *Server) quotaBlocks(w http.ResponseWriter, r *http.Request, rp repo.Rep
 		"detail":     "repository is at or over its configured storage quota; delete artifacts (they go to trash and free quota immediately) or raise the quota",
 	})
 	return true
+}
+
+// quotaExceeded is the quota decision on its own, without an HTTP response, so
+// every path that writes artifacts can consult it — not just the one that
+// happens to be serving a request.
+//
+// The browser upload form and the Nexus migration both dispatch to a format
+// handler in process, and both skipped this: uploads through them went past a
+// full quota without complaint. incoming is the declared body size, or 0/-1
+// when unknown.
+func (s *Server) quotaExceeded(rp repo.Repository, incoming int64) (used, quotaBytes int64, over bool) {
+	if rp.Kind != repo.Hosted || rp.QuotaGB == nil || *rp.QuotaGB <= 0 {
+		return 0, 0, false
+	}
+	quotaBytes = int64(*rp.QuotaGB * bytesPerGB)
+	used = s.usedBytes(rp.Name)
+	// Fold in the declared body size when the client sends one, so a single
+	// large upload can't silently blow far past the quota in one shot. Unknown
+	// length (-1) or chunked bodies fall back to the pure soft check.
+	if incoming < 0 {
+		incoming = 0
+	}
+	return used, quotaBytes, used+incoming > quotaBytes
 }
 
 // usedBytes reports a repository's current storage usage: the last blob-walk

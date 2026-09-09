@@ -452,6 +452,22 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// repoBlob returns the blob store a repository must be written through.
+//
+// An immutable repository gets the write-once wrapper. This is a function
+// rather than a line inside handleRepo because handleRepo is not the only
+// route to the bytes: the browser upload form and the Nexus migration both
+// build a format.Context and dispatch to a handler in process, and both handed
+// over the raw store — so an "immutable" repository could be overwritten
+// through either. A guard that lives in one route is a guard on that route,
+// not on the repository.
+func (s *Server) repoBlob(rp repo.Repository) blob.Store {
+	if rp.IsImmutable() {
+		return blob.Immutable(s.Blob)
+	}
+	return s.Blob
+}
+
 func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/repository/")
 	name, sub, _ := strings.Cut(rest, "/")
@@ -526,7 +542,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 				http.StatusConflict)
 			return
 		}
-		c.Blob = blob.Immutable(s.Blob)
+		c.Blob = s.repoBlob(rp)
 	}
 	h.Serve(w, r, c)
 }

@@ -75,6 +75,17 @@ func (s *Server) processUpload(w http.ResponseWriter, r *http.Request, rp repo.R
 	}
 	defer f.Close()
 
+	// The quota gate lives in handleRepo, which this path does not go through,
+	// so uploads made here used to sail past a full quota. Checked once the
+	// size is known, and rendered as a form error rather than a bare 507.
+	if used, quotaBytes, over := s.quotaExceeded(rp, hdr.Size); over {
+		page.Error = fmt.Sprintf(
+			"storage quota exceeded: %d of %d bytes used. Delete artifacts (they go to trash "+
+				"and free quota immediately) or raise the quota.", used, quotaBytes)
+		render(w, tmplUpload, "admin_shell.html", page)
+		return
+	}
+
 	data, err := io.ReadAll(f)
 	if err != nil {
 		page.Error = "failed to read upload"
@@ -136,7 +147,7 @@ func (s *Server) callHandler(origR *http.Request, rp repo.Repository, method, su
 	rec := httptest.NewRecorder()
 	h.Serve(rec, req, &format.Context{
 		Repo:    rp,
-		Blob:    s.Blob,
+		Blob:    s.repoBlob(rp),
 		Meta:    s.Meta,
 		HTTP:    s.client,
 		Sub:     sub,

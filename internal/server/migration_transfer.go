@@ -92,8 +92,17 @@ func (s *Server) internalServe(ctx context.Context, method, repoName, sub, rawQu
 	}
 	req = req.WithContext(ctx)
 
+	// A migration writes through a handler in process and so misses the quota
+	// gate in handleRepo. Refusing here keeps an import from silently filling a
+	// repository past a limit its owner set.
+	if _, _, over := s.quotaExceeded(rp, req.ContentLength); over && method != http.MethodGet {
+		rec.code = http.StatusInsufficientStorage
+		rec.body.WriteString("storage quota exceeded for " + rp.Name)
+		return rec
+	}
+
 	h.Serve(rec, req, &format.Context{
-		Repo: rp, Blob: s.Blob, Meta: s.Meta, HTTP: s.client, Sub: sub,
+		Repo: rp, Blob: s.repoBlob(rp), Meta: s.Meta, HTTP: s.client, Sub: sub,
 		Repos: s.Repos, Queue: s.Queue, Metrics: s.Metrics,
 	})
 	return rec
