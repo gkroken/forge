@@ -144,6 +144,46 @@ func (e *Enforcer) RequireRepoAdmin(w http.ResponseWriter, r *http.Request, repo
 	return true
 }
 
+// RequireRepoRead gates a read of a repository's contents — the browse and
+// component-listing endpoints, which are not artifact downloads but do disclose
+// what a repository holds.
+//
+// It applies exactly the policy an artifact read gets, so anonymousRead=false
+// means what it says. These endpoints previously had no check at all, on the
+// reasoning that they were "not admin-only": an unauthenticated caller could
+// list every package name and version in a private repository. Those names are
+// the target list for a dependency-confusion attack, which is the thing forge's
+// group shadowing exists to defeat.
+//
+// Both credential shapes are accepted: a Bearer token (API clients) and the UI
+// session cookie (a signed-in browser).
+func (e *Enforcer) RequireRepoRead(w http.ResponseWriter, r *http.Request, repoName string) bool {
+	if e.store == nil {
+		return true // eval mode: AllowAll
+	}
+	switch e.decideWithSession(r, repoName, ActionRead) {
+	case decisionAllow:
+		return true
+	case decisionForbidden:
+		http.Error(w, "insufficient permissions", http.StatusForbidden)
+	default:
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+	}
+	return false
+}
+
+// decideWithSession is decide() plus the UI session cookie, for endpoints the
+// browser calls directly.
+func (e *Enforcer) decideWithSession(r *http.Request, repoName string, action Action) decision {
+	if bearerToken(r) == "" {
+		if c, err := r.Cookie(UISessionCookie); err == nil && c.Value != "" {
+			r = r.Clone(r.Context())
+			r.Header.Set("Authorization", "Bearer "+c.Value)
+		}
+	}
+	return e.decide(r, repoName, "", action)
+}
+
 // apiToken resolves and verifies the request's token for API routes, writing
 // a 401 and returning nil when absent or invalid.
 func (e *Enforcer) apiToken(w http.ResponseWriter, r *http.Request) *Token {

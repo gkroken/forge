@@ -189,8 +189,13 @@ func (s *Server) handleAdminRepos(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(r.URL.Path, "/api/v1/repos")
 	name = strings.TrimPrefix(name, "/")
 
-	// /api/v1/repos/{name}/components — browse endpoint, no admin required.
+	// /api/v1/repos/{name}/components — browse endpoint. Not admin-only, but
+	// not unauthenticated either: it lists what a repository holds, so it takes
+	// the same read permission an artifact download does.
 	if repoName, rest, found := strings.Cut(name, "/"); found && rest == "components" {
+		if !s.Enforcer.RequireRepoRead(w, r, repoName) {
+			return
+		}
 		s.handleComponents(w, r, repoName)
 		return
 	}

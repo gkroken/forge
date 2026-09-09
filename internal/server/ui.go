@@ -281,13 +281,28 @@ func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 		s.uiBrowsePage(w, r, "")
 	case strings.HasPrefix(p, "/browse/"):
 		rest := strings.TrimPrefix(p, "/browse/")
+		// These three return what a repository holds, so they take the same
+		// read permission an artifact download does — anonymousRead=false must
+		// hide package names, not just bytes.
 		switch {
 		case strings.HasSuffix(rest, "/tree"):
-			s.uiBrowseTree(w, r, strings.TrimSuffix(rest, "/tree"))
+			repoName := strings.TrimSuffix(rest, "/tree")
+			if !s.Enforcer.RequireRepoRead(w, r, repoName) {
+				return
+			}
+			s.uiBrowseTree(w, r, repoName)
 		case strings.HasSuffix(rest, "/versions"):
-			s.uiBrowseVersions(w, r, strings.TrimSuffix(rest, "/versions"))
+			repoName := strings.TrimSuffix(rest, "/versions")
+			if !s.Enforcer.RequireRepoRead(w, r, repoName) {
+				return
+			}
+			s.uiBrowseVersions(w, r, repoName)
 		case strings.HasSuffix(rest, "/detail"):
-			s.uiBrowseDetail(w, r, strings.TrimSuffix(rest, "/detail"))
+			repoName := strings.TrimSuffix(rest, "/detail")
+			if !s.Enforcer.RequireRepoRead(w, r, repoName) {
+				return
+			}
+			s.uiBrowseDetail(w, r, repoName)
 		default:
 			// /ui/browse/{name} — the browse page with that repo pre-selected
 			s.uiBrowsePage(w, r, rest)
