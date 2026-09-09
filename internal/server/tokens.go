@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -55,6 +56,13 @@ type createTokenRequest struct {
 	Description string       `json:"description"`
 	Grants      []auth.Grant `json:"grants"`
 	ExpiresAt   *time.Time   `json:"expires_at,omitempty"`
+
+	// Role names a permission bundle to mint from instead of listing grants
+	// inline. Config-as-code defines roles in git; without this the definition
+	// could not be used for the credential it exists to describe, so every CI
+	// token restated the grants and drifted from the role the moment it
+	// changed.
+	Role string `json:"role,omitempty"`
 }
 
 type createTokenResponse struct {
@@ -85,6 +93,21 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Description == "" {
 		req.Description = "unnamed token"
+	}
+	if req.Role != "" {
+		if len(req.Grants) > 0 {
+			jsonError(w, "give either role or grants, not both", http.StatusBadRequest)
+			return
+		}
+		grants, err := s.grantsForRole(req.Role)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		req.Grants = grants
+		if req.Description == "unnamed token" {
+			req.Description = "role: " + req.Role
+		}
 	}
 	if err := auth.ValidateGrants(req.Grants); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
@@ -118,6 +141,33 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(createTokenResponse{Token: tok, Secret: secret}) // #nosec G117 -- intentional: one-time secret returned only at token creation
+}
+
+// grantsForRole expands a named role into the grants a token should carry.
+//
+// A role with explicit grants uses them; one carrying only a base tier expands
+// to that tier over every repository, which is what a session for that role
+// already gets. Predefined roles resolve even when no custom role store is
+// configured, so "Reader" works on a fresh install.
+func (s *Server) grantsForRole(name string) ([]auth.Grant, error) {
+	if s.Roles != nil {
+		role, ok, err := s.Roles.Get(name)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			if len(role.Grants) > 0 {
+				return role.Grants, nil
+			}
+			return []auth.Grant{auth.GrantForRole("*", auth.BaseRoleFor(role.BaseRole))}, nil
+		}
+	}
+	for _, pre := range auth.PredefinedRoles {
+		if strings.EqualFold(pre.Name, name) {
+			return []auth.Grant{auth.GrantForRole("*", auth.BaseRoleFor(pre.BaseRole))}, nil
+		}
+	}
+	return nil, fmt.Errorf("unknown role %q", name)
 }
 
 func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {

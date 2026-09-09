@@ -105,3 +105,72 @@ func TestSelfService_AdminUnaffected(t *testing.T) {
 		t.Errorf("an admin cannot see a user's token; self-service would be unauditable")
 	}
 }
+
+// Config-as-code defines roles in git. Without a way to mint from one, the
+// definition could not be used for the credential it exists to describe: every
+// CI token restated the grants inline and drifted from the role the moment it
+// changed.
+func TestCreateToken_FromNamedRole(t *testing.T) {
+	srv, store := newAuthServer(t)
+	srv = srv.WithRoles(auth.NewRoleStore(srv.Meta))
+	_, admin, _ := store.Create("admin", []auth.Grant{auth.GrantForRole("*", auth.RoleAdmin)}, nil)
+	if err := srv.Roles.Create(auth.CustomRole{
+		Name: "ci-publisher", BaseRole: "read",
+		Grants: []auth.Grant{{Repo: "acme-npm", Actions: []auth.Action{auth.ActionRead, auth.ActionWrite}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	mint := func(body string) (int, string) {
+		rw := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(rw, tokenReq(t, http.MethodPost, "/api/v1/tokens", admin, body))
+		return rw.Code, rw.Body.String()
+	}
+
+	t.Run("a config-defined role expands to its grants", func(t *testing.T) {
+		code, body := mint(`{"description":"ci","role":"ci-publisher"}`)
+		if code != http.StatusCreated {
+			t.Fatalf("got %d: %s", code, body)
+		}
+		if !strings.Contains(body, "acme-npm") || !strings.Contains(body, "write") {
+			t.Errorf("token did not carry the role's grants: %s", body)
+		}
+	})
+
+	t.Run("a predefined role works without a custom one", func(t *testing.T) {
+		code, body := mint(`{"description":"r","role":"Reader"}`)
+		if code != http.StatusCreated {
+			t.Fatalf("got %d: %s", code, body)
+		}
+		if !strings.Contains(body, "read") {
+			t.Errorf("Reader did not expand: %s", body)
+		}
+	})
+
+	t.Run("an unknown role is refused", func(t *testing.T) {
+		code, body := mint(`{"description":"x","role":"no-such-role"}`)
+		if code != http.StatusBadRequest || !strings.Contains(body, "unknown role") {
+			t.Errorf("got %d: %s", code, body)
+		}
+	})
+
+	t.Run("role and grants together are ambiguous and refused", func(t *testing.T) {
+		code, body := mint(`{"description":"x","role":"ci-publisher","grants":[{"repo":"a","actions":["read"]}]}`)
+		if code != http.StatusBadRequest || !strings.Contains(body, "not both") {
+			t.Errorf("got %d: %s", code, body)
+		}
+	})
+
+	// A role cannot be used to exceed the caller's own authority: the
+	// self-service check applies to the expanded grants, not the role name.
+	t.Run("a role cannot widen a non-admin caller", func(t *testing.T) {
+		_, bob, _ := store.Create("bob session", []auth.Grant{
+			{Repo: "acme-npm", Actions: []auth.Action{auth.ActionRead}}}, nil, "bob")
+		rw := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(rw, tokenReq(t, http.MethodPost, "/api/v1/tokens", bob,
+			`{"description":"x","role":"Administrator"}`))
+		if rw.Code != http.StatusForbidden {
+			t.Errorf("a read-only user minted an Administrator token (%d): %s", rw.Code, rw.Body.String())
+		}
+	})
+}
