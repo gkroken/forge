@@ -26,6 +26,7 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -92,6 +93,19 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, c *format.Conte
 	meta, err := parseChartYAML(body)
 	if err != nil {
 		http.Error(w, "invalid chart: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Name and version come from Chart.yaml inside the uploaded archive, so
+	// they are publisher-controlled and end up in two places that care: a blob
+	// path, and index.yaml. A name containing ": " made the generated index
+	// unparseable, which broke `helm repo add` for every client of the
+	// repository until an admin found and deleted the chart.
+	if !validChartName(meta.Name) {
+		http.Error(w, "invalid chart name: "+meta.Name, http.StatusBadRequest)
+		return
+	}
+	if !validChartVersion(meta.Version) {
+		http.Error(w, "invalid chart version: "+meta.Version, http.StatusBadRequest)
 		return
 	}
 	filename := fmt.Sprintf("%s-%s.tgz", meta.Name, meta.Version)
@@ -436,12 +450,14 @@ func buildIndex(recs []chartRecord, now time.Time) string {
 	var b strings.Builder
 	b.WriteString("apiVersion: v1\nentries:\n")
 	for _, n := range names {
-		fmt.Fprintf(&b, "  %s:\n", n)
+		// yamlScalar quotes only values that would otherwise restructure the
+		// document, so ordinary charts render exactly as before.
+		fmt.Fprintf(&b, "  %s:\n", yamlScalar(n))
 		vers := byName[n]
 		sort.Slice(vers, func(i, j int) bool { return vers[i].Version > vers[j].Version })
 		for _, rec := range vers {
 			fmt.Fprintf(&b, "    - apiVersion: v2\n      name: %s\n      version: %s\n",
-				rec.Name, rec.Version)
+				yamlScalar(rec.Name), yamlScalar(rec.Version))
 			if rec.AppVersion != "" {
 				fmt.Fprintf(&b, "      appVersion: %q\n", rec.AppVersion)
 			}
@@ -517,6 +533,38 @@ type chartMeta struct{ Name, Version, AppVersion, Description string }
 // Chart.yaml inside a chart .tgz. A real implementation would use a YAML
 // library; chart metadata top-level fields are simple scalars so a line scan
 // is sufficient for the prototype.
+// yamlScalar renders a string as a YAML scalar, quoting it only when a plain
+// scalar would be misread. A value carrying ": " reads as a nested mapping and
+// corrupts the whole document — that is what made a repository's index
+// unparseable and broke `helm repo add` for every client of it.
+//
+// Uploads are validated as well; this covers records written before that guard
+// and anything a proxied upstream sends.
+func yamlScalar(v string) string {
+	if v != "" && plainScalarRe.MatchString(v) {
+		return v
+	}
+	return fmt.Sprintf("%q", v)
+}
+
+var plainScalarRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]*$`)
+
+// Helm's own naming rules, which every real chart already satisfies. Enforcing
+// them keeps publisher-controlled text out of both the blob path and the YAML
+// index, rather than relying on the index escaping alone.
+var (
+	chartNameRe    = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$`)
+	chartVersionRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9.+_-]*)?$`)
+)
+
+func validChartName(s string) bool {
+	return s != "" && len(s) <= 250 && chartNameRe.MatchString(s)
+}
+
+func validChartVersion(s string) bool {
+	return s != "" && len(s) <= 128 && chartVersionRe.MatchString(s)
+}
+
 func parseChartYAML(tgz []byte) (chartMeta, error) {
 	data, err := extractFile(tgz, "Chart.yaml")
 	if err != nil {
