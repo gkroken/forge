@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -397,8 +398,9 @@ func TestGroup_IndexMerge(t *testing.T) {
 
 // With the dependency-confusion guard active (NameClaimed set), a proxy
 // member must not contribute index entries for hosted-owned or claimed chart
-// names: the merged index.yaml carries the upstream chart URLs verbatim, so a
-// leaked entry routes the download around forge entirely.
+// names: forge serves whatever the merged index lists, so a leaked entry has
+// forge itself handing an upstream chart to a client that asked for an
+// internal one.
 func TestGroup_IndexMerge_DepGuardShadowsProtectedNames(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/index.yaml" {
@@ -815,5 +817,106 @@ entries:
 	}
 	if !sawFree {
 		t.Error("free was dropped; unrelated upstream charts must still merge")
+	}
+}
+
+// A proxy repository must serve upstream's index and upstream's charts. Before
+// this worked, index.yaml on a proxy was rendered from the (always empty) local
+// records and .tgz reads went to the local blob store only, so `helm repo add`
+// against a proxy saw a repository with no charts in it at all.
+func TestProxy_ServesUpstreamIndexAndCharts(t *testing.T) {
+	chart := []byte("\x1f\x8bfake-chart-bytes")
+	var mu sync.Mutex
+	var paths []string
+	var indexYAML string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		switch r.URL.Path {
+		case "/index.yaml":
+			w.Header().Set("Content-Type", "application/yaml")
+			io.WriteString(w, indexYAML)
+		case "/dist/webapp-1.0.0.tgz":
+			w.Header().Set("Content-Type", "application/gzip")
+			w.Write(chart)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+	indexYAML = `apiVersion: v1
+entries:
+  webapp:
+    - name: webapp
+      version: 1.0.0
+      digest: abc
+      created: 2024-01-01T00:00:00Z
+      urls:
+        - ` + upstream.URL + `/dist/webapp-1.0.0.tgz
+`
+
+	dir := t.TempDir()
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	mgr := repo.NewManager()
+	for _, r := range []repo.Repository{
+		{Name: "helm-proxy", Format: "helm", Kind: repo.Proxy, Upstream: upstream.URL},
+		{Name: "helm-hosted", Format: "helm", Kind: repo.Hosted},
+		{Name: "helm-group", Format: "helm", Kind: repo.Group, Members: []string{"helm-hosted", "helm-proxy"}},
+	} {
+		if err := mgr.Add(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := New()
+	get := func(repoName, sub string) *httptest.ResponseRecorder {
+		rp, _ := mgr.Get(repoName)
+		rec := httptest.NewRecorder()
+		h.Serve(rec, httptest.NewRequest("GET", "/"+sub, nil), &format.Context{
+			Repo: rp, Meta: m, Blob: b, Sub: sub, Repos: mgr, HTTP: upstream.Client(),
+		})
+		return rec
+	}
+
+	idx := get("helm-proxy", "index.yaml")
+	if idx.Code != 200 {
+		t.Fatalf("proxy index status = %d", idx.Code)
+	}
+	body := idx.Body.String()
+	if !strings.Contains(body, "name: webapp") {
+		t.Fatalf("proxy index does not list the upstream chart:\n%s", body)
+	}
+	// The link must come back to forge, not send the client to upstream: a
+	// chart that bypasses forge is uncached, unaudited and unavailable when
+	// upstream is.
+	if !strings.Contains(body, "- webapp-1.0.0.tgz") || strings.Contains(body, upstream.URL) {
+		t.Errorf("index url entry does not point at forge:\n%s", body)
+	}
+
+	dl := get("helm-proxy", "webapp-1.0.0.tgz")
+	if dl.Code != 200 || !bytes.Equal(dl.Body.Bytes(), chart) {
+		t.Fatalf("proxy chart download = %d, %q", dl.Code, dl.Body.String())
+	}
+	if _, _, err := b.Stat("helm-proxy/webapp-1.0.0.tgz"); err != nil {
+		t.Errorf("chart was not cached: %v", err)
+	}
+
+	// A chart upstream never published is a 404, and forge must not go asking
+	// for a URL it made up from the filename.
+	if code := get("helm-proxy", "ghost-9.9.9.tgz").Code; code != 404 {
+		t.Errorf("unknown chart status = %d, want 404", code)
+	}
+	mu.Lock()
+	asked := strings.Join(paths, " ")
+	mu.Unlock()
+	if strings.Contains(asked, "ghost") {
+		t.Errorf("forge invented an upstream URL for an unknown chart: %s", asked)
+	}
+
+	// The same download through a group reaches the proxy member.
+	g := get("helm-group", "webapp-1.0.0.tgz")
+	if g.Code != 200 || !bytes.Equal(g.Body.Bytes(), chart) {
+		t.Errorf("group chart download = %d, %q", g.Code, g.Body.String())
 	}
 }

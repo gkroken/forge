@@ -197,8 +197,11 @@ func main() {
 				Upstream: "https://registry.npmjs.org", AnonymousRead: true},
 			{Name: "cran-proxy", Format: "cran", Kind: repo.Proxy,
 				Upstream: cranProxyUpstream(), AnonymousRead: true},
+			// Bitnami's index now publishes oci:// references rather than .tgz
+			// URLs, which an HTTP chart proxy cannot serve; prometheus-community
+			// is a plain chart repository, so charts really flow through forge.
 			{Name: "helm-proxy", Format: "helm", Kind: repo.Proxy,
-				Upstream: "https://charts.bitnami.com/bitnami", AnonymousRead: true},
+				Upstream: "https://prometheus-community.github.io/helm-charts", AnonymousRead: true},
 			{Name: "pypi-proxy", Format: "pypi", Kind: repo.Proxy,
 				Upstream: "https://pypi.org", AnonymousRead: true},
 			// OCI / Docker

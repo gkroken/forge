@@ -303,3 +303,30 @@ second lookup's latency against the first, which only holds from a cold cache.
 Both are fixed — setup treats 409 as "already there", and the cache check
 accepts either a clear speed-up or an absolutely-local second lookup. The
 script now passes 123/123 cold and warm.
+
+## helm proxy was serving nothing at all (2026-09-09)
+
+`GET /index.yaml` on a helm **proxy** repository rendered the *local* records —
+which on a proxy are always empty — so `helm repo add` succeeded, `helm search`
+found nothing, and no chart could ever be pulled. `.tgz` reads on a proxy went
+to the local blob store only, and nothing ever wrote to it. The UI was fine
+(`BrowseRepo` did consult upstream), which is why this survived: every check
+looked at the repository through forge's own pages rather than through helm.
+
+The matrix passed it because P1 asked only for a **200**, and an empty index is
+a 200. The suite now asserts the index lists charts (P1a), that its links point
+at forge rather than upstream (P1b), and that a chart it lists actually
+downloads through forge (P1c). Verified with the real `helm` CLI: `repo add`,
+`search repo`, and `pull` against both a proxy and a group.
+
+Fixed by making `index()` kind-aware, rewriting upstream `urls:` entries to the
+bare filename (helm resolves relative entries against the repository URL, so
+the download comes back to forge), and serving the chart through
+`proxy.Fetcher` using the URL upstream published — never one synthesised from a
+filename. Group downloads now go through `format.GroupFetch`, so a group with a
+proxy member serves upstream charts too.
+
+Also: the seeded `helm-proxy` pointed at `charts.bitnami.com`, which now
+redirects to Broadcom and publishes `oci://` references instead of `.tgz` URLs
+— an HTTP chart proxy cannot serve those. The seed is
+`prometheus-community.github.io/helm-charts`, a plain chart repository.

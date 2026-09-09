@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
 	"regexp"
 	"sort"
@@ -45,14 +46,19 @@ func (h *Handler) Format() string { return "helm" }
 
 // chartRecord is what we persist per chart version (meta namespace).
 type chartRecord struct {
-	Name        string    `json:"name"`
-	Version     string    `json:"version"`
-	AppVersion  string    `json:"appVersion,omitempty"`
-	Description string    `json:"description,omitempty"`
-	Digest      string    `json:"digest"`
-	Created     string    `json:"created"`
-	Filename    string    `json:"filename"`
-	UploadedAt  time.Time `json:"uploadedAt,omitempty"`
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	AppVersion  string `json:"appVersion,omitempty"`
+	Description string `json:"description,omitempty"`
+	Digest      string `json:"digest"`
+	Created     string `json:"created"`
+	Filename    string `json:"filename"`
+	// URL is the location upstream published for this chart, kept verbatim.
+	// Empty for charts uploaded here. Proxy downloads fetch this and only
+	// this: a URL forge synthesised from a filename is not one upstream
+	// offered, and guessing is how a proxy serves something upstream never had.
+	URL        string    `json:"url,omitempty"`
+	UploadedAt time.Time `json:"uploadedAt,omitempty"`
 }
 
 func (h *Handler) ns(c *format.Context) string { return c.Repo.Name + ":helm" }
@@ -78,7 +84,7 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 		}
 		h.delete(w, c, strings.TrimPrefix(c.Sub, "api/charts/"))
 	case r.Method == http.MethodGet && strings.HasSuffix(c.Sub, ".tgz"):
-		h.download(w, c)
+		h.download(w, r, c)
 	default:
 		http.Error(w, "unsupported helm request", http.StatusNotFound)
 	}
@@ -135,9 +141,15 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, c *format.Conte
 	json.NewEncoder(w).Encode(map[string]bool{"saved": true})
 }
 
-func (h *Handler) download(w http.ResponseWriter, c *format.Context) {
+func (h *Handler) download(w http.ResponseWriter, r *http.Request, c *format.Context) {
 	if c.Repo.Kind == repo.Group {
-		h.groupDownload(w, c)
+		if !format.GroupFetch(h, w, r, c) {
+			http.NotFound(w, r)
+		}
+		return
+	}
+	if c.Repo.Kind == repo.Proxy {
+		h.proxyChart(w, r, c)
 		return
 	}
 	rc, err := c.Blob.Get(c.Key(path.Base(c.Sub)))
@@ -150,23 +162,44 @@ func (h *Handler) download(w http.ResponseWriter, c *format.Context) {
 	io.Copy(w, rc)
 }
 
-func (h *Handler) groupDownload(w http.ResponseWriter, c *format.Context) {
+// proxyChart serves a chart from upstream through the caching fetcher.
+//
+// The upstream URL comes from the upstream index, which is itself cached, so
+// this costs one parse of an already-local file and never invents a location.
+// Without it a proxy repository could only ever serve charts someone had
+// somehow put in its blob store, i.e. nothing.
+func (h *Handler) proxyChart(w http.ResponseWriter, r *http.Request, c *format.Context) {
 	filename := path.Base(c.Sub)
-	for _, name := range c.Repo.Members {
-		mc, ok := c.MemberCtx(name)
-		if !ok {
-			continue
+	upURL := ""
+	for _, rec := range h.upstreamRecords(c) {
+		if rec.Filename == filename && rec.URL != "" {
+			upURL = rec.URL
+			break
 		}
-		rc, err := mc.Blob.Get(mc.Key(filename))
-		if err != nil {
-			continue
-		}
-		defer rc.Close()
-		w.Header().Set("Content-Type", "application/gzip")
-		io.Copy(w, rc)
+	}
+	if upURL == "" {
+		http.NotFound(w, r)
 		return
 	}
-	http.NotFound(w, nil)
+	if !strings.HasPrefix(upURL, "http://") && !strings.HasPrefix(upURL, "https://") {
+		upURL = strings.TrimRight(c.Repo.Upstream, "/") + "/" + strings.TrimLeft(upURL, "/")
+	}
+	f := proxy.New(c.HTTP, c.ProxyConfig())
+	rc, ct, err := f.Fetch(c.Key(filename), c.Repo.Name+":proxy", upURL, c.Blob, c.Meta)
+	if err != nil {
+		if errors.Is(err, proxy.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "upstream unavailable", http.StatusBadGateway)
+		return
+	}
+	defer rc.Close()
+	if ct == "" {
+		ct = "application/gzip"
+	}
+	w.Header().Set("Content-Type", ct)
+	io.Copy(w, rc)
 }
 
 func (h *Handler) records(c *format.Context) []chartRecord {
@@ -209,6 +242,26 @@ func (h *Handler) upstreamRecords(c *format.Context) []chartRecord {
 //
 // The parser discovers entryDashIndent from the first dash encountered and
 // derives fieldIndent = entryDashIndent + 2.
+// setChartURL records an upstream "urls:" entry on a record. An index may
+// publish an absolute URL, a URL relative to the repository, or an oci://
+// reference; helm resolves relative entries against the repository URL, so
+// serving a chart under its bare filename is what a client already expects.
+// Anything that is not http(s) is left exactly as it came — forge cannot serve
+// an OCI reference as a .tgz, and rewriting it would only hide that.
+func setChartURL(rec *chartRecord, raw string) {
+	rec.URL = raw
+	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
+		rec.Filename = raw
+		return
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Path == "" {
+		rec.Filename = raw
+		return
+	}
+	rec.Filename = path.Base(u.Path)
+}
+
 func parseIndexYAML(data []byte) []chartRecord {
 	var recs []chartRecord
 	cur := chartRecord{}
@@ -299,7 +352,7 @@ func parseIndexYAML(data []byte) []chartRecord {
 			if strings.HasPrefix(trimmed, "- ") {
 				// List item at field level (deps, maintainers, keywords, etc. or urls item)
 				if inURLs && cur.Filename == "" {
-					cur.Filename = strings.TrimPrefix(trimmed, "- ")
+					setChartURL(&cur, strings.TrimPrefix(trimmed, "- "))
 				}
 				continue
 			}
@@ -327,7 +380,7 @@ func parseIndexYAML(data []byte) []chartRecord {
 		// Deeper lines: only care about url items
 		if indent > fieldIndent && inURLs && strings.HasPrefix(trimmed, "- ") {
 			if cur.Filename == "" {
-				cur.Filename = strings.TrimPrefix(trimmed, "- ")
+				setChartURL(&cur, strings.TrimPrefix(trimmed, "- "))
 			}
 		}
 	}
@@ -428,9 +481,12 @@ func (h *Handler) groupRecords(c *format.Context) []chartRecord {
 // index emits a valid Helm index.yaml grouped by chart name.
 func (h *Handler) index(w http.ResponseWriter, c *format.Context) {
 	var recs []chartRecord
-	if c.Repo.Kind == repo.Group {
+	switch c.Repo.Kind {
+	case repo.Group:
 		recs = h.groupRecords(c)
-	} else {
+	case repo.Proxy:
+		recs = h.upstreamRecords(c)
+	default:
 		recs = h.records(c)
 	}
 	w.Header().Set("Content-Type", "application/yaml")

@@ -14,7 +14,7 @@ Phases run in order and share fixtures: the delete phase removes what earlier
 phases published, so later checks must not reuse those names.
 """
 import os
-import base64, hashlib, io, json, sys, tarfile, urllib.error, urllib.request
+import base64, hashlib, io, json, re, sys, tarfile, urllib.error, urllib.request
 
 BASE = os.environ.get("FORGE_BASE", "http://localhost:8099")
 RESULTS = []   # (fmt, kind, id, desc, ok, detail)
@@ -199,7 +199,12 @@ def proxy_checks(f):
         return
     chk(f, k, "P1", "upstream fetch", True, s)
     s2, b2, _ = req("GET", f"/repository/{repo}{good}", raw=True)
-    chk(f, k, "P2", "second read consistent (cache)", s2 == 200 and b2 == b, f"{s2}")
+    # helm renders index.yaml per request and stamps it with the render time,
+    # so the bytes legitimately differ between two reads of the same cached
+    # upstream index. Compare the content, not the stamp.
+    def _stable(x):
+        return re.sub(rb"^generated: .*$", b"", x, flags=re.M) if f == "helm" else x
+    chk(f, k, "P2", "second read consistent (cache)", s2 == 200 and _stable(b2) == _stable(b), f"{s2}")
     if rewrite:
         chk(f, k, "P3", "metadata URLs point at forge", rewrite in body, body[:200])
         chk(f, k, "P3b", "no upstream host leaked",
@@ -222,6 +227,24 @@ def proxy_checks(f):
     else:
         s, b, _ = req("PUT", f"/repository/{repo}/com/acme/x/1.0.0/x-1.0.0.jar", JAR)
     chk(f, k, "P5", "publish to proxy refused", 400 <= s < 500, f"{s} {str(b)[:120]}")
+    if f == "helm":
+        # P1 above only asked for a 200. A helm proxy that renders its own
+        # (always empty) local index returns exactly that, which is how a
+        # completely non-functional proxy passed this suite for months: assert
+        # the index lists charts, and that a chart it lists actually downloads
+        # through forge rather than sending the client upstream.
+        names = re.findall(r"^  ([^\s:]+):", body, re.M)
+        chk(f, k, "P1a", "proxy index lists upstream charts", len(names) > 0, f"{len(names)} entries")
+        urls = re.findall(r"^\s+- (\S+)$", body, re.M)
+        tgzs = [u for u in urls if u.endswith(".tgz")]
+        chk(f, k, "P1b", "index links point at forge, not upstream",
+            bool(tgzs) and not any(u.startswith("http") for u in tgzs), str(tgzs[:2]))
+        if tgzs:
+            s7, b7, _ = req("GET", f"/repository/{repo}/{tgzs[0]}", raw=True)
+            chk(f, k, "P1c", "a chart from the proxy index downloads",
+                s7 == 200 and len(b7) > 100 and b7[:2] == b"\x1f\x8b", f"{s7} {len(b7)}b")
+        else:
+            chk(f, k, "P1c", "a chart from the proxy index downloads", False, "no .tgz link in index")
 
 # ================= GROUP =================
 GROUP_CASES = {
