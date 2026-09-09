@@ -445,16 +445,26 @@ func (h *Handler) groupRecords(c *format.Context) []chartRecord {
 }
 
 // index emits a valid Helm index.yaml grouped by chart name.
-func (h *Handler) index(w http.ResponseWriter, c *format.Context) {
-	var recs []chartRecord
+// viewRecords is what a repository shows a client, by kind: a hosted repo's own
+// records, a proxy's upstream index, a group's merge of its members.
+//
+// Every read path goes through this one decision. index.yaml, the chart API
+// list and the per-chart API each had their own copy of it, and the proxy
+// branch was missing from all three — a proxy repository answered every one of
+// them with an empty repository.
+func (h *Handler) viewRecords(c *format.Context) []chartRecord {
 	switch c.Repo.Kind {
 	case repo.Group:
-		recs = h.groupRecords(c)
+		return h.groupRecords(c)
 	case repo.Proxy:
-		recs = h.upstreamRecords(c)
+		return h.upstreamRecords(c)
 	default:
-		recs = h.records(c)
+		return h.records(c)
 	}
+}
+
+func (h *Handler) index(w http.ResponseWriter, c *format.Context) {
+	recs := h.viewRecords(c)
 	w.Header().Set("Content-Type", "application/yaml")
 	io.WriteString(w, buildIndex(recs, time.Now().UTC()))
 }
@@ -503,12 +513,7 @@ func buildIndex(recs []chartRecord, now time.Time) string {
 }
 
 func (h *Handler) listAll(w http.ResponseWriter, c *format.Context) {
-	var recs []chartRecord
-	if c.Repo.Kind == repo.Group {
-		recs = h.groupRecords(c)
-	} else {
-		recs = h.records(c)
-	}
+	recs := h.viewRecords(c)
 	byName := map[string][]chartRecord{}
 	for _, rec := range recs {
 		byName[rec.Name] = append(byName[rec.Name], rec)
@@ -518,12 +523,7 @@ func (h *Handler) listAll(w http.ResponseWriter, c *format.Context) {
 }
 
 func (h *Handler) listOne(w http.ResponseWriter, c *format.Context, name string) {
-	var source []chartRecord
-	if c.Repo.Kind == repo.Group {
-		source = h.groupRecords(c)
-	} else {
-		source = h.records(c)
-	}
+	source := h.viewRecords(c)
 	var out []chartRecord
 	for _, rec := range source {
 		if rec.Name == name {
@@ -795,15 +795,7 @@ func (h *Handler) BrowseRepo(c *format.Context) ([]format.BrowseEntry, error) {
 
 // Inspect implements format.Handler for the component detail page.
 func (h *Handler) Inspect(c *format.Context, baseURL, name string) (format.ComponentDetail, bool) {
-	var allRecs []chartRecord
-	switch c.Repo.Kind {
-	case repo.Group:
-		allRecs = h.groupRecords(c)
-	case repo.Proxy:
-		allRecs = h.upstreamRecords(c)
-	default:
-		allRecs = h.records(c)
-	}
+	allRecs := h.viewRecords(c)
 	var matching []chartRecord
 	for _, rec := range allRecs {
 		if rec.Name == name {

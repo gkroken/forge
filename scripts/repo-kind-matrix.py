@@ -245,6 +245,16 @@ def proxy_checks(f):
                 s7 == 200 and len(b7) > 100 and b7[:2] == b"\x1f\x8b", f"{s7} {len(b7)}b")
         else:
             chk(f, k, "P1c", "a chart from the proxy index downloads", False, "no .tgz link in index")
+    if f == "cran":
+        # Same question as helm's P1c: the index is upstream's, so a package it
+        # names must actually download through forge rather than merely appear.
+        m = re.search(r"^Package:\s*(\S+)\r?\nVersion:\s*(\S+)", body, re.M)
+        if m:
+            s9, b9, _ = req("GET", f"/repository/{repo}/src/contrib/{m.group(1)}_{m.group(2)}.tar.gz", raw=True)
+            chk(f, k, "P1c", "a package from the proxy index downloads",
+                s9 == 200 and b9[:2] == b"\x1f\x8b", f"{s9} {len(b9)}b {m.group(1)}")
+        else:
+            chk(f, k, "P1c", "a package from the proxy index downloads", False, "no package in PACKAGES")
 
 # ================= GROUP =================
 GROUP_CASES = {

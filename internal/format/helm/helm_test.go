@@ -914,6 +914,16 @@ entries:
 		t.Errorf("forge invented an upstream URL for an unknown chart: %s", asked)
 	}
 
+	// The ChartMuseum API is a read path too, and had the same missing branch.
+	api := get("helm-proxy", "api/charts")
+	if api.Code != 200 || !strings.Contains(api.Body.String(), `"webapp"`) {
+		t.Errorf("api/charts on a proxy = %d, %q", api.Code, api.Body.String())
+	}
+	one := get("helm-proxy", "api/charts/webapp")
+	if one.Code != 200 || !strings.Contains(one.Body.String(), `"1.0.0"`) {
+		t.Errorf("api/charts/webapp on a proxy = %d, %q", one.Code, one.Body.String())
+	}
+
 	// The same download through a group reaches the proxy member.
 	g := get("helm-group", "webapp-1.0.0.tgz")
 	if g.Code != 200 || !bytes.Equal(g.Body.Bytes(), chart) {
