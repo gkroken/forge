@@ -94,6 +94,48 @@ It matters more than an inventory leak usually would: those names are the target
 list for the dependency-confusion attack that group shadowing exists to defeat.
 Shadowing defends the pull; nothing was defending the reconnaissance.
 
+### 4. Publisher-controlled text corrupted three generated indexes · FIXED
+
+After the npm traversal, the same shape was worth looking for everywhere: a
+document assembled by string formatting out of content a publisher controls.
+Every format publishes an index, each in a different language, and the results
+line up exactly with how each one is built.
+
+| Format | Index language | Built with | Result |
+|---|---|---|---|
+| npm | JSON | `encoding/json` | safe |
+| OCI | JSON | `encoding/json` | safe |
+| PyPI | HTML | hand-rolled | was vulnerable, fixed earlier |
+| **Helm** | YAML | hand-rolled | **broken** |
+| **CRAN** | DCF | hand-rolled | **broken** |
+| **Maven** | XML | hand-rolled | **broken** |
+
+Every format that hand-rolls its index into a structured language had an
+injection bug. Every format that hands the job to an encoder did not.
+
+- **Helm.** Name and version came from `Chart.yaml` inside the archive and were
+  interpolated unquoted. A chart named `evil: injected` made `index.yaml`
+  unparseable, and `helm repo add` then failed for **every** client of that
+  repository until an admin found and removed it. `description` had been quoted
+  earlier for precisely this reason — the fix had covered the field that broke
+  rather than the class.
+- **CRAN.** A blank line ends a DCF record, but the scanner skipped blank lines,
+  so a second record in the same `DESCRIPTION` overwrote the first. A package
+  uploaded as `victim_1.0.0.tar.gz` was indexed as a phantom whose tarball 404s,
+  while the real package vanished from `PACKAGES` despite sitting on disk.
+- **Maven.** `buildMetadataXML` escaped nothing. A version directory containing
+  `<` produced malformed `maven-metadata.xml`, breaking resolution for every
+  Maven client.
+
+Each is now guarded at both ends where it makes sense — rejected at upload,
+neutralised at render — because records written before a guard exists still
+reach the renderer, and a proxied upstream can send anything.
+
+Worth noting what the earlier npm fix bought: helm's chart name was also a
+traversal, and `Context.Key` containment had **already** neutralised it before
+anyone went looking. Putting that guard in the spine rather than in npm paid for
+itself within the hour.
+
 ## Friction worth fixing, but not bugs
 
 - **No self-service credentials.** The token API is admin-only for create, list
