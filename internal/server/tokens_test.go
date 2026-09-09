@@ -137,31 +137,49 @@ func TestTokens_BadBody(t *testing.T) {
 	}
 }
 
-// TestTokens_ListRequiresAdmin verifies that a non-admin token gets 403 on list.
-func TestTokens_ListRequiresAdmin(t *testing.T) {
+// A non-admin now lists tokens — but only their own. These assertions read
+// 403 before self-service existed; the property that matters is not "a
+// non-admin is refused" but "a non-admin sees nothing that is not theirs".
+func TestTokens_ListShowsOnlyYourOwn(t *testing.T) {
 	srv, authStore := newAuthServer(t)
-	_, adminSecret, _ := authStore.Create("admin", []auth.Grant{auth.GrantForRole("*", auth.RoleAdmin)}, nil)
-	_ = adminSecret // needed to move past bootstrap so the next create requires admin
-	_, readSecret, _ := authStore.Create("reader", []auth.Grant{auth.GrantForRole("x", auth.RoleRead)}, nil)
+	_, _, _ = authStore.Create("admin", []auth.Grant{auth.GrantForRole("*", auth.RoleAdmin)}, nil)
+	adminsOwn, _, _ := authStore.Create("someone-elses", []auth.Grant{auth.GrantForRole("x", auth.RoleRead)}, nil, "carol")
+	mine, _, _ := authStore.Create("mine", []auth.Grant{auth.GrantForRole("x", auth.RoleRead)}, nil, "bob")
+	_, bobSecret, _ := authStore.Create("bob session", []auth.Grant{auth.GrantForRole("x", auth.RoleRead)}, nil, "bob")
 
 	rw := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(rw, tokenReq(t, http.MethodGet, "/api/v1/tokens", readSecret, ""))
-	if rw.Code != http.StatusForbidden {
-		t.Fatalf("non-admin list: expected 403, got %d", rw.Code)
+	srv.Routes().ServeHTTP(rw, tokenReq(t, http.MethodGet, "/api/v1/tokens", bobSecret, ""))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("own-token list: expected 200, got %d", rw.Code)
+	}
+	body := rw.Body.String()
+	if !strings.Contains(body, mine.ID) {
+		t.Errorf("bob cannot see his own token:\n%s", body)
+	}
+	if strings.Contains(body, adminsOwn.ID) {
+		t.Errorf("bob can see carol's token — self-service must not expose other people's:\n%s", body)
 	}
 }
 
-// TestTokens_RevokeRequiresAdmin verifies that a non-admin token gets 403 on revoke.
-func TestTokens_RevokeRequiresAdmin(t *testing.T) {
+// A non-admin may revoke their own token and nobody else's. Someone else's
+// reads as 404 rather than 403, so the endpoint cannot be used to discover
+// which token IDs exist.
+func TestTokens_RevokeOnlyYourOwn(t *testing.T) {
 	srv, authStore := newAuthServer(t)
-	tok, adminSecret, _ := authStore.Create("admin", []auth.Grant{auth.GrantForRole("*", auth.RoleAdmin)}, nil)
-	_ = adminSecret
-	_, readSecret, _ := authStore.Create("reader", []auth.Grant{auth.GrantForRole("x", auth.RoleRead)}, nil)
+	_, _, _ = authStore.Create("admin", []auth.Grant{auth.GrantForRole("*", auth.RoleAdmin)}, nil)
+	theirs, _, _ := authStore.Create("carol's", []auth.Grant{auth.GrantForRole("x", auth.RoleRead)}, nil, "carol")
+	mine, _, _ := authStore.Create("bob's", []auth.Grant{auth.GrantForRole("x", auth.RoleRead)}, nil, "bob")
+	_, bobSecret, _ := authStore.Create("bob session", []auth.Grant{auth.GrantForRole("x", auth.RoleRead)}, nil, "bob")
 
 	rw := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(rw, tokenReq(t, http.MethodDelete, "/api/v1/tokens/"+tok.ID, readSecret, ""))
-	if rw.Code != http.StatusForbidden {
-		t.Fatalf("non-admin revoke: expected 403, got %d", rw.Code)
+	srv.Routes().ServeHTTP(rw, tokenReq(t, http.MethodDelete, "/api/v1/tokens/"+theirs.ID, bobSecret, ""))
+	if rw.Code != http.StatusNotFound {
+		t.Errorf("revoking someone else's token: got %d, want 404", rw.Code)
+	}
+	rw = httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rw, tokenReq(t, http.MethodDelete, "/api/v1/tokens/"+mine.ID, bobSecret, ""))
+	if rw.Code != http.StatusNoContent {
+		t.Errorf("revoking your own token: got %d, want 204", rw.Code)
 	}
 }
 

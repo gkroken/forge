@@ -184,6 +184,32 @@ func (e *Enforcer) decideWithSession(r *http.Request, repoName string, action Ac
 	return e.decide(r, repoName, "", action)
 }
 
+// Caller returns the verified identity behind a request, from either credential
+// shape: a Bearer token (API clients) or the UI session cookie (a signed-in
+// browser). Returns nil when the request carries no valid credential.
+//
+// A session cookie holds a token, so both shapes resolve to the same type —
+// which is what lets a signed-in user mint a token scoped by their own grants.
+func (e *Enforcer) Caller(r *http.Request) *Token {
+	if e.store == nil {
+		return nil
+	}
+	secret := bearerToken(r)
+	if secret == "" {
+		if c, err := r.Cookie(UISessionCookie); err == nil {
+			secret = c.Value
+		}
+	}
+	if secret == "" {
+		return nil
+	}
+	tok, err := e.store.Verify(secret)
+	if err != nil {
+		return nil
+	}
+	return tok
+}
+
 // apiToken resolves and verifies the request's token for API routes, writing
 // a 401 and returning nil when absent or invalid.
 func (e *Enforcer) apiToken(w http.ResponseWriter, r *http.Request) *Token {

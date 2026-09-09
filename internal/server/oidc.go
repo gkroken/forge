@@ -176,7 +176,10 @@ func (s *Server) establishSSOSession(w http.ResponseWriter, r *http.Request,
 	}
 
 	expiry := time.Now().Add(ttl)
-	tok, secret, err := s.Auth.Create(source+":"+label, grants, &expiry)
+	// The owner is what ties a session — and anything minted from it — back to
+	// a person. Password logins already set it; SSO sessions did not, which
+	// left SSO users with no identity to own a token.
+	tok, secret, err := s.Auth.Create(source+":"+label, grants, &expiry, label)
 	if err != nil {
 		return err
 	}

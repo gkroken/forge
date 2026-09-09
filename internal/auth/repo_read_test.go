@@ -110,3 +110,55 @@ func TestRequireRepoRead_BearerBeatsCookie(t *testing.T) {
 		t.Errorf("valid Bearer rejected because a stale cookie was present (%d)", w.Code)
 	}
 }
+
+// Caller resolves the identity behind a request from either credential shape.
+// Self-service token minting depends on it: a signed-in browser and an API
+// client must both resolve to the same thing, since the rule is "you may mint
+// only what you already hold".
+func TestEnforcerCaller(t *testing.T) {
+	store := newStore(t)
+	mgr := repo.NewManager()
+	if err := mgr.Add(repo.Repository{Name: "r", Format: "npm", Kind: repo.Hosted}); err != nil {
+		t.Fatal(err)
+	}
+	e := auth.NewEnforcer(store, mgr)
+	_, secret, err := store.Create("bob", []auth.Grant{
+		{Repo: "r", Actions: []auth.Action{auth.ActionRead}}}, nil, "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("bearer", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.Header.Set("Authorization", "Bearer "+secret)
+		tok := e.Caller(r)
+		if tok == nil || tok.Owner != "bob" {
+			t.Errorf("Caller = %+v, want bob's token", tok)
+		}
+	})
+	t.Run("session cookie", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.AddCookie(&http.Cookie{Name: auth.UISessionCookie, Value: secret})
+		tok := e.Caller(r)
+		if tok == nil || tok.Owner != "bob" {
+			t.Errorf("Caller = %+v, want bob's token", tok)
+		}
+	})
+	t.Run("no credential", func(t *testing.T) {
+		if tok := e.Caller(httptest.NewRequest(http.MethodGet, "/", nil)); tok != nil {
+			t.Errorf("Caller = %+v, want nil", tok)
+		}
+	})
+	t.Run("invalid credential", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.Header.Set("Authorization", "Bearer forge_not-real")
+		if tok := e.Caller(r); tok != nil {
+			t.Errorf("Caller = %+v, want nil for an unknown secret", tok)
+		}
+	})
+	t.Run("auth disabled", func(t *testing.T) {
+		if tok := auth.NewEnforcer(nil, mgr).Caller(httptest.NewRequest(http.MethodGet, "/", nil)); tok != nil {
+			t.Errorf("Caller = %+v, want nil when auth is off", tok)
+		}
+	})
+}

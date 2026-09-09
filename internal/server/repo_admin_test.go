@@ -53,7 +53,7 @@ func TestRepoAdmin_Scoping(t *testing.T) {
 		// System-level routes: repo admin is not enough.
 		{"list repos", "GET", "/api/v1/repos", repoAdmin, "", http.StatusForbidden},
 		{"create repo", "POST", "/api/v1/repos", repoAdmin, repoBody, http.StatusForbidden},
-		{"list tokens", "GET", "/api/v1/tokens", repoAdmin, "", http.StatusForbidden},
+		{"list tokens (own only, since self-service)", "GET", "/api/v1/tokens", repoAdmin, "", http.StatusOK},
 		{"integrity rollup", "GET", "/api/v1/integrity", repoAdmin, "", http.StatusForbidden},
 
 		// Global admin passes everywhere.
