@@ -79,37 +79,52 @@ That gets artifacts in and out. Everything else is opt-in, and **most of it fail
 silently when you skip it** — the feature is simply absent, with no error. Work the
 list below when adding a format, and record deliberate omissions.
 
-*Optional interfaces in `internal/format` — not implementing one drops that feature:*
+*Seams on `format.Handler` — every one is a method on the interface, so the
+compiler makes you answer. Embedding `format.Unsupported` answers them all with
+"no", which is a real choice for some formats and a silent hole for the rest:*
 
-| Interface | Method | Without it |
-|---|---|---|
-| `Browsable` | `BrowseRepo` | repo shows no components in the UI |
-| `Inspectable` | `Inspect` | no detail pane |
-| `VulnCoordinates` | `OSVCoordinates` | **no vulnerability scanning** |
-| `ReferencedImages` | `ReferencedImages` | referenced images unscanned (helm-style formats) |
-| `Claimable` | claims support | **no dependency-confusion protection** |
-| `IntegrityChecker` | `VerifyIntegrity` | invisible to integrity verify |
-| `Reindexer` | `Reindex` | drift findings unrepairable |
+| Method | Answering "no" (via `Unsupported`) means |
+|---|---|
+| `BrowseRepo` / `Inspect` | repo shows no components in the UI, and no detail pane |
+| `BrowseAsTree` | flat package list rather than a folder tree (right for everything but maven) |
+| `OSVEcosystem` / `OSVCoordinates` | **no vulnerability scanning** — this is how CRAN went unscanned for months |
+| `ReferencedImages` | referenced images unscanned (helm-style formats) |
+| `VulnGateTarget` | downloads are never gated on a policy |
+| `ClaimPath` / `OwnsComponent` | **no dependency-confusion protection** |
+| `VerifyIntegrity` | invisible to integrity verify |
+| `Reindex` | drift findings unrepairable |
+| `ListVersions` / `DeleteVersion` | **no retention at all** |
+| `DeleteVersions` | retention loops `DeleteVersion` instead (fine unless deletes share work, as oci's do) |
+
+A format that genuinely does not need a seam embeds `Unsupported` and says so in
+one line — see `internal/server/format_optout_test.go`, which pins oci's
+deliberate opt-outs so they read as decisions rather than omissions.
 
 *Per-format switches outside `internal/format` — the compiler cannot catch a missing
 case, so a new format silently gets nothing:*
 
-- `internal/cleanup/{cleanup,dryrun,delete,trash}.go` — **no retention at all** without a
-  case. All five formats have one; `oci` retains by tag and sweeps the manifest and any
-  blobs the removed tag orphaned (see `internal/cleanup/oci.go` for why the sweep is
-  scoped that narrowly).
+- `internal/cleanup/trash.go` — no **soft delete** (trash/restore) without a case;
+  retention itself runs off the `ListVersions`/`DeleteVersion` seams above. All five
+  non-oci formats have one; `oci` retains by tag and sweeps the manifest and any blobs
+  the removed tag orphaned (see `internal/cleanup/oci.go` for why the sweep is scoped
+  that narrowly). `scripts/repo-kind-matrix.py` proves retention prunes for every
+  format (checks R1-R5).
 - `internal/server/promote.go` — not promotable between repos
-- `internal/server/migration_transfer.go` — not migratable from Nexus
+- `internal/server/migration_transfer.go` **and `internal/nexus/mapping.go`** — not
+  migratable from Nexus. Both, not one: the mapping decides the format is unsupported
+  and the plan skips it before any transfer strategy is reached.
 - `internal/server/ui_upload.go` — no browser upload form
 
 *Also required, and silent when missed:*
 
-- Call `cleanup.RecordPublish(c.Meta, c.Repo.Name, component, version)` on every
-  successful publish. Age-based retention reads this ledger; without it
-  `deleteOlderThanDays` is permanently inert on the format, and a dry run reports the
-  versions under `unevaluable` rather than deleting them.
-- Add the format to the tree-vs-flat check in `internal/server/static/browse.js` if its
-  storage has meaningful folder hierarchy (see Browse UI below).
+- Call `ledger.Record` / `ledger.RecordAt` (`internal/ledger`) on every successful
+  publish, and `ledger.Forget` on every delete. Age-based retention reads this ledger;
+  without it `deleteOlderThanDays` is permanently inert on the format, and a dry run
+  reports the versions under `unevaluable` rather than deleting them.
+- Nothing to do for the browse UI: whether a repo browses as a folder tree comes from
+  the handler's `BrowseAsTree()`, which `browse_page.html` injects as `data-tree`. It
+  used to be a `FORMAT === 'maven'` comparison inside `browse.js`, where only a test
+  grepping the JavaScript could catch a new format being left out.
 
 **URL routing**: `/repository/{repo-name}/{...rest}` — `server.go` strips the prefix, resolves the repo, dispatches to the handler. `format.Context.Sub` is the path after the repo name.
 
@@ -134,7 +149,9 @@ Center and right panes are shared across formats:
 - Center: `GET /ui/browse/{repo}/versions?pkg=` — version list for selected component
 - Right: `GET /ui/browse/{repo}/detail?pkg=&ver=` — asset metadata + download link
 
-The dispatch lives in `internal/server/static/browse.js`, keyed on `data-format` injected by `repo.html`. Adding a new format that has meaningful folder structure: add its name to the `FORMAT === 'maven'` check in `browse.js`.
+The dispatch lives in `internal/server/static/browse.js`, keyed on the `data-tree`
+attribute `browse_page.html` injects from the handler's `BrowseAsTree()`. A new format
+with meaningful folder structure answers `true` there; `browse.js` needs no change.
 
 ## Data layout on disk
 
