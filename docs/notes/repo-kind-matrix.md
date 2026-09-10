@@ -330,3 +330,20 @@ Also: the seeded `helm-proxy` pointed at `charts.bitnami.com`, which now
 redirects to Broadcom and publishes `oci://` references instead of `.tgz` URLs
 — an HTTP chart proxy cannot serve those. The seed is
 `prometheus-community.github.io/helm-charts`, a plain chart repository.
+
+## Retention (added 2026-09-10)
+
+Retention is a per-format switch outside `internal/format`, so a format that
+was never added to it prunes nothing and says nothing — the exact silent
+absence CLAUDE.md warns about. The matrix now publishes three versions per
+format into a dedicated `ret-{format}` repository under a `keepVersions: 1`
+policy and checks four things: the dry run names both older versions and
+reports nothing as `unevaluable` (which is what a missing publish-ledger entry
+looks like), the run deletes two, the index advertises only the survivor, and a
+pruned artifact 404s.
+
+All six formats pass, OCI included — it retains by tag and sweeps the manifest
+plus any blobs the removed tag orphaned. Trash is empty afterwards on purpose:
+`README.md` states that cleanup runs hard-delete and trash is the human undo
+path, so an empty trash after a retention run is the documented behaviour, not
+a lost tombstone.

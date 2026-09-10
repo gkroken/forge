@@ -189,6 +189,131 @@ PROXY_CASES = {
   "pypi":  ("pypi-proxy", "/simple/six/", "/simple/matrix-no-such-project-xyz/", "/repository/pypi-proxy/packages/six/"),
 }
 
+
+def oci_push(repo, name, tag):
+    """Push one tagged image: two blobs then a manifest citing them."""
+    cfg = json.dumps({"architecture": "amd64", "os": "linux", "tag": tag}).encode()
+    layer = ("retention-layer-" + tag).encode()
+    digs = {}
+    for label, blob in (("config", cfg), ("layer", layer)):
+        d = "sha256:" + hashlib.sha256(blob).hexdigest()
+        digs[label] = d
+        _, _, hdrs = req("POST", f"/repository/{repo}/{name}/blobs/uploads/", b"")
+        loc = hdrs.get("Location", "")
+        if not loc:
+            return False
+        sep = "&" if "?" in loc else "?"
+        st, _, _ = req("PUT", loc + sep + "digest=" + d, blob, {"Content-Type": "application/octet-stream"})
+        if st not in (200, 201):
+            return False
+    man = json.dumps({"schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {"mediaType": "application/vnd.oci.image.config.v1+json",
+                   "digest": digs["config"], "size": len(cfg)},
+        "layers": [{"mediaType": "application/vnd.oci.image.layer.v1.tar",
+                    "digest": digs["layer"], "size": len(layer)}]}).encode()
+    st, _, _ = req("PUT", f"/repository/{repo}/{name}/manifests/{tag}", man,
+                   {"Content-Type": "application/vnd.oci.image.manifest.v1+json"})
+    return st in (200, 201)
+
+
+def retention_phase():
+    """Publish three versions per format, keep one, and check what survives.
+
+    Retention is a per-format switch outside internal/format, so the compiler
+    cannot catch a format that was never added to it — the failure mode is a
+    repository that silently never prunes. Each format gets its own repository
+    so this cannot disturb the other phases.
+    """
+    req("POST", "/api/v1/cleanup-policies",
+        json.dumps({"name": "matrix-keep-one", "keepVersions": 1}).encode(),
+        {"Content-Type": "application/json"})
+
+    vers = ["1.0.0", "1.1.0", "1.2.0"]
+    # (format, publish(repo, version) -> status, index path, a survivor marker,
+    #  a path that must 404 once the oldest version is pruned)
+    def pub_maven(repo, v):
+        return req("PUT", f"/repository/{repo}/com/acme/ret/{v}/ret-{v}.jar", b"jar-" + v.encode())[0]
+
+    def pub_npm(repo, v):
+        doc = json.dumps({"name": "retpkg", "versions": {v: {"name": "retpkg", "version": v,
+              "dist": {"tarball": f"http://x/retpkg-{v}.tgz"}}},
+              "_attachments": {f"retpkg-{v}.tgz": {"data": base64.b64encode(b"t").decode(),
+                               "content_type": "application/octet-stream", "length": 1}}}).encode()
+        return req("PUT", f"/repository/{repo}/retpkg", doc, {"Content-Type": "application/json"})[0]
+
+    def pub_helm(repo, v):
+        chart = tgz({"retchart/Chart.yaml": f"apiVersion: v2\nname: retchart\nversion: {v}\ndescription: r\n".encode()})
+        return req("POST", f"/repository/{repo}/api/charts", chart, {"Content-Type": "application/octet-stream"})[0]
+
+    def pub_cran(repo, v):
+        pkg = tgz({"retpkg/DESCRIPTION": f"Package: retpkg\nVersion: {v}\nLicense: MIT\n".encode()})
+        return req("PUT", f"/repository/{repo}/src/contrib/retpkg_{v}.tar.gz", pkg)[0]
+
+    def pub_pypi(repo, v):
+        body = multipart({":action": "file_upload", "name": "retpkg", "version": v},
+                         "content", f"retpkg-{v}.tar.gz", b"sdist-" + v.encode())
+        return req("POST", f"/repository/{repo}/", body,
+                   {"Content-Type": "multipart/form-data; boundary=X"})[0]
+
+    def pub_oci(repo, v):
+        return 201 if oci_push(repo, "retimg", "v" + v.split(".")[1]) else 500
+
+    cases = [
+        ("maven", pub_maven, "/com/acme/ret/maven-metadata.xml", "1.2.0", "/com/acme/ret/1.0.0/ret-1.0.0.jar"),
+        ("npm", pub_npm, "/retpkg", "1.2.0", "/retpkg/-/retpkg-1.0.0.tgz"),
+        ("helm", pub_helm, "/index.yaml", "1.2.0", "/retchart-1.0.0.tgz"),
+        ("cran", pub_cran, "/src/contrib/PACKAGES", "1.2.0", "/src/contrib/retpkg_1.0.0.tar.gz"),
+        ("pypi", pub_pypi, "/simple/retpkg/", "retpkg-1.2.0.tar.gz", "/packages/retpkg/retpkg-1.0.0.tar.gz"),
+        ("oci", pub_oci, "/retimg/tags/list", "v2", "/retimg/manifests/v0"),
+    ]
+    for fmt, publish, index_path, survivor, gone_path in cases:
+        repo = f"ret-{fmt}"
+        st, body, _ = req("POST", "/api/v1/repos", json.dumps({"name": repo, "format": fmt,
+            "kind": "hosted", "enabled": True, "anonymousRead": True,
+            "cleanupPolicyName": "matrix-keep-one"}).encode(), {"Content-Type": "application/json"})
+        if st not in (200, 201, 409):
+            chk(fmt, "hosted", "R1", "retention repo created", False, f"{st} {body[:140]}")
+            continue
+        published = [publish(repo, v) for v in vers]
+        if not all(200 <= c < 300 for c in published):
+            chk(fmt, "hosted", "R1", "three versions published", False, str(published))
+            continue
+        chk(fmt, "hosted", "R1", "three versions published", True, str(published))
+
+        st, body, _ = req("POST", f"/api/v1/repos/{repo}/cleanup?dry=true")
+        try:
+            dry = json.loads(body)
+        except Exception:
+            dry = {}
+        cands = dry.get("candidates") or []
+        # "unevaluable" is what a format with no publish-ledger entry reports:
+        # the dry run can see the version but cannot judge it.
+        chk(fmt, "hosted", "R2", "dry run names the two older versions",
+            st == 200 and len(cands) == 2 and not dry.get("unevaluable"),
+            f"{st} {body[:200]}")
+
+        st, body, _ = req("POST", f"/api/v1/repos/{repo}/cleanup")
+        try:
+            deleted = json.loads(body).get("deleted")
+        except Exception:
+            deleted = None
+        chk(fmt, "hosted", "R3", "cleanup deletes them", st == 200 and deleted == 2, f"{st} {body[:160]}")
+
+        st, body, _ = req("GET", f"/repository/{repo}{index_path}")
+        # Every pruned identifier must be gone, not just the oldest: a format
+        # that prunes one and keeps the other would pass a check that only
+        # looked for the first.
+        pruned = ("v0", "v1") if fmt == "oci" else tuple(vers[:-1])
+        stale = [v for v in pruned if v in body]
+        chk(fmt, "hosted", "R4", "the index advertises only what survived",
+            st == 200 and survivor in body and not stale, f"{st} {body[:200]}")
+
+        if gone_path:
+            st, _, _ = req("GET", f"/repository/{repo}{gone_path}")
+            chk(fmt, "hosted", "R5", "a pruned artifact is gone", st == 404, f"{st}")
+
+
 def proxy_checks(f):
     k = "proxy"
     repo, good, bad, rewrite = PROXY_CASES[f]
@@ -483,6 +608,10 @@ if __name__ == '__main__':
     if s in (200, 201, 409):
         s1, _, _ = req("GET", "/repository/ttl-probe/is-odd")
         chk("npm", "proxy", "P8b", "proxy with a metadata age still serves", s1 == 200, f"{s1}")
+
+
+    print("=== RETENTION: a keep-versions policy actually prunes each format ===")
+    retention_phase()
 
     fails = [r for r in RESULTS if not r[4]]
     print(f"\n===== {len(RESULTS)-len(fails)} passed, {len(fails)} failed =====")
