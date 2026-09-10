@@ -23,8 +23,10 @@ import (
 	"forge/internal/format/maven"
 	"forge/internal/format/npm"
 	"forge/internal/format/oci"
+	"forge/internal/format/pypi"
 	"forge/internal/integrity"
 	"forge/internal/meta"
+	"forge/internal/nexus"
 	"forge/internal/queue"
 	"forge/internal/repo"
 )
@@ -60,6 +62,7 @@ type fakeNexusServer struct {
 	jarBytes, pomBytes            []byte
 	npmTarball                    []byte
 	chartBytes, cranBytes         []byte
+	pypiSdist, pypiWheel          []byte
 	ociConfig, ociLayer, ociManif []byte
 	ociConfigDgst, ociLayerDgst   string
 	ociManifDgst                  string
@@ -72,6 +75,8 @@ func newFakeNexus(t *testing.T) *fakeNexusServer {
 	f.npmTarball = tgzWithFile(t, "package/package.json", `{"name":"left-pad"}`)
 	f.chartBytes = tgzWithFile(t, "web/Chart.yaml", "name: web\nversion: 1.2.3\napiVersion: v2\ndescription: x\n")
 	f.cranBytes = tgzWithFile(t, "jsonlite/DESCRIPTION", "Package: jsonlite\nVersion: 2.0.0\nLicense: MIT\n")
+	f.pypiSdist = []byte("fake-sdist-bytes")
+	f.pypiWheel = []byte("fake-wheel-bytes")
 
 	f.ociConfig = []byte(`{"architecture":"amd64","os":"linux"}`)
 	f.ociLayer = []byte("layer-bytes-are-opaque")
@@ -144,6 +149,15 @@ func (f *fakeNexusServer) handler() http.Handler {
 			fmt.Fprint(w, comps(`
 			 {"id":"r1","name":"jsonlite","version":"2.0.0","assets":[
 			   {"path":"src/contrib/jsonlite_2.0.0.tar.gz","downloadUrl":"`+base+`/dl/jsonlite_2.0.0.tar.gz"}]}`))
+		case "pypi-internal":
+			// One release, two files: a release is normally an sdist plus a
+			// wheel per platform, so a strategy that took assets[0] would
+			// migrate the release and silently drop the rest. "Py_Demo" also
+			// needs PEP 503 normalization on the way in.
+			fmt.Fprint(w, comps(`
+			 {"id":"p1","name":"Py_Demo","version":"1.0.0","assets":[
+			   {"path":"packages/py-demo/1.0.0/py_demo-1.0.0.tar.gz","downloadUrl":"`+base+`/dl/py_demo-1.0.0.tar.gz"},
+			   {"path":"packages/py-demo/1.0.0/py_demo-1.0.0-py3-none-any.whl","downloadUrl":"`+base+`/dl/py_demo-1.0.0-py3-none-any.whl"}]}`))
 		case "docker-apps":
 			fmt.Fprint(w, comps(`
 			 {"id":"d1","name":"acme/app","version":"v1","assets":[
@@ -168,6 +182,8 @@ func (f *fakeNexusServer) handler() http.Handler {
 	mux.HandleFunc("/dl/left-pad-1.1.0.tgz", serveBytes(func() []byte { return f.npmTarball }))
 	mux.HandleFunc("/dl/web-1.2.3.tgz", serveBytes(func() []byte { return f.chartBytes }))
 	mux.HandleFunc("/dl/jsonlite_2.0.0.tar.gz", serveBytes(func() []byte { return f.cranBytes }))
+	mux.HandleFunc("/dl/py_demo-1.0.0.tar.gz", serveBytes(func() []byte { return f.pypiSdist }))
+	mux.HandleFunc("/dl/py_demo-1.0.0-py3-none-any.whl", serveBytes(func() []byte { return f.pypiWheel }))
 
 	// npm packument (fetched by the migrator for version objects + dist-tags).
 	mux.HandleFunc("/repository/npm-internal/left-pad", func(w http.ResponseWriter, r *http.Request) {
@@ -256,6 +272,7 @@ func newMigrationServer(t *testing.T) *Server {
 	reg.Register(npm.New())
 	reg.Register(helm.New())
 	reg.Register(cran.New())
+	reg.Register(pypi.New())
 	reg.Register(oci.New())
 	s := New(mgr, reg, b, m, nil). // nil auth = eval mode (RequireAdmin passes)
 					WithUsers(auth.NewUserStore(m)).
@@ -294,14 +311,12 @@ func TestMigrationPlan(t *testing.T) {
 	for _, rp := range plan.Repos {
 		actions[rp.Source] = rp.Action
 	}
-	for _, name := range []string{"maven-releases", "npm-internal", "helm-charts", "r-packages", "docker-apps", "npm-mirror", "maven-all"} {
+	for _, name := range []string{"maven-releases", "npm-internal", "helm-charts", "r-packages", "docker-apps", "pypi-internal", "npm-mirror", "maven-all"} {
 		if actions[name] != "create" {
 			t.Errorf("%s action = %q, want create", name, actions[name])
 		}
 	}
-	if actions["pypi-internal"] != "skip" {
-		t.Errorf("pypi-internal action = %q, want skip", actions["pypi-internal"])
-	}
+
 	// Groups must sort last so members exist before the group is created.
 	if last := plan.Repos[len(plan.Repos)-1]; last.Source != "maven-all" {
 		t.Errorf("last plan row = %s, want the group", last.Source)
@@ -410,6 +425,7 @@ func TestMigrationRun_ContentAndSecurity(t *testing.T) {
 		"helm-charts":    {"helm", repo.Hosted},
 		"r-packages":     {"cran", repo.Hosted},
 		"docker-apps":    {"oci", repo.Hosted},
+		"pypi-internal":  {"pypi", repo.Hosted},
 		"npm-mirror":     {"npm", repo.Proxy},
 		"maven-all":      {"maven", repo.Group},
 	} {
@@ -418,9 +434,7 @@ func TestMigrationRun_ContentAndSecurity(t *testing.T) {
 			t.Errorf("repo %s = %+v ok=%v", name, rp, ok)
 		}
 	}
-	if _, ok := s.Repos.Get("pypi-internal"); ok {
-		t.Error("pypi repo must not be created")
-	}
+
 	if rp, _ := s.Repos.Get("npm-mirror"); rp.Upstream != "https://registry.npmjs.org" {
 		t.Errorf("proxy upstream = %q", rp.Upstream)
 	}
@@ -469,6 +483,24 @@ func TestMigrationRun_ContentAndSecurity(t *testing.T) {
 	}
 	if _, ok, _ := s.Blob.Stat("npm-internal/left-pad/-/left-pad-1.1.0.tgz"); !ok {
 		t.Error("npm tarball blob missing")
+	}
+
+	// pypi: every file of a release migrates, not just the first, and the
+	// project lands under its PEP 503 normalized name ("Py_Demo" → "py-demo").
+	for _, key := range []string{
+		"pypi-internal/packages/py-demo/py_demo-1.0.0.tar.gz",
+		"pypi-internal/packages/py-demo/py_demo-1.0.0-py3-none-any.whl",
+	} {
+		if _, ok, _ := s.Blob.Stat(key); !ok {
+			t.Errorf("missing pypi blob %s", key)
+		}
+	}
+	simple := httptest.NewRecorder()
+	s.Routes().ServeHTTP(simple, httptest.NewRequest(http.MethodGet, "/repository/pypi-internal/simple/py-demo/", nil))
+	for _, want := range []string{"py_demo-1.0.0.tar.gz", "py_demo-1.0.0-py3-none-any.whl"} {
+		if !strings.Contains(simple.Body.String(), want) {
+			t.Errorf("simple page does not offer %s: %s", want, simple.Body.String())
+		}
 	}
 
 	// helm: chart record written by the real upload path.
@@ -655,5 +687,35 @@ func TestUIMigrationPage(t *testing.T) {
 	}
 	if !strings.Contains(body, `data-can-apply="1"`) {
 		t.Error("CanApply not reflected (queue is wired in this fixture)")
+	}
+}
+
+// A migration is resumable: re-running it must skip what is already on the
+// target rather than re-uploading it. For PyPI the resume key is the project's
+// PEP 503 normalized name, which is what forge stores — looking it up under
+// the name Nexus reports ("Py_Demo") finds nothing and copies everything a
+// second time, and nothing else in the transfer would notice.
+func TestMigratePyPI_ResumeSkipsWhatIsAlreadyThere(t *testing.T) {
+	nx := newFakeNexus(t)
+	s := newMigrationServer(t)
+	if err := s.Repos.Add(repo.Repository{
+		Name: "pypi-internal", Format: "pypi", Kind: repo.Hosted, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	client := nexus.New(nx.url(), "admin", "admin123")
+	spec := migrationSpec{PublicBase: "http://forge.example:8080"}
+	plan := nexus.RepoPlan{Source: "pypi-internal", Target: "pypi-internal", TargetFormat: "pypi"}
+
+	first := &repoMigState{Repo: "pypi-internal"}
+	s.migratePyPI(context.Background(), client, spec, plan, first)
+	if first.Migrated != 2 || first.Skipped != 0 || first.Failed != 0 {
+		t.Fatalf("first pass: %+v", first)
+	}
+
+	second := &repoMigState{Repo: "pypi-internal"}
+	s.migratePyPI(context.Background(), client, spec, plan, second)
+	if second.Skipped != 2 || second.Migrated != 0 || second.Failed != 0 {
+		t.Errorf("resume re-migrated instead of skipping: %+v", second)
 	}
 }

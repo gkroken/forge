@@ -21,7 +21,7 @@ func TestMapFormat(t *testing.T) {
 		{"r", "cran", true},
 		{"docker", "oci", true},
 		{"Docker", "oci", true},
-		{"pypi", "", false},
+		{"pypi", "pypi", true},
 		{"nuget", "", false},
 		{"raw", "", false},
 	}
@@ -58,8 +58,16 @@ func TestMapRepo(t *testing.T) {
 		}
 	})
 	t.Run("unsupported format skips", func(t *testing.T) {
-		p := MapRepo(Repository{Name: "py", Format: "pypi", Type: "hosted"}, existing)
+		// nuget, not pypi: forge grew a PyPI format, and this case was the
+		// only thing asserting the migration knew which formats exist.
+		p := MapRepo(Repository{Name: "nu", Format: "nuget", Type: "hosted"}, existing)
 		if p.Action != "skip" {
+			t.Fatalf("got %+v", p)
+		}
+	})
+	t.Run("pypi maps like any other supported format", func(t *testing.T) {
+		p := MapRepo(Repository{Name: "py", Format: "pypi", Type: "hosted"}, existing)
+		if p.Action != "create" || p.TargetFormat != "pypi" {
 			t.Fatalf("got %+v", p)
 		}
 	})

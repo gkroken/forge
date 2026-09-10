@@ -17,6 +17,7 @@ var formatMap = map[string]string{
 	"helm":   "helm",
 	"r":      "cran",
 	"docker": "oci",
+	"pypi":   "pypi",
 }
 
 // MapFormat translates a Nexus format to forge's, reporting whether forge

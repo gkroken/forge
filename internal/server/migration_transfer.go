@@ -10,11 +10,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 
 	"forge/internal/format"
+	"forge/internal/format/pypi"
 	"forge/internal/nexus"
 )
 
@@ -117,6 +120,8 @@ func (s *Server) migrateRepoContent(ctx context.Context, client *nexus.Client, s
 		s.migrateNPM(ctx, client, spec, rp, st)
 	case "helm":
 		s.migrateHelm(ctx, client, spec, rp, st)
+	case "pypi":
+		s.migratePyPI(ctx, client, spec, rp, st)
 	case "oci":
 		s.migrateOCI(ctx, client, spec, rp, st)
 	default:
@@ -350,6 +355,85 @@ type ociManifest struct {
 	Manifests []struct { // present in an index / manifest list
 		Digest string `json:"digest"`
 	} `json:"manifests"`
+}
+
+// migratePyPI transfers PyPI distributions. forge's PyPI upload is twine's
+// multipart POST, so each asset is re-wrapped as one; the Nexus component
+// carries the project name and version, so nothing has to be parsed back out
+// of a filename.
+//
+// A release usually has several files (an sdist and one wheel per platform),
+// so unlike helm this iterates the component's assets rather than taking the
+// first: taking assets[0] would migrate a release and silently drop the rest.
+func (s *Server) migratePyPI(ctx context.Context, client *nexus.Client, spec migrationSpec, rp nexus.RepoPlan, st *repoMigState) {
+	err := client.ListComponents(ctx, rp.Source, func(comp nexus.Component) error {
+		st.SourceComponents++
+		st.SourceAssets += len(comp.Assets)
+		project := pypi.Normalize(comp.Name)
+		for _, asset := range comp.Assets {
+			filename := path.Base(asset.Path)
+			label := project + "/" + comp.Version + "/" + filename
+
+			var existing json.RawMessage
+			if ok, _ := s.Meta.GetJSON(rp.Target+":pypi", project+"/"+comp.Version+"/"+filename, &existing); ok {
+				st.Skipped++
+				s.maybePersistState(st)
+				continue
+			}
+			rc, _, err := client.Download(ctx, asset.DownloadURL)
+			if err != nil {
+				st.fail(label, err)
+				continue
+			}
+			body, contentType, err := twineBody(comp.Name, comp.Version, filename, rc)
+			rc.Close()
+			if err != nil {
+				st.fail(label, err)
+				continue
+			}
+			h := http.Header{}
+			h.Set("Content-Type", contentType)
+			rec := s.internalServe(ctx, http.MethodPost, rp.Target, "", "", body, h, spec.PublicBase)
+			if rec.ok() {
+				st.Migrated++
+			} else {
+				st.fail(label, rec.err())
+			}
+			s.maybePersistState(st)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+		}
+		return ctx.Err()
+	})
+	if err != nil && ctx.Err() == nil {
+		st.fail("(component listing)", err)
+	}
+}
+
+// twineBody builds the multipart form twine sends, which is what forge's PyPI
+// handler reads. Buffered rather than streamed: a multipart body needs its own
+// boundary and trailer around the file, and distributions are single files of
+// ordinary size.
+func twineBody(name, version, filename string, r io.Reader) (io.Reader, string, error) {
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	for _, kv := range [][2]string{{":action", "file_upload"}, {"name", name}, {"version", version}} {
+		if err := mw.WriteField(kv[0], kv[1]); err != nil {
+			return nil, "", err
+		}
+	}
+	fw, err := mw.CreateFormFile("content", filename)
+	if err != nil {
+		return nil, "", err
+	}
+	if _, err := io.Copy(fw, r); err != nil {
+		return nil, "", err
+	}
+	if err := mw.Close(); err != nil {
+		return nil, "", err
+	}
+	return &buf, mw.FormDataContentType(), nil
 }
 
 func (s *Server) migrateOCI(ctx context.Context, client *nexus.Client, spec migrationSpec, rp nexus.RepoPlan, st *repoMigState) {
