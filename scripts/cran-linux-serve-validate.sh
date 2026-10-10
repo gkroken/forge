@@ -51,18 +51,27 @@ check "register the client image's key" 200 "$(api -X PUT --data @"$FT/platform.
 BT=$(curl -s "${A[@]}" -X POST $B/api/v1/tokens -d '{"description":"builder","grants":[{"repo":"cran-linux","actions":["read","write"],"selectors":["bin/linux/noble-x86_64/**"]}]}' |
 	python3 -c 'import json,sys;print(json.load(sys.stdin)["secret"])')
 
-# --- Builder: first install compiles; pack and upload. -----------------------
-run -v "$FT/art":/out $IMG bash -c "
-	mkdir /lib1 && Rscript -e 'options(repos=c(CRAN=\"$U\")); install.packages(c(\"jsonlite\",\"praise\"), lib=\"/lib1\")' >/out/build.log 2>&1
-	cd /lib1 && for p in jsonlite praise; do v=\$(Rscript -e \"cat(as.character(packageVersion('\$p', lib.loc='/lib1')))\"); tar -czhf /out/\${p}_\$v.tar.gz \$p; done
+# --- Builder: first install compiles; the helper uploads. -------------------
+helper() { run -v "$REPO/scripts":/s:ro -v "$FT/art":/out -e FORGE_URL=$HD -e FORGE_TOKEN=$BT -e FORGE_BUILDER_DIGEST=$DIGEST $IMG bash -c "$1"; }
+helper "mkdir /lib1 && Rscript -e 'options(repos=c(CRAN=\"$U\")); install.packages(c(\"jsonlite\",\"praise\"), lib=\"/lib1\")' >/out/build.log 2>&1
+	/s/cran-linux-upload.sh --lib /lib1 >/out/upload.log 2>&1; echo \$? >/out/upload.rc
+	cd /lib1 && for p in jsonlite; do v=\$(Rscript -e \"cat(as.character(packageVersion('\$p', lib.loc='/lib1')))\"); tar -czhf /out/\${p}_\$v.tar.gz \$p; done
+	/s/cran-linux-upload.sh --lib /lib1 >/out/upload2.log 2>&1
 	chown -R $(id -u) /out"
 check "builder compiled jsonlite (no binary yet)" 1 "$(grep -c "installing \*source\* package .jsonlite" "$FT/art/build.log")"
-for f in "$FT"/art/*.tar.gz; do
-	n=$(basename "$f")
-	code=$(curl -s -o "$FT/out" -w "%{http_code}" -H "Authorization: Bearer $BT" -H "X-Forge-Builder-Digest: $DIGEST" \
-		-X PUT --data-binary @"$f" $B/repository/cran-linux/bin/linux/noble-x86_64/contrib/4.6/$n)
-	check "upload $n" 201 "$code" "$(cat $FT/out)"
-done
+check "helper uploaded both" 1 "$(grep -c '2 uploaded, 0 already present, 0 uploaded by another builder, 0 failed' "$FT/art/upload.log")" "$(cat "$FT/art/upload.log")"
+check "helper exits 0" 0 "$(cat "$FT/art/upload.rc")"
+check "second run finds both present" 1 "$(grep -c '0 uploaded, 2 already present' "$FT/art/upload2.log")" "$(cat "$FT/art/upload2.log")"
+# A renv builder: the project library is symlinks into renv's cache, and the
+# helper's default library is that project library.
+helper "mkdir /p && cd /p && echo 'library(glue)' > app.R && Rscript -e 'options(repos=c(CRAN=\"$U\")); renv::init(restart=FALSE)' >/out/renv-build.log 2>&1
+	/s/cran-linux-upload.sh >/out/upload-renv.log 2>&1; chown -R $(id -u) /out"
+check "renv builder: helper uploads glue through renv's symlinked library" 1 "$(grep -c '^uploaded glue ' "$FT/art/upload-renv.log")" "$(cat "$FT/art/upload-renv.log")"
+check "renv builder: nothing refused" 1 "$(grep -c ' 0 failed$' "$FT/art/upload-renv.log")" "$(cat "$FT/art/upload-renv.log")"
+out=$(run $IMG bash -c "$NOCC Rscript -e 'options(repos=c(CRAN=\"$U\")); install.packages(\"glue\"); cat(\"LOADED\", as.character(glue::glue(\"{1+1}\")), \"\\n\")' 2>&1")
+check "client installs the renv-built glue as a binary" 1 "$(echo "$out" | grep -c 'installing \*binary\* package .glue')" "$out"
+check "renv-built glue loads" 1 "$(echo "$out" | grep -c 'LOADED 2')"
+
 JS=$(cd "$FT/art" && ls jsonlite_*.tar.gz)
 
 # --- The URL itself. ---------------------------------------------------------
