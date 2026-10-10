@@ -554,7 +554,17 @@ func parseDescription(tgz []byte) (pkgRecord, error) {
 	return scanDescription(data), nil
 }
 
-// rawDescription returns the bytes of the first DESCRIPTION in a .tar.gz.
+// isPackageDescription reports whether an archive member is the package's own
+// DESCRIPTION, "{pkg}/DESCRIPTION" — not one deeper in the tree. renv's source
+// tarball lists test-fixture packages (renv/tests/testthat/packages/*/
+// DESCRIPTION) before its own, and taking the first file named DESCRIPTION
+// read one of those as renv's, refusing the real package as misnamed.
+func isPackageDescription(name string) bool {
+	dir, file, ok := strings.Cut(strings.TrimPrefix(name, "./"), "/")
+	return ok && dir != "" && file == "DESCRIPTION"
+}
+
+// rawDescription returns the bytes of the package's DESCRIPTION in a .tar.gz.
 func rawDescription(tgz []byte) ([]byte, error) {
 	gz, err := gzip.NewReader(bytes.NewReader(tgz))
 	if err != nil {
@@ -570,7 +580,7 @@ func rawDescription(tgz []byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		if path.Base(hdr.Name) == "DESCRIPTION" {
+		if isPackageDescription(hdr.Name) {
 			// Bounded: see format.ReadMetadata. A tiny .tar.gz can hold a
 			// gigabyte DESCRIPTION.
 			return format.ReadMetadata(tr)
@@ -935,7 +945,7 @@ func parseDescriptionFromZip(data []byte) (pkgRecord, error) {
 		return pkgRecord{}, err
 	}
 	for _, f := range zr.File {
-		if path.Base(f.Name) == "DESCRIPTION" {
+		if isPackageDescription(f.Name) {
 			rc, err := f.Open()
 			if err != nil {
 				return pkgRecord{}, err

@@ -1437,3 +1437,45 @@ func TestBinaryTree_LedgerFollowsLastArtifact(t *testing.T) {
 		t.Fatal("ledger entry survived the last artifact of the version")
 	}
 }
+
+// A source tarball's DESCRIPTION is {pkg}/DESCRIPTION. renv's tarball lists
+// test-fixture packages' DESCRIPTIONs (renv/tests/testthat/packages/…) first,
+// and taking the first file named DESCRIPTION read one of those as renv's.
+func TestPublish_ReadsTopLevelDescriptionOnly(t *testing.T) {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for _, f := range []struct{ name, body string }{
+		{"rv/tests/testthat/packages/windowsonly/DESCRIPTION", "Package: windowsonly\nVersion: 0.0.1\nTitle: renv test package\n"},
+		{"rv/DESCRIPTION", "Package: rv\nVersion: 1.3.1\nTitle: Project Environments\nLicense: MIT\n"},
+	} {
+		tw.WriteHeader(&tar.Header{Name: f.name, Mode: 0o644, Size: int64(len(f.body))}) //nolint:errcheck
+		tw.Write([]byte(f.body))                                                         //nolint:errcheck
+	}
+	tw.Close()
+	gz.Close()
+	c := newCRANCtx(t)
+	if rw := cranServe(c, http.MethodPut, "src/contrib/rv_1.3.1.tar.gz", bytes.NewReader(buf.Bytes())); rw.Code != http.StatusCreated {
+		t.Fatalf("publish: %d %s", rw.Code, rw.Body)
+	}
+	if idx := cranServe(c, http.MethodGet, "src/contrib/PACKAGES", nil).Body.String(); !strings.Contains(idx, "Package: rv\nVersion: 1.3.1") {
+		t.Errorf("index:\n%s", idx)
+	}
+}
+
+func TestParseDescriptionFromZip_TopLevelOnly(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, f := range []struct{ name, body string }{
+		{"rv/tests/fixture/DESCRIPTION", "Package: fixture\nVersion: 0.0.1\n"},
+		{"rv/DESCRIPTION", "Package: rv\nVersion: 1.3.1\n"},
+	} {
+		w, _ := zw.Create(f.name)
+		w.Write([]byte(f.body)) //nolint:errcheck
+	}
+	zw.Close()
+	rec, err := parseDescriptionFromZip(buf.Bytes())
+	if err != nil || rec.Package != "rv" || rec.Version != "1.3.1" {
+		t.Fatalf("got %+v %v", rec, err)
+	}
+}
