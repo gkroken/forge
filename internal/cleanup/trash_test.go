@@ -172,3 +172,72 @@ func TestPurgeExpired(t *testing.T) {
 		t.Error("aged tombstone should be purged")
 	}
 }
+
+// A CRAN version is its source tarball and every binary of it. Trashing only
+// the source left the binaries installable — and in a binary-only repository
+// (the Linux binary cache) there was nothing to trash at all.
+func TestTrashVersion_CRAN_TrashesBinariesWithSource(t *testing.T) {
+	b, m := stores(t)
+	keep := []string{
+		"cran-hosted/src/contrib/pkg_2.0.tar.gz",
+		"cran-hosted/bin/windows/contrib/4.6/pkg_2.0.zip",
+		"cran-hosted/bin/windows/contrib/4.6/pkgx_1.0.zip", // other package, same version
+	}
+	gone := []string{
+		"cran-hosted/src/contrib/pkg_1.0.tar.gz",
+		"cran-hosted/bin/windows/contrib/4.6/pkg_1.0.zip",
+		"cran-hosted/bin/macosx/big-sur-arm64/contrib/4.6/pkg_1.0.tgz",
+		"cran-hosted/bin/linux/noble-x86_64/contrib/4.6/pkg_1.0.tar.gz",
+	}
+	for _, k := range append(keep, gone...) {
+		putBlob(t, b, k)
+	}
+	m.PutJSON("cran-hosted+cran", "pkg_1.0", map[string]any{"package": "pkg"})                              //nolint:errcheck
+	m.PutJSON("cran-hosted+cran+bin+macosx+big-sur-arm64+4.6", "pkg_1.0", map[string]any{"package": "pkg"}) //nolint:errcheck
+	m.PutJSON("cran-hosted+cran+bin+linux+noble-x86_64+4.6", "pkg_1.0", map[string]any{"package": "pkg"})   //nolint:errcheck
+
+	ts, err := cleanup.TrashVersion("cran-hosted", "cran", "pkg", "1.0", "alice", b, m)
+	if err != nil {
+		t.Fatalf("TrashVersion: %v", err)
+	}
+	if len(ts.Blobs) != len(gone) || len(ts.Metas) != 3 {
+		t.Fatalf("trashed %d blobs / %d metas, want %d / 3", len(ts.Blobs), len(ts.Metas), len(gone))
+	}
+	for _, k := range gone {
+		if _, ok, _ := b.Stat(k); ok {
+			t.Errorf("%s should be in trash", k)
+		}
+	}
+	for _, k := range keep {
+		if _, ok, _ := b.Stat(k); !ok {
+			t.Errorf("%s should be untouched", k)
+		}
+	}
+	if ok, _ := m.GetJSON("cran-hosted+cran+bin+linux+noble-x86_64+4.6", "pkg_1.0", &map[string]any{}); ok {
+		t.Error("linux binary meta record should be captured into the tombstone")
+	}
+
+	if _, err := cleanup.RestoreVersion(m, b, ts.ID); err != nil {
+		t.Fatalf("RestoreVersion: %v", err)
+	}
+	for _, k := range gone {
+		if _, ok, _ := b.Stat(k); !ok {
+			t.Errorf("%s should be restored", k)
+		}
+	}
+	if ok, _ := m.GetJSON("cran-hosted+cran+bin+linux+noble-x86_64+4.6", "pkg_1.0", &map[string]any{}); !ok {
+		t.Error("linux binary meta record should be restored")
+	}
+}
+
+func TestTrashVersion_CRAN_BinaryOnlyRepo(t *testing.T) {
+	b, m := stores(t)
+	putBlob(t, b, "cran-linux/bin/linux/noble-x86_64/contrib/4.6/pkg_1.0.tar.gz")
+	ts, err := cleanup.TrashVersion("cran-linux", "cran", "pkg", "1.0", "alice", b, m)
+	if err != nil {
+		t.Fatalf("TrashVersion: %v", err)
+	}
+	if len(ts.Blobs) != 1 {
+		t.Fatalf("trashed %d blobs, want 1", len(ts.Blobs))
+	}
+}

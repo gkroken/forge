@@ -17,6 +17,7 @@ import (
 	"forge/internal/blob"
 	"forge/internal/format"
 	"forge/internal/golden"
+	"forge/internal/ledger"
 	"forge/internal/meta"
 	"forge/internal/repo"
 )
@@ -1379,5 +1380,60 @@ func TestGroup_PackagesMerge_HostedStillWinsWithGuardOff(t *testing.T) {
 	}
 	if got["free-pkg"] != "2.0.0" {
 		t.Errorf("free-pkg = %q, want 2.0.0 — unrelated upstream packages still merge", got["free-pkg"])
+	}
+}
+
+// A version is its source and every binary of it, so the publish ledger —
+// which age-based retention reads — must hold an entry while any of them
+// remains, and lose it once none does.
+func TestBinaryTree_LedgerFollowsLastArtifact(t *testing.T) {
+	c := newCRANCtx(t)
+	inLedger := func() bool {
+		_, ok := ledger.Load(c.Meta, c.Repo.Name)[ledger.Key("lp", "1.0.0")]
+		return ok
+	}
+	put := func(sub string, body []byte) {
+		t.Helper()
+		if rw := cranServe(c, http.MethodPut, sub, bytes.NewReader(body)); rw.Code != http.StatusCreated {
+			t.Fatalf("PUT %s: %d %s", sub, rw.Code, rw.Body)
+		}
+	}
+	del := func(sub string) {
+		t.Helper()
+		if rw := cranServe(c, http.MethodDelete, sub, nil); rw.Code != http.StatusNoContent {
+			t.Fatalf("DELETE %s: %d %s", sub, rw.Code, rw.Body)
+		}
+	}
+
+	put("bin/windows/contrib/4.4/lp_1.0.0.zip", makeWindowsBinPkg(t, "lp", "1.0.0"))
+	if !inLedger() {
+		t.Fatal("binary publish did not record the version in the ledger")
+	}
+	put("bin/macosx/big-sur-arm64/contrib/4.4/lp_1.0.0.tgz", makeMacOSBinPkg(t, "lp", "1.0.0"))
+	put("src/contrib/lp_1.0.0.tar.gz", makeCRANPkg(t, "lp", "1.0.0"))
+
+	del("src/contrib/lp_1.0.0.tar.gz")
+	if !inLedger() {
+		t.Fatal("deleting the source forgot a version whose binaries remain")
+	}
+	del("bin/windows/contrib/4.4/lp_1.0.0.zip")
+	if !inLedger() {
+		t.Fatal("deleting one binary forgot a version whose other binary remains")
+	}
+	del("bin/macosx/big-sur-arm64/contrib/4.4/lp_1.0.0.tgz")
+	if inLedger() {
+		t.Fatal("ledger entry survived the last artifact of the version")
+	}
+
+	// The other order: the source outlives its binary.
+	put("src/contrib/lp_1.0.0.tar.gz", makeCRANPkg(t, "lp", "1.0.0"))
+	put("bin/windows/contrib/4.4/lp_1.0.0.zip", makeWindowsBinPkg(t, "lp", "1.0.0"))
+	del("bin/windows/contrib/4.4/lp_1.0.0.zip")
+	if !inLedger() {
+		t.Fatal("deleting the binary forgot a version whose source remains")
+	}
+	del("src/contrib/lp_1.0.0.tar.gz")
+	if inLedger() {
+		t.Fatal("ledger entry survived the last artifact of the version")
 	}
 }

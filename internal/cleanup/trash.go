@@ -180,11 +180,62 @@ func trashMaven(ts *Tombstone, repoName, ga, version string, b blob.Store) error
 	return nil
 }
 
+// trashCRAN trashes the version everywhere it exists: the source tarball and
+// every binary under bin/{platform}/contrib/{rver}/, with each tree's meta
+// record. A version is all of its artifacts (see cran/retention.go) — trashing
+// only the source left the binaries installable, and in a binary-only repo it
+// found nothing to trash at all.
 func trashCRAN(ts *Tombstone, repoName, pkg, version string, b blob.Store, m meta.Store) error {
 	if err := ts.moveToTrash(b, repoName+"/src/contrib/"+pkg+"_"+version+".tar.gz"); err != nil {
 		return err
 	}
-	return ts.captureMeta(m, repoName+"+cran", pkg+"_"+version)
+	if err := ts.captureMeta(m, repoName+"+cran", pkg+"_"+version); err != nil {
+		return err
+	}
+	keys, err := b.List(repoName + "/bin/")
+	if err != nil {
+		return err
+	}
+	for _, k := range keys {
+		platform, rver, file, ok := cranBinPath(strings.TrimPrefix(k, repoName+"/"))
+		if !ok || file != pkg+"_"+version+cranBinExt(file) {
+			continue
+		}
+		if err := ts.moveToTrash(b, k); err != nil {
+			return err
+		}
+		// Mirrors cran.Handler.binNS.
+		ns := repoName + "+cran+bin+" + strings.ReplaceAll(platform, "/", "+") + "+" + rver
+		if err := ts.captureMeta(m, ns, pkg+"_"+version); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// cranBinPath splits "bin/{platform}/contrib/{rver}/{file}"; the platform may
+// itself contain slashes ("macosx/big-sur-arm64", "linux/noble-x86_64").
+func cranBinPath(sub string) (platform, rver, file string, ok bool) {
+	rest, ok := strings.CutPrefix(sub, "bin/")
+	if !ok {
+		return "", "", "", false
+	}
+	platform, after, ok := strings.Cut(rest, "/contrib/")
+	if !ok {
+		return "", "", "", false
+	}
+	rver, file, ok = strings.Cut(after, "/")
+	return platform, rver, file, ok && file != ""
+}
+
+// cranBinExt returns the binary package extension file ends in, or "".
+func cranBinExt(file string) string {
+	for _, ext := range []string{".tar.gz", ".tgz", ".zip"} {
+		if strings.HasSuffix(file, ext) {
+			return ext
+		}
+	}
+	return ""
 }
 
 func trashHelm(ts *Tombstone, repoName, chart, version string, b blob.Store, m meta.Store) error {

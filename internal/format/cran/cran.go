@@ -608,9 +608,30 @@ func (h *Handler) deletePkg(w http.ResponseWriter, c *format.Context) {
 	metaKey := strings.TrimSuffix(path.Base(c.Sub), ".tar.gz")
 	c.Meta.Delete(h.ns(c), metaKey) //nolint:errcheck
 	if pkg, ver, ok := strings.Cut(metaKey, "_"); ok {
-		ledger.Forget(c.Meta, c.Repo.Name, pkg, ver)
+		h.forgetIfGone(c, pkg, ver)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// forgetIfGone drops the ledger entry for pkg@ver once no artifact of that
+// version remains in the repository. A version is its source and every binary
+// of it (retention.go), so deleting one of them must not erase the publish
+// date the others still age by. A failed List keeps the entry: a stale ledger
+// row is harmless, a missing one makes age-based retention inert.
+func (h *Handler) forgetIfGone(c *format.Context, pkg, ver string) {
+	if _, ok, _ := c.Blob.Stat(h.tarballKey(c, pkg, ver)); ok {
+		return
+	}
+	keys, err := c.Blob.List(c.Repo.Name + "/bin/")
+	if err != nil {
+		return
+	}
+	for _, k := range keys {
+		if p, v, ok := cranBinaryParts(k); ok && p == pkg && v == ver {
+			return
+		}
+	}
+	ledger.Forget(c.Meta, c.Repo.Name, pkg, ver)
 }
 
 // --- Binary tree support ---------------------------------------------------
@@ -699,6 +720,7 @@ func (h *Handler) publishBin(w http.ResponseWriter, r *http.Request, c *format.C
 		return
 	}
 	c.Meta.PutJSON(h.binNS(c, platform, rver), rec.Package+"_"+rec.Version, rec)
+	ledger.Record(c.Meta, c.Repo.Name, rec.Package, rec.Version)
 	w.WriteHeader(http.StatusCreated)
 	fmt.Fprintf(w, "stored binary %s %s (%s/%s)\n", rec.Package, rec.Version, platform, rver)
 }
@@ -773,6 +795,7 @@ func (h *Handler) deleteBin(w http.ResponseWriter, c *format.Context, platform, 
 	}
 	if pkg, ver, ok := parsePkgFilename(file); ok {
 		c.Meta.Delete(h.binNS(c, platform, rver), pkg+"_"+ver) //nolint:errcheck
+		h.forgetIfGone(c, pkg, ver)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
