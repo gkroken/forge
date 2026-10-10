@@ -324,3 +324,30 @@ func TestLinuxInspect_ListsBuilds(t *testing.T) {
 		t.Errorf("a version with source keeps its source download: %s", gd.Versions[0].DownloadURL)
 	}
 }
+
+// caseFoldMeta behaves like meta.FS on a case-insensitive filesystem.
+type caseFoldMeta struct{ meta.Store }
+
+func (m caseFoldMeta) GetJSON(ns, key string, v any) (bool, error) {
+	return m.Store.GetJSON(ns, strings.ToLower(key), v)
+}
+
+func (m caseFoldMeta) PutJSON(ns, key string, v any) error {
+	return m.Store.PutJSON(ns, strings.ToLower(key), v)
+}
+
+// On a case-insensitive store "Noble-x86_64/4.6" finds noble's registration;
+// the decision must still treat Noble as an unregistered distro.
+func TestLinuxServe_CaseInsensitiveStoreIsNotAKeyMatch(t *testing.T) {
+	g := newServeGroup(t)
+	g.source(t, "lb", "1.0.2")
+	putBinary(t, g.bins, "noble-x86_64/4.6", "lb", "1.0.2")
+	g.group.Meta = caseFoldMeta{g.group.Meta}
+	rw := getUA(g.group, "__linux__/Noble/latest/src/contrib/lb_1.0.2.tar.gz", uaRocker)
+	if rw.Header().Get("X-Forge-Package-Type") != "source" {
+		t.Errorf("a differently-cased distro was served noble's binary")
+	}
+	if rw := getUA(g.group, lx+"lb_1.0.2.tar.gz", uaRocker); rw.Header().Get("X-Forge-Package-Type") != "binary" {
+		t.Errorf("the registered distro lost its binary on a case-folding store")
+	}
+}

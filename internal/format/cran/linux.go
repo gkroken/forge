@@ -256,10 +256,13 @@ func linuxPlatform(c *format.Context, r *http.Request, distro string) (cranplatf
 	if !ok {
 		return cranplatform.Platform{}, false
 	}
-	// Only valid keys are ever registered, so an ill-formed distro simply
-	// finds nothing.
-	p, ok, err := cranplatform.NewStore(c.Meta).Get(distro + "-" + cl.Arch + "/" + cl.RMinor)
-	if err != nil || !ok || p.RPlatform != cl.Platform {
+	// The registration found must be for exactly this key. A meta store on a
+	// case-insensitive filesystem (macOS, Windows) answers "Noble-x86_64/4.6"
+	// with the noble registration, which would serve noble's binaries to a
+	// distro forge never registered — found by macOS CI.
+	key := distro + "-" + cl.Arch + "/" + cl.RMinor
+	p, ok, err := cranplatform.NewStore(c.Meta).Get(key)
+	if err != nil || !ok || p.Key != key || p.RPlatform != cl.Platform {
 		return cranplatform.Platform{}, false
 	}
 	return p, true
