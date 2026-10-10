@@ -26,7 +26,7 @@ Phase: P7 (Security & GA hardening)
               ┌────────────────┘                └────────────────┐
               ▼                                                   ▼
       ┌───────────────┐                              ┌──────────────────┐
-      │  Postgres      │                              │  S3 / MinIO       │
+      │  Postgres      │                              │  S3 (SeaweedFS)   │
       │  meta.Store    │                              │  blob.Store       │
       │  tokens, repos │                              │  artifact bytes   │
       │  packuments    │                              │                  │
@@ -189,7 +189,7 @@ Phase: P7 (Security & GA hardening)
 
 ### 3.4 Admin-controlled SSRF via proxy upstream
 
-**Risk:** An admin can create a proxy repo with `Upstream: http://internal-service/` and then any authenticated user requesting an artifact from that repo causes forge to make an HTTP GET to the internal service. Forge may have network access to internal services (Postgres, MinIO, other pods) that the admin cannot reach directly from their workstation.
+**Risk:** An admin can create a proxy repo with `Upstream: http://internal-service/` and then any authenticated user requesting an artifact from that repo causes forge to make an HTTP GET to the internal service. Forge may have network access to internal services (Postgres, the S3 store, other pods) that the admin cannot reach directly from their workstation.
 
 **Accepted because:**
 - The admin role represents full trust in the forge system; if the admin is compromised, the entire forge installation is compromised regardless.

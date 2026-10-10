@@ -17,7 +17,7 @@ docker compose up          # forge on :8080, data in a named volume
 
 **Production (Kubernetes):**
 ```bash
-# Bundles Postgres + MinIO — no external services needed
+# Bundles Postgres + SeaweedFS (S3) — no external services needed
 helm install forge-stack deploy/helm/forge-stack \
   --set forge.image.tag=latest \
   --wait
@@ -318,7 +318,7 @@ Nothing in routing, storage, or the repository model knows what Maven is.
 
 | | Eval | Production |
 |--|------|-----------|
-| Blob | filesystem (`data/blobs/`) | S3 / MinIO (set `S3_ENDPOINT`) |
+| Blob | filesystem (`data/blobs/`) | any S3-compatible store (set `S3_ENDPOINT`) |
 | Meta | filesystem (`data/meta/`) | Postgres (set `POSTGRES_DSN`) |
 | Queue | in-memory | Postgres (auto-selected when `POSTGRES_DSN` is set) |
 
@@ -335,7 +335,7 @@ helm install forge deploy/helm/forge \
   --set extraEnv.S3_ENDPOINT="https://..." \
   --set extraEnv.S3_BUCKET="forge-artifacts"
 
-# forge-stack — bundles Postgres (Bitnami) + MinIO, no external deps
+# forge-stack — bundles Postgres (Bitnami) + SeaweedFS (S3), no external deps
 helm install forge-stack deploy/helm/forge-stack
 ```
 
@@ -373,7 +373,7 @@ internal/
   conformance/          end-to-end conformance tests (real clients in Docker containers)
 deploy/
   helm/forge/           production Helm chart
-  helm/forge-stack/     all-in-one chart (forge + Postgres + MinIO)
+  helm/forge-stack/     all-in-one chart (forge + Postgres + SeaweedFS)
   gitops/               ArgoCD Application + Flux HelmRelease examples
   terraform/            AWS + GCP modules for cloud-managed Postgres/S3 (post-GA)
 docs/
@@ -390,7 +390,7 @@ load/
 
 Every push runs: lint (`go vet`, `helm lint`, `terraform validate`), unit tests
 with `-race`, coverage gate (overall ≥75%, core packages ≥85%), integration tests
-(Postgres + MinIO via testcontainers), conformance tests (all clients × formats),
+(Postgres + SeaweedFS S3 via testcontainers), conformance tests (all clients × formats),
 SAST (`gosec`), dependency scan (`govulncheck`), and container scan (Trivy).
 
 Nightly: full conformance matrix, DAST (ZAP baseline), k6 load test (SLO gate),

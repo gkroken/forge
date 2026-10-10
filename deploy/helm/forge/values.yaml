@@ -21,7 +21,7 @@ serviceAccount:
 podAnnotations: {}
 
 # initContainers run before the forge container starts. Useful in forge-stack
-# to wait for PostgreSQL and MinIO to be reachable before forge tries to connect.
+# to wait for PostgreSQL and the S3 store to be reachable before forge tries to connect.
 initContainers: []
 
 podSecurityContext:

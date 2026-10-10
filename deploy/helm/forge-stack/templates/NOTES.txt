@@ -29,11 +29,11 @@ Metrics (Prometheus):
        --set postgresql.auth.postgresPassword=<strong-password> \
        --set forge.extraEnv.POSTGRES_DSN="postgres://postgres:<strong-password>@forge-stack-postgresql:5432/forge?sslmode=disable"
 {{- end }}
-{{- if eq .Values.minio.rootPassword "changeme-minio" }}
+{{- if eq .Values.seaweedfs.secretKey "changeme-s3" }}
 
-⚠  WARNING: default MinIO password is in use.
-   Set a strong password before exposing this instance to a network:
+⚠  WARNING: the bundled S3 store's default secret key is in use.
+   Set a strong one before exposing this instance to a network:
      helm upgrade {{ .Release.Name }} . \
-       --set minio.rootPassword=<strong-password> \
+       --set seaweedfs.secretKey=<strong-password> \
        --set forge.extraEnv.S3_SECRET_KEY=<strong-password>
 {{- end }}

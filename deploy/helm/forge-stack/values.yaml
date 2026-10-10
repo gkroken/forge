@@ -5,12 +5,13 @@
 #   helm dependency update deploy/helm/forge-stack
 #   helm install forge-stack deploy/helm/forge-stack \
 #     --set postgresql.auth.postgresPassword=<strong-password> \
-#     --set minio.auth.rootPassword=<strong-password> \
+#     --set seaweedfs.secretKey=<strong-password> \
 #     --set forge.extraEnv.POSTGRES_DSN="postgres://postgres:<pg-password>@forge-stack-postgresql:5432/forge?sslmode=disable" \
-#     --set forge.extraEnv.S3_SECRET_KEY=<minio-password>
+#     --set forge.extraEnv.S3_SECRET_KEY=<same strong-password>
 #
-# The fullnameOverride values on postgresql and minio fix the service names so
-# they remain stable regardless of the Helm release name you choose.
+# Service names: postgresql's is fixed by fullnameOverride; the bundled
+# SeaweedFS service is {release}-seaweedfs, so with another release name update
+# forge.extraEnv.S3_ENDPOINT and the wait-for-s3 init container to match.
 #
 # IMPORTANT: the default passwords below are for local testing only.
 # Always override them before exposing forge to a network.
@@ -20,22 +21,22 @@ forge:
   storage:
     type: external
 
-  # Credentials wired to the postgresql and minio sub-charts below.
-  # If you change postgresql.auth.postgresPassword or minio.auth.rootPassword
+  # Credentials wired to postgresql and the bundled SeaweedFS below.
+  # If you change postgresql.auth.postgresPassword or seaweedfs.secretKey
   # you MUST update the corresponding values here to match.
   extraEnv:
     POSTGRES_DSN: "postgres://postgres:changeme-db@forge-stack-postgresql:5432/forge?sslmode=disable"
-    S3_ENDPOINT:  "forge-stack-minio:9000"
+    S3_ENDPOINT:  "forge-stack-seaweedfs:8333"
     S3_BUCKET:    "forge-blobs"
     S3_ACCESS_KEY: "forge"
-    S3_SECRET_KEY: "changeme-minio"
+    S3_SECRET_KEY: "changeme-s3"
     S3_USE_SSL:   "false"
 
   # Default to 1 replica for the bundled on-prem install.
   # Scale up after verifying Postgres + S3 are HA themselves.
   replicaCount: 1
 
-  # Wait for PostgreSQL and MinIO to accept connections before forge starts.
+  # Wait for PostgreSQL and the S3 store to accept connections before forge starts.
   # Without this, forge exits immediately (no retry logic) and enters
   # CrashLoopBackOff, which can push a cold install past the Helm --wait timeout.
   initContainers:
@@ -45,12 +46,12 @@ forge:
         - sh
         - -c
         - until nc -z forge-stack-postgresql 5432; do echo "waiting for postgresql"; sleep 2; done
-    - name: wait-for-minio
+    - name: wait-for-s3
       image: busybox:1.36
       command:
         - sh
         - -c
-        - until nc -z forge-stack-minio 9000; do echo "waiting for minio"; sleep 2; done
+        - until nc -z forge-stack-seaweedfs 8333; do echo "waiting for s3"; sleep 2; done
 
   resources:
     requests:
@@ -80,10 +81,23 @@ postgresql:
     persistence:
       size: 8Gi
 
-# ── minio ───────────────────────────────────────────────────────────────────────
-# Served by the built-in templates/minio.yaml using minio/minio:latest.
-# The bitnami/minio sub-chart is not used (Bitnami removed versioned tags from
-# Docker Hub). forge creates the bucket via MakeBucket on first startup.
-minio:
-  rootUser: "forge"
-  rootPassword: "changeme-minio"   # ← CHANGE THIS
+# ── seaweedfs ───────────────────────────────────────────────────────────────────
+# Bundled S3-compatible store (templates/seaweedfs.yaml), a getting-started
+# convenience: production should point forge at its own S3 service.
+# MinIO was used until its community images were removed from Docker Hub
+# (2026-09). The image is pinned by digest; mirror it into your own registry
+# for air-gapped or supply-chain-controlled installs.
+seaweedfs:
+  image: "chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d"
+  accessKey: "forge"
+  secretKey: "changeme-s3"   # ← CHANGE THIS (and forge.extraEnv.S3_SECRET_KEY)
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClassName: ""     # "" = the cluster's default StorageClass
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi

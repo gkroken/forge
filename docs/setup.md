@@ -412,14 +412,21 @@ disposable and horizontally scalable.
 
 - A Kubernetes cluster (1.25+)
 - `helm` 3.8+ and `kubectl` configured for the target cluster
-- Either: a Postgres instance and an S3-compatible object store (MinIO, AWS
-  S3, GCP Cloud Storage, etc.)
+- Either: a Postgres instance and an S3-compatible object store (AWS S3, GCP
+  Cloud Storage, Cloudflare R2, Ceph RGW, SeaweedFS, Garage, etc.)
 - Or: nothing — `forge-stack` bundles both (see below)
 
 ### Option A — forge-stack (all-in-one, recommended for getting started)
 
-`forge-stack` bundles forge + Bitnami Postgres + MinIO as Helm sub-charts.
-No external services needed.
+`forge-stack` bundles forge + Bitnami Postgres + SeaweedFS (an S3-compatible
+object store, with a persistent volume). No external services needed. The
+bundled store is for getting started: in production, point forge at the S3
+service your organisation already runs (Option B). forge needs only basic S3 —
+put (with multipart), get, stat, list, delete and bucket creation — so any
+S3-compatible store works. MinIO was bundled until its community images were
+removed from Docker Hub in September 2026; chart 0.2.0 replaced it, renaming
+the `minio:` values to `seaweedfs:`. A 0.1.x install's bundled MinIO kept its
+data in the container, not on a volume, so there is nothing to migrate from it.
 
 ```bash
 # Pull in chart dependencies
@@ -453,7 +460,7 @@ helm install forge deploy/helm/forge \
   --namespace forge --create-namespace \
   --set storage.type=external \
   --set extraEnv.POSTGRES_DSN="postgres://forge:secret@pg-host:5432/forge?sslmode=require" \
-  --set extraEnv.S3_ENDPOINT="https://minio.example.com" \
+  --set extraEnv.S3_ENDPOINT="https://s3.example.com" \
   --set extraEnv.S3_BUCKET="forge-artifacts" \
   --set extraEnv.S3_ACCESS_KEY="access-key" \
   --set extraEnv.S3_SECRET_KEY="secret-key" \

@@ -2,10 +2,10 @@ apiVersion: v2
 name: forge-stack
 description: >
   Complete forge deployment for on-premises Kubernetes. Bundles forge,
-  PostgreSQL (meta store), and MinIO (S3-compatible blob store) — no
+  PostgreSQL (meta store), and SeaweedFS (S3-compatible blob store) — no
   external services required beyond a Kubernetes cluster.
 type: application
-version: 0.1.0
+version: 0.2.0
 appVersion: "0.1.0"
 keywords:
   - artifact-repository
@@ -26,6 +26,7 @@ dependencies:
     version: ">=18.0.0 <19.0.0"
     repository: "https://charts.bitnami.com/bitnami"
 
-  # MinIO is bundled as a built-in template (see templates/minio.yaml) using the
-  # official minio/minio image. The bitnami/minio sub-chart is not used because
-  # Bitnami removed all versioned tags from Docker Hub.
+  # The S3 store is a built-in template (templates/seaweedfs.yaml) running
+  # SeaweedFS, pinned by digest. MinIO was used until its community images were
+  # removed from Docker Hub (2026-09); Bitnami's minio sub-chart was dropped
+  # earlier when Bitnami removed its versioned tags.
