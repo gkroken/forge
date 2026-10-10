@@ -347,3 +347,17 @@ plus any blobs the removed tag orphaned. Trash is empty afterwards on purpose:
 `README.md` states that cleanup runs hard-delete and trash is the human undo
 path, so an empty trash after a retention run is the documented behaviour, not
 a lost tombstone.
+
+## CRAN Linux binaries (checks L0–L6)
+
+A dedicated topology — `cran-lin-src` (hosted source), `cran-lin-bin` (hosted,
+`noOverwrite`, `sourceRepo: cran-lin-public`) and the `cran-lin-public` group
+over both — pins the HTTP behaviour of WORKPLAN-CRAN-LINUX: a validated upload
+is accepted once and then 409s, another builder's digest is refused, the
+group's `__linux__/noble/latest` URL serves the binary to an R 4.6 user agent
+and source to stock R (`libcurl/…`) and to an unregistered distro, every
+response varies on User-Agent, pak's binary list and the `{group}/latest`
+source view are served, `/repository/__api__/status` lists the distro, and a
+non-group repository's `__linux__` path serves source. The proof with real
+`install.packages`, pak and renv (compiler removed) is
+`scripts/cran-linux-serve-validate.sh`; this phase is its cheap regression net.

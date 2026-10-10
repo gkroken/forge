@@ -425,6 +425,64 @@ def group_checks(f):
 
 import urllib.parse, time
 
+UA_R46 = "R/4.6.1 R (4.6.1 x86_64-pc-linux-gnu x86_64 linux-gnu)"
+LIN_DIGEST = "sha256:" + "ab" * 32
+
+def cran_linux_phase():
+    """WORKPLAN-CRAN-LINUX: a binary repo validated against a group's source,
+    served by that group on the PPM-shaped URL. The real-client proof is
+    scripts/cran-linux-serve-validate.sh; this pins the HTTP behaviour."""
+    f, k = "cran", "group"
+    J = {"Content-Type": "application/json"}
+    for body in ({"name": "cran-lin-src", "format": "cran", "kind": "hosted"},
+                 {"name": "cran-lin-bin", "format": "cran", "kind": "hosted", "noOverwrite": True,
+                  "sourceRepo": "cran-lin-public"},
+                 {"name": "cran-lin-public", "format": "cran", "kind": "group",
+                  "members": ["cran-lin-src", "cran-lin-bin"]}):
+        body.update({"enabled": True, "anonymousRead": True})
+        s, b, _ = req("POST", "/api/v1/repos", json.dumps(body).encode(), J)
+        if s not in (200, 201, 409):
+            chk(f, k, "L0", f"create {body['name']}", False, f"{s} {b[:160]}")
+            return
+    reg = {"rPlatform": "x86_64-pc-linux-gnu", "builderImage": "matrix", "builderDigest": LIN_DIGEST,
+           "maxGlibc": "2.39", "libraries": ["libc.so.6", "libR.so"]}
+    s, b, _ = req("PUT", "/api/v1/cran/platforms/noble-x86_64/4.6", json.dumps(reg).encode(), J)
+    chk(f, k, "L0", "platform key registered", s == 200, f"{s} {b[:160]}")
+
+    desc = b"Package: matrixlin\nVersion: 1.0.0\nLicense: MIT\nTitle: Matrix Linux\nNeedsCompilation: no\n"
+    src = tgz({"matrixlin/DESCRIPTION": desc})
+    binary = tgz({"matrixlin/DESCRIPTION": desc + b"Built: R 4.6.1; ; 2026-10-10 00:00:00 UTC; unix\n",
+                  "matrixlin/Meta/package.rds": b"rds"})
+    req("PUT", "/repository/cran-lin-src/src/contrib/matrixlin_1.0.0.tar.gz", src)
+    bpath = "/repository/cran-lin-bin/bin/linux/noble-x86_64/contrib/4.6/matrixlin_1.0.0.tar.gz"
+    req("DELETE", bpath)  # a previous run's binary
+    s, b, _ = req("PUT", bpath, binary, {"X-Forge-Builder-Digest": LIN_DIGEST})
+    chk(f, "hosted", "L1", "validated binary upload accepted", s == 201, f"{s} {b[:200]}")
+    s, _, _ = req("PUT", bpath, binary, {"X-Forge-Builder-Digest": LIN_DIGEST})
+    chk(f, "hosted", "L1b", "re-upload of a key is 409", s == 409, f"{s}")
+    s, _, _ = req("PUT", bpath.replace("matrixlin_1.0.0", "matrixlin_9"), binary, {"X-Forge-Builder-Digest": "sha256:" + "00" * 32})
+    chk(f, "hosted", "L1c", "another builder's digest is refused", s == 403, f"{s}")
+
+    lx = "/repository/cran-lin-public/__linux__/noble/latest/src/contrib/matrixlin_1.0.0.tar.gz"
+    s, b, h = req("GET", lx, headers={"User-Agent": UA_R46}, raw=True)
+    chk(f, k, "L2", "R 4.6 on noble gets the binary", s == 200 and b == binary and h.get("X-Forge-Package-Type") == "binary",
+        f"{s} {h.get('X-Forge-Package-Type')}")
+    chk(f, k, "L2b", "the response varies on User-Agent", h.get("Vary") == "User-Agent", f"{h.get('Vary')}")
+    s, b, h = req("GET", lx, headers={"User-Agent": "libcurl/8.5.0"}, raw=True)
+    chk(f, k, "L2c", "stock R (no R user agent) gets source", s == 200 and b == src, f"{s} {h.get('X-Forge-Package-Type')}")
+    s, b, _ = req("GET", lx.replace("/noble/", "/jammy/"), headers={"User-Agent": UA_R46}, raw=True)
+    chk(f, k, "L2d", "an unregistered distro gets source", s == 200 and b == src, f"{s}")
+    s, b, _ = req("GET", "/repository/cran-lin-public/latest/bin/linux/4.6-noble/contrib/4.6/PACKAGES",
+                  headers={"User-Agent": "R (4.6.1 x86_64-pc-linux-gnu x86_64 linux-gnu)"})
+    chk(f, k, "L3", "pak's binary list names the package", s == 200 and "Package: matrixlin" in b, f"{s} {b[:160]}")
+    s, b, _ = req("GET", "/repository/cran-lin-public/latest/src/contrib/PACKAGES")
+    chk(f, k, "L4", "{group}/latest is the source view renv records", s == 200 and "Package: matrixlin" in b, f"{s} {b[:160]}")
+    s, b, _ = req("GET", "/repository/__api__/status")
+    chk(f, k, "L5", "PPM status lists noble for renv", s == 200 and '"binaryURL":"noble"' in b, f"{s} {b[:200]}")
+    s, b, h = req("GET", "/repository/cran-lin-src/__linux__/noble/latest/src/contrib/matrixlin_1.0.0.tar.gz",
+                  headers={"User-Agent": UA_R46}, raw=True)
+    chk(f, "hosted", "L6", "a non-group repo's __linux__ path serves source", s == 200 and b == src, f"{s}")
+
 if __name__ == '__main__':
     print('=== HOSTED ===')
     for fn in (hosted_maven, hosted_npm, hosted_helm, hosted_cran, hosted_pypi, hosted_oci):
@@ -609,6 +667,9 @@ if __name__ == '__main__':
         s1, _, _ = req("GET", "/repository/ttl-probe/is-odd")
         chk("npm", "proxy", "P8b", "proxy with a metadata age still serves", s1 == 200, f"{s1}")
 
+
+    print("=== CRAN LINUX BINARIES: one URL, binary or source ===")
+    cran_linux_phase()
 
     print("=== RETENTION: a keep-versions policy actually prunes each format ===")
     retention_phase()
