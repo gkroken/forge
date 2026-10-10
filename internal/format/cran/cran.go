@@ -553,6 +553,27 @@ func parseDescription(tgz []byte) (pkgRecord, error) {
 
 // scanDescription parses control format, joining continuation lines (leading space).
 func scanDescription(data []byte) pkgRecord {
+	fields := dcfFields(data)
+	return pkgRecord{
+		Package:          fields["Package"],
+		Version:          fields["Version"],
+		Title:            fields["Title"],
+		Description:      fields["Description"],
+		Depends:          fields["Depends"],
+		Imports:          fields["Imports"],
+		License:          fields["License"],
+		NeedsCompilation: fields["NeedsCompilation"],
+		Built:            fields["Built"],
+		Archs:            fields["Archs"],
+		OStype:           fields["OS_type"],
+	}
+}
+
+// --- delete ----------------------------------------------------------------
+
+// dcfFields parses one DCF record into its fields, joining continuation lines
+// (leading whitespace) onto the field they continue.
+func dcfFields(data []byte) map[string]string {
 	fields := map[string]string{}
 	var curKey string
 	for _, line := range strings.Split(string(data), "\n") {
@@ -575,22 +596,8 @@ func scanDescription(data []byte) pkgRecord {
 		curKey = strings.TrimSpace(key)
 		fields[curKey] = strings.TrimSpace(val)
 	}
-	return pkgRecord{
-		Package:          fields["Package"],
-		Version:          fields["Version"],
-		Title:            fields["Title"],
-		Description:      fields["Description"],
-		Depends:          fields["Depends"],
-		Imports:          fields["Imports"],
-		License:          fields["License"],
-		NeedsCompilation: fields["NeedsCompilation"],
-		Built:            fields["Built"],
-		Archs:            fields["Archs"],
-		OStype:           fields["OS_type"],
-	}
+	return fields
 }
-
-// --- delete ----------------------------------------------------------------
 
 // deletePkg removes a source package blob and its meta record so it no longer
 // appears in the generated PACKAGES index.
