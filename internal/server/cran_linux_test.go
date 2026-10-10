@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"forge/internal/auth"
+	"forge/internal/cleanup"
 	"forge/internal/cranplatform"
 	"forge/internal/format/cran"
 	"forge/internal/obs"
@@ -230,4 +231,30 @@ func TestCRANLinux_RejectionIsAudited(t *testing.T) {
 		}
 	}
 	t.Fatalf("no audit row with the rejection reason: %+v", al.Recent(16))
+}
+
+// A binary installed through the group's __linux__ URL counts as a download of
+// that binary, so lastDownloadedDays on the binary repo keeps what is in use.
+func TestCRANLinux_GroupDownloadStampsTheBinary(t *testing.T) {
+	s := linuxServer(t, "http://127.0.0.1:1")
+	s.Cleanup = cleanup.NewPolicyManager(s.Meta)
+	g, _ := s.Repos.Get("cran-public")
+	g.Members = append(g.Members, "cran-linux")
+	if err := s.Repos.Update(g); err != nil {
+		t.Fatal(err)
+	}
+	seedBlobBytes(t, s, http.MethodPut, "cran-src", "src/contrib/lb_1.0.tar.gz", tgzWithFile(t, "lb/DESCRIPTION", pkgDesc("lb")))
+	if rw := putLinux(t, s, "lb", binaryOf(t, "lb")); rw.Code != http.StatusCreated {
+		t.Fatalf("upload: %d %s", rw.Code, rw.Body)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/repository/cran-public/__linux__/noble/latest/src/contrib/lb_1.0.tar.gz", nil)
+	req.Header.Set("User-Agent", "R/4.6.1 R (4.6.1 x86_64-pc-linux-gnu x86_64 linux-gnu)")
+	rw := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rw, req)
+	if rw.Header().Get("X-Forge-Package-Type") != "binary" {
+		t.Fatalf("not served as a binary: %d %v", rw.Code, rw.Header())
+	}
+	if !stamped(t, s, "cran-linux/bin/linux/noble-x86_64/contrib/4.6/lb_1.0.tar.gz") {
+		t.Error("serving the binary through the group did not stamp the binary")
+	}
 }
