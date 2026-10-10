@@ -328,11 +328,19 @@ in:
 ```dockerfile
 FROM ghcr.io/acme/r-base:4.6.1
 ARG FORGE_URL FORGE_BUILDER_DIGEST
+ENV R_LIBS_USER=/opt/rlib
 COPY renv.lock cran-linux-upload.sh ./
 RUN --mount=type=secret,id=forge_token \
-    Rscript -e 'renv::restore()' && \
-    FORGE_TOKEN=$(cat /run/secrets/forge_token) ./cran-linux-upload.sh
+    mkdir -p /opt/rlib && \
+    Rscript -e 'renv::restore(library = "/opt/rlib", prompt = FALSE)' && \
+    FORGE_TOKEN=$(cat /run/secrets/forge_token) ./cran-linux-upload.sh --lib /opt/rlib
 ```
+
+Restore into a library of its own and point the helper at it (`--lib`), so it
+offers only what this build installed. Packages that came with the base image
+were often built elsewhere (rocker's littler, pak from its own repository);
+forge refuses those as "not built from the source forge serves", which is
+correct but noisy.
 
 ```bash
 docker build --build-arg FORGE_URL=$FORGE \
