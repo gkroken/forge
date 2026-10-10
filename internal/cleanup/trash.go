@@ -312,21 +312,33 @@ func GetTombstone(m meta.Store, id string) (Tombstone, bool, error) {
 	return ts, ok, err
 }
 
-// RestoreVersion moves a tombstone's blobs back to their original keys, restores
-// the captured meta records (and the npm packument entry), and removes the
-// tombstone. Restoring over a name that was re-published since deletion
-// overwrites it — last write wins, matching a normal re-publish.
 // ErrRestoreConflict means an artifact was published at a trashed version's
 // location after the delete; restoring would overwrite it.
-var ErrRestoreConflict = errors.New("cleanup: a newer artifact occupies the restore location; delete it first")
-
-func RestoreVersion(m meta.Store, b blob.Store, id string) (*Tombstone, error) {
+// repoTombstone loads trash entry id, which must belong to repoName. Callers
+// authorize against the repository they name, so an entry is only reachable
+// through its own repository: without this, an admin of one repository could
+// restore or purge another's by ID. Another repository's entry reads as absent.
+func repoTombstone(m meta.Store, repoName, id string) (*Tombstone, error) {
 	ts, ok, err := GetTombstone(m, id)
 	if err != nil {
 		return nil, err
 	}
-	if !ok {
-		return nil, fmt.Errorf("cleanup: trash entry %q not found", id)
+	if !ok || ts.Repo != repoName {
+		return nil, fmt.Errorf("cleanup: trash entry %q not found in %s", id, repoName)
+	}
+	return &ts, nil
+}
+
+var ErrRestoreConflict = errors.New("cleanup: a newer artifact occupies the restore location; delete it first")
+
+// RestoreVersion moves a tombstone's blobs back to their original keys, restores
+// the captured meta records (and the npm packument entry), and removes the
+// tombstone. It refuses (ErrRestoreConflict) when anything was re-published at
+// one of those keys since the delete, rather than overwrite the newer artifact.
+func RestoreVersion(m meta.Store, b blob.Store, repoName, id string) (*Tombstone, error) {
+	ts, err := repoTombstone(m, repoName, id)
+	if err != nil {
+		return nil, err
 	}
 	// Restoring must not replace an artifact published since the delete: that
 	// would silently swap newer bytes for older ones, and on a noOverwrite
@@ -371,18 +383,15 @@ func RestoreVersion(m meta.Store, b blob.Store, id string) (*Tombstone, error) {
 	if err := m.Delete(TrashNS, id); err != nil {
 		return nil, err
 	}
-	return &ts, nil
+	return ts, nil
 }
 
 // PurgeTombstone hard-deletes a tombstone's trashed blobs and the tombstone
 // itself, freeing disk. Returns the bytes reclaimed.
-func PurgeTombstone(m meta.Store, b blob.Store, id string) (int64, error) {
-	ts, ok, err := GetTombstone(m, id)
+func PurgeTombstone(m meta.Store, b blob.Store, repoName, id string) (int64, error) {
+	ts, err := repoTombstone(m, repoName, id)
 	if err != nil {
 		return 0, err
-	}
-	if !ok {
-		return 0, fmt.Errorf("cleanup: trash entry %q not found", id)
 	}
 	var freed int64
 	for _, bl := range ts.Blobs {
@@ -412,7 +421,7 @@ func PurgeExpired(m meta.Store, b blob.Store, retention time.Duration) (int, int
 		if ts.DeletedAt.After(cutoff) {
 			continue
 		}
-		f, err := PurgeTombstone(m, b, ts.ID)
+		f, err := PurgeTombstone(m, b, ts.Repo, ts.ID)
 		if err != nil {
 			continue
 		}

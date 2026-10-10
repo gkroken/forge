@@ -654,7 +654,7 @@ func (s *Server) handleTrash(w http.ResponseWriter, r *http.Request, repoName, a
 		id := r.URL.Query().Get("id")
 		// Restore writes through the repository's guarded store, so a
 		// noOverwrite repository's rule holds here too.
-		ts, err := cleanup.RestoreVersion(s.Meta, s.repoBlob(rp), id)
+		ts, err := cleanup.RestoreVersion(s.Meta, s.repoBlob(rp), repoName, id)
 		if errors.Is(err, cleanup.ErrRestoreConflict) || blob.Refused(err) {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
@@ -682,7 +682,7 @@ func (s *Server) handleTrash(w http.ResponseWriter, r *http.Request, repoName, a
 			var freed int64
 			var n int
 			for _, ts := range list {
-				if f, err := cleanup.PurgeTombstone(s.Meta, s.Blob, ts.ID); err == nil {
+				if f, err := cleanup.PurgeTombstone(s.Meta, s.Blob, repoName, ts.ID); err == nil {
 					freed += f
 					n++
 				}
@@ -694,7 +694,7 @@ func (s *Server) handleTrash(w http.ResponseWriter, r *http.Request, repoName, a
 		}
 		// Capture the coordinates before the tombstone is gone, for the audit note.
 		ts, _, _ := cleanup.GetTombstone(s.Meta, id)
-		freed, err := cleanup.PurgeTombstone(s.Meta, s.Blob, id)
+		freed, err := cleanup.PurgeTombstone(s.Meta, s.Blob, repoName, id)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return

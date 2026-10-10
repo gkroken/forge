@@ -246,3 +246,29 @@ func TestTrashRestore_OverNewerUploadIs409(t *testing.T) {
 		t.Fatalf("restore over a newer upload: got %d %s, want 409", rw.Code, rw.Body)
 	}
 }
+
+// The trash routes authorize against the repository in the URL, so a trash
+// entry must only be reachable through its own repository — otherwise an
+// admin of one repository could restore or permanently purge another's.
+func TestTrash_EntryOnlyReachableThroughItsRepo(t *testing.T) {
+	s := newMigrationServer(t)
+	addHosted(t, s, "team-a", "cran")
+	addHosted(t, s, "team-b", "cran")
+	body := tgzWithFile(t, "pkg/DESCRIPTION", "Package: pkg\nVersion: 1.0\nLicense: MIT\n")
+	seedBlobBytes(t, s, http.MethodPut, "team-b", "src/contrib/pkg_1.0.tar.gz", body)
+	ts, err := cleanup.TrashVersion("team-b", "cran", "pkg", "1.0", "t", s.Blob, s.Meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []string{"restore", "purge"} {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/repos/team-a/trash/"+action+"?id="+ts.ID, nil)
+		rw := httptest.NewRecorder()
+		s.Routes().ServeHTTP(rw, req)
+		if rw.Code != http.StatusNotFound {
+			t.Errorf("%s of team-b's entry via team-a: got %d, want 404", action, rw.Code)
+		}
+	}
+	if _, ok, _ := cleanup.GetTombstone(s.Meta, ts.ID); !ok {
+		t.Fatal("team-b's trash entry was consumed through team-a")
+	}
+}

@@ -48,7 +48,7 @@ func TestTrashVersion_Maven_MovesOutOfRepoSpace(t *testing.T) {
 	}
 
 	// Restore round-trip.
-	if _, err := cleanup.RestoreVersion(m, b, ts.ID); err != nil {
+	if _, err := cleanup.RestoreVersion(m, b, ts.Repo, ts.ID); err != nil {
 		t.Fatalf("RestoreVersion: %v", err)
 	}
 	if _, ok, _ := b.Stat("maven-hosted/com/example/app/1.0.0/app-1.0.0.jar"); !ok {
@@ -92,7 +92,7 @@ func TestTrashVersion_NPM_RestoresPackumentEntry(t *testing.T) {
 	}
 
 	// Restore re-adds the version to the packument and the per-version record.
-	if _, err := cleanup.RestoreVersion(m, b, ts.ID); err != nil {
+	if _, err := cleanup.RestoreVersion(m, b, ts.Repo, ts.ID); err != nil {
 		t.Fatalf("RestoreVersion: %v", err)
 	}
 	m.GetJSON("npm-hosted:npm", "leftpad", &pk) //nolint:errcheck
@@ -129,7 +129,7 @@ func TestListAndPurgeTrash(t *testing.T) {
 	if other, _ := cleanup.ListTrash(m, "npm-hosted"); len(other) != 0 {
 		t.Errorf("cross-repo leak: %d", len(other))
 	}
-	freed, err := cleanup.PurgeTombstone(m, b, ts.ID)
+	freed, err := cleanup.PurgeTombstone(m, b, ts.Repo, ts.ID)
 	if err != nil {
 		t.Fatalf("PurgeTombstone: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestTrashVersion_CRAN_TrashesBinariesWithSource(t *testing.T) {
 		t.Error("linux binary meta record should be captured into the tombstone")
 	}
 
-	if _, err := cleanup.RestoreVersion(m, b, ts.ID); err != nil {
+	if _, err := cleanup.RestoreVersion(m, b, ts.Repo, ts.ID); err != nil {
 		t.Fatalf("RestoreVersion: %v", err)
 	}
 	for _, k := range gone {
@@ -255,7 +255,7 @@ func TestRestoreVersion_RefusesOccupiedLocation(t *testing.T) {
 	}
 	putBlob(t, b, "cran-linux/bin/linux/noble-x86_64/contrib/4.6/pkg_1.0.tar.gz") // rebuilt since
 
-	if _, err := cleanup.RestoreVersion(m, b, ts.ID); !errors.Is(err, cleanup.ErrRestoreConflict) {
+	if _, err := cleanup.RestoreVersion(m, b, ts.Repo, ts.ID); !errors.Is(err, cleanup.ErrRestoreConflict) {
 		t.Fatalf("want ErrRestoreConflict, got %v", err)
 	}
 	if _, ok, _ := b.Stat("cran-linux/bin/linux/noble-x86_64/contrib/4.5/pkg_1.0.tar.gz"); ok {
