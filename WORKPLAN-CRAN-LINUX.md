@@ -1,6 +1,6 @@
 # forge — CRAN Linux Binary Cache
 
-> **Status: PLANNED** — not started. Origin: Skald issue 003 (2026-10-10), "every R
+> **Status: IN PROGRESS** — L0 done (`docs/notes/cran-linux-clients.md`); L1 next. Origin: Skald issue 003 (2026-10-10), "every R
 > restore on Linux compiles from source". Measured there: renv restore was 155 s of a
 > 253 s cold build for a 46-package app; tidyverse/sf/arrow-sized apps take minutes.
 
@@ -43,6 +43,16 @@ These were settled in the design discussion of 2026-10-10:
    a binary fails to load, so a bad binary blocks every client on its platform until
    removed. Removal must be a single documented, audited call; the next build then
    recompiles and re-uploads.
+8. **(L0, 2026-10-10) Public path:** `/repository/{group}/__linux__/{distro}/latest/`,
+   handled inside the CRAN handler (no routing change). Distro from the path; R
+   minor, arch and platform triple from the `R (x.y.z triple arch os)` part of the
+   User-Agent (closes §6 decision 2). No usable UA → source. pak's binary index
+   (`{group}/latest/bin/linux/{rminor}-{distro}/contrib/{rminor}/PACKAGES.gz`) and
+   every tarball path call the same decision. `Vary: User-Agent`. Only `latest`.
+9. **(L0, 2026-10-10) `/__api__/status` stays a 404.** Emulating PPM's status
+   endpoint would make renv rewrite plain URLs to a CRAN-specific top-level path,
+   and a mismatch breaks renv with no fallback. Users configure the explicit
+   `__linux__` URL.
 
 ---
 
@@ -124,8 +134,9 @@ Record the results in `docs/notes/cran-linux-clients.md`.
 - **Platform keys.** A key is `{distro}-{arch}/{rminor}` (e.g. `noble-x86_64/4.6`).
   A key accepts uploads only after an admin registers it with: the builder image
   reference + digest, max glibc version, and a shared-library manifest (the
-  `ldconfig -p` output of the builder image, produced by a script shipped in
-  `scripts/`). Registration is admin API + config-as-code; UI can follow later.
+  `ldconfig -p` output of the builder image **plus R's own `$(R RHOME)/lib`**, which
+  `ldconfig` does not list — every compiled package needs `libR.so` (measured in L0);
+  produced by a script shipped in `scripts/`). Registration is admin API + config-as-code; UI can follow later.
 - **Storage.** A dedicated hosted CRAN repo (e.g. `cran-linux`) holds binaries at
   `bin/linux/{distro}-{arch}/contrib/{rminor}/{pkg}_{ver}.tar.gz`, reusing
   `serveBinary`/`publishBin`/`binNS` (the platform segment may contain `/`, see
@@ -242,8 +253,7 @@ Live          — /format-live-test against a running forge before calling a pha
    `Immutable`; (b) make the binary tree write-once in the CRAN handler regardless
    of repo flags. (b) is simpler but puts a storage rule in a format; (a) is
    reusable. Recommend (a); confirm first.
-2. **Where R minor/arch come from** if L0 shows UA is unreliable for some client
-   (path-only keys make lockfiles platform-specific; UA keys need `Vary`).
+2. ~~**Where R minor/arch come from**~~ — decided after L0: the User-Agent (§0.8).
 3. **Multiple builders per key.** Allowed if they share the registered image digest
    (self-reported, so this is advisory), or one builder identity per key?
 
