@@ -14,6 +14,7 @@ import (
 	"forge/internal/blob"
 	"forge/internal/cranplatform"
 	"forge/internal/format"
+	"forge/internal/integrity"
 	"forge/internal/ledger"
 	"forge/internal/meta"
 	"forge/internal/repo"
@@ -221,9 +222,9 @@ func TestLinuxUpload_RejectionsAreReported(t *testing.T) {
 	digest := lbPlatform().BuilderDigest
 	for _, tc := range []struct {
 		name, sub, digest string
-		before          func(*format.Context)
-		code            int
-		reported        bool
+		before            func(*format.Context)
+		code              int
+		reported          bool
 	}{
 		{name: "wrong builder", sub: lbPath, digest: "sha256:" + strings.Repeat("00", 32), code: 403, reported: true},
 		{name: "invalid binary", sub: "bin/linux/noble-x86_64/contrib/4.6/lb_2.0.tar.gz", digest: digest, code: 400, reported: true},
@@ -249,5 +250,51 @@ func TestLinuxUpload_RejectionsAreReported(t *testing.T) {
 			!strings.Contains(got[0], strings.TrimSpace(rw.Body.String()))) {
 			t.Errorf("%s: report %q does not carry the reason %q", tc.name, got, rw.Body.String())
 		}
+	}
+}
+
+// Integrity verification covers the Linux tree: a binary is checked exactly
+// against the sha256 recorded at upload, and missing/orphaned binaries are
+// reported like any other CRAN artifact.
+func TestLinuxIntegrity(t *testing.T) {
+	var reads int
+	c := linuxCtx(t, &reads)
+	bin := lbTarball(t, lbEntries(t))
+	if rw := linuxPut(c, lbPath, lbPlatform().BuilderDigest, bin); rw.Code != http.StatusCreated {
+		t.Fatalf("upload: %d %s", rw.Code, rw.Body)
+	}
+	kinds := func(mode integrity.Mode) []string {
+		res, err := New().VerifyIntegrity(c, mode)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, f := range res.Findings {
+			out = append(out, string(f.Kind))
+		}
+		return out
+	}
+	if got := kinds(integrity.ModeFull); len(got) != 0 {
+		t.Fatalf("clean binary repo reported %v", got)
+	}
+
+	// Same length, still a valid gzip, different bytes: only the digest sees it.
+	tampered := lbTarball(t, set(lbEntries(t), "lb/R/lb", []byte("lazy-load stuB")))
+	c.Blob.Delete(c.Key(lbPath))                         //nolint:errcheck
+	c.Blob.Put(c.Key(lbPath), bytes.NewReader(tampered)) //nolint:errcheck
+	if got := kinds(integrity.ModeFull); strings.Join(got, ",") != string(integrity.KindMismatch) {
+		t.Errorf("tampered binary: %v, want one mismatch", got)
+	}
+	if got := kinds(integrity.ModeQuick); len(got) != 0 {
+		t.Errorf("quick mode reads no bytes, yet reported %v", got)
+	}
+
+	c.Blob.Delete(c.Key(lbPath)) //nolint:errcheck
+	if got := kinds(integrity.ModeQuick); strings.Join(got, ",") != string(integrity.KindMissing) {
+		t.Errorf("deleted binary: %v, want one missing", got)
+	}
+	c.Blob.Put(c.Key("bin/linux/noble-x86_64/contrib/4.6/stray_1.0.tar.gz"), bytes.NewReader(bin)) //nolint:errcheck
+	if got := kinds(integrity.ModeQuick); !strings.Contains(strings.Join(got, ","), string(integrity.KindOrphan)) {
+		t.Errorf("unrecorded binary: %v, want an orphan", got)
 	}
 }

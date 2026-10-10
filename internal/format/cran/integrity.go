@@ -2,10 +2,13 @@ package cran
 
 import (
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"path"
 	"strings"
 
+	"forge/internal/cranplatform"
 	"forge/internal/format"
 	"forge/internal/integrity"
 	"forge/internal/repo"
@@ -24,10 +27,14 @@ import (
 //   - package record whose tarball blob is gone       → missing
 //   - tarball blob no record claims                   → orphan
 //   - full mode: gzip stream fails to decode to EOF   → mismatch
+//   - full mode: a Linux binary whose sha256 differs from the one recorded at
+//     upload (its provenance)                        → mismatch
 //
-// Binary trees are discovered from the blobs present; a platform tree whose
-// blobs are all gone cannot be enumerated (meta.Store has no namespace
-// listing), so its dangling records go unreported — an accepted gap.
+// Binary trees are discovered from the blobs present; a Windows/macOS tree
+// whose blobs are all gone cannot be enumerated (meta.Store has no namespace
+// listing), so its dangling records go unreported — an accepted gap. Linux
+// trees are also seeded from the registered platform keys, so a Linux binary
+// whose blob is gone is reported even when it was its tree's last.
 func (h *Handler) VerifyIntegrity(c *format.Context, mode integrity.Mode) (integrity.Result, error) {
 	if c.Repo.Kind == repo.Proxy {
 		return integrity.VerifyProxyCache(c.Repo.Name, c.Blob, c.Meta)
@@ -52,6 +59,15 @@ func (h *Handler) VerifyIntegrity(c *format.Context, mode integrity.Mode) (integ
 	}
 	srcTree := &tree{ns: h.ns(c), dir: c.Repo.Name + "/src/contrib/", byPkg: map[string]string{}}
 	trees := map[string]*tree{"": srcTree}
+	if ps, err := cranplatform.NewStore(c.Meta).List(); err == nil {
+		for _, p := range ps {
+			if k, err := cranplatform.ParseKey(p.Key); err == nil {
+				platform := "linux/" + k.Distro + "-" + k.Arch
+				ns := h.binNS(c, platform, k.RMinor)
+				trees[ns] = &tree{ns: ns, dir: c.Repo.Name + "/bin/" + platform + "/contrib/" + k.RMinor + "/", byPkg: map[string]string{}}
+			}
+		}
+	}
 	for _, k := range blobs {
 		sub := strings.TrimPrefix(k, c.Repo.Name+"/")
 		switch {
@@ -60,7 +76,8 @@ func (h *Handler) VerifyIntegrity(c *format.Context, mode integrity.Mode) (integ
 				continue // e.g. Archive/ subdirs — not indexed
 			}
 			srcTree.byPkg[strings.TrimSuffix(path.Base(sub), ".tar.gz")] = k
-		case strings.HasPrefix(sub, "bin/") && (strings.HasSuffix(sub, ".zip") || strings.HasSuffix(sub, ".tgz")):
+		case strings.HasPrefix(sub, "bin/") && (strings.HasSuffix(sub, ".zip") || strings.HasSuffix(sub, ".tgz") ||
+			strings.HasPrefix(sub, "bin/linux/") && strings.HasSuffix(sub, ".tar.gz")):
 			platform, rver, file, ok := parseBinPath(sub)
 			if !ok {
 				continue
@@ -71,7 +88,7 @@ func (h *Handler) VerifyIntegrity(c *format.Context, mode integrity.Mode) (integ
 				t = &tree{ns: ns, dir: c.Repo.Name + "/" + path.Dir(sub) + "/", byPkg: map[string]string{}}
 				trees[ns] = t
 			}
-			pkg, ver, ok := parsePkgFilename(file)
+			pkg, ver, ok := cranBinaryParts(file)
 			if !ok {
 				continue
 			}
@@ -97,6 +114,14 @@ func (h *Handler) VerifyIntegrity(c *format.Context, mode integrity.Mode) (integ
 			if !ok {
 				res.Add(integrity.KindMissing, t.dir+pkgKey, rec.Package, rec.Version,
 					"package record exists but the tarball blob is gone — it is listed in PACKAGES but installs will 404")
+				continue
+			}
+			if mode == integrity.ModeFull && rec.Linux != nil && rec.Linux.SHA256 != "" {
+				// A Linux binary's digest was recorded at upload: check it exactly.
+				if got, herr := blobSHA256(c, blobKey, &res.BytesRead); herr != nil || got != rec.Linux.SHA256 {
+					res.Add(integrity.KindMismatch, blobKey, rec.Package, rec.Version,
+						"sha256 differs from the one recorded at upload — bytes changed since publish")
+				}
 				continue
 			}
 			if mode == integrity.ModeFull && (strings.HasSuffix(blobKey, ".tar.gz") || strings.HasSuffix(blobKey, ".tgz")) {
@@ -140,6 +165,19 @@ func readGzipToEOF(c *format.Context, key string, bytesRead *int64) error {
 		return err
 	}
 	return gz.Close()
+}
+
+// blobSHA256 hashes a blob, adding what it read to bytesRead.
+func blobSHA256(c *format.Context, key string, bytesRead *int64) (string, error) {
+	rc, err := c.Blob.Get(key)
+	if err != nil {
+		return "", err
+	}
+	defer rc.Close()
+	h := sha256.New()
+	n, err := io.Copy(h, rc)
+	*bytesRead += n
+	return hex.EncodeToString(h.Sum(nil)), err
 }
 
 type countingReader struct {
