@@ -561,6 +561,19 @@ jobs:
           FORGE_BASE=http://localhost:8080 bash test.sh
           kill $PF_PID 2>/dev/null || true
 
+      - name: Cluster diagnostics
+        # A helm --wait timeout says only "context deadline exceeded".
+        if: failure()
+        run: |
+          kubectl get pods,pvc,endpoints -o wide
+          kubectl get events --sort-by=.lastTimestamp | tail -60
+          kubectl describe pods | tail -150
+          for p in $(kubectl get pods -o name); do
+            echo "::group::logs $p"
+            kubectl logs "$p" --all-containers --prefix --tail=80 || true
+            echo "::endgroup::"
+          done
+
   quickstart:
     name: Quickstart gate (< 10 min, eval path)
     # Nightly only — docker compose build is slow and not worth blocking PRs.
