@@ -94,13 +94,33 @@ Consequences:
 - pak adds no `Archive/` fallback for `__linux__` URLs (on plain URLs it fetches
   `src/contrib/Archive/{pkg}/…` in parallel with the current path).
 
-**What a lockfile records.** `renv::snapshot` with an explicit
-`…/__linux__/noble` URL records that URL verbatim under `R.Repositories[].URL`,
-and `"Repository": "CRAN"` (the name) per package. `renv::restore` from that
-lockfile in a fresh container used the URL as recorded and installed the binary.
-renv's `renv_restore_normalize_impl` only rewrites per-package `Repository` values
-that are URLs, and the name `CRAN` is not one. A lockfile is therefore
-distro-specific through the URL, exactly as it is with PPM.
+**What a lockfile records.** It depends on the URL shape:
+
+- With `…/__linux__/noble` (no segment after the distro), `renv::snapshot`
+  records the URL verbatim, and restore uses it as recorded. That was the L0
+  run.
+- With the full PPM shape `…/__linux__/noble/latest` — the one forge serves,
+  because pak needs it — renv **normalises** it (`renv_ppm_normalize`:
+  `sub("/__[^_]+__/[^/]+/", "/", url)`) and records PPM's *source* form
+  `…/{group}/latest`. That makes lockfiles platform-neutral, so forge must also
+  serve `{group}/latest/src/contrib/…` as plain source (L2 does). *Corrected in
+  L2, 2026-10-10.*
+
+At restore, renv turns `…/{group}/latest` back into the binary URL only when
+it knows the host is PPM-shaped. It knows if the client sets
+`RENV_CONFIG_PPM_URL` (any URL whose `dirname(dirname())` is
+`…/repository`), or if `dirname(dirname(url))/__api__/status` —
+**`/repository/__api__/status`** for this shape, not the host root — lists the
+client's distro with `binaries: true`. Measured with the compiler removed:
+
+| Restore of a `…/cran-public/latest` lockfile | Result |
+|---|---|
+| no setting; forge 404s `/repository/__api__/status` | source; jsonlite fails (`make: not found`) |
+| `RENV_CONFIG_PPM_URL=…/repository/cran-public/latest` | binaries, loads |
+| status JSON served at `/repository/__api__/status` (simulated in front of forge) | rewrites to `…/cran-public/__linux__/noble/latest`, binaries, loads |
+
+A plain `…/cran-public/` URL still probes the host root `/__api__/status` and
+is unaffected by either.
 
 ## 3. Serving a binary on the source path; what PPM's index contains
 

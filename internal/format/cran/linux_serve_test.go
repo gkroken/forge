@@ -206,6 +206,14 @@ func TestLinuxServe_ArchiveAndIndex(t *testing.T) {
 			t.Errorf("index for %q differs from the source index:\n%s", ua, got)
 		}
 	}
+	// PPM's source view of the repository, which renv derives from the
+	// __linux__ URL and records in lockfiles.
+	if got := getUA(g.group, "latest/src/contrib/PACKAGES", uaRocker).Body.String(); got != want {
+		t.Errorf("latest/src/contrib/PACKAGES differs from the source index:\n%s", got)
+	}
+	if rw := getUA(g.group, "latest/src/contrib/lb_1.0.2.tar.gz", uaRocker); !bytes.Equal(rw.Body.Bytes(), g.srcB["lb_1.0.2"]) {
+		t.Errorf("latest/src/contrib tarball is not the source: %d", rw.Code)
+	}
 	if rw := getUA(g.group, "__linux__/noble/2026-01-01/src/contrib/PACKAGES", uaRocker); rw.Code != 404 {
 		t.Errorf("a snapshot date answered %d; forge has no snapshots", rw.Code)
 	}
@@ -216,6 +224,12 @@ func TestLinuxServe_ArchiveAndIndex(t *testing.T) {
 	New().Serve(rw, r, &cc)
 	if rw.Code != http.StatusMethodNotAllowed {
 		t.Errorf("PUT on the __linux__ view: %d", rw.Code)
+	}
+	cc.Sub = "latest/src/contrib/lb_9.tar.gz"
+	rw = httptest.NewRecorder()
+	New().Serve(rw, httptest.NewRequest(http.MethodPut, "/", strings.NewReader("x")), &cc)
+	if rw.Code != http.StatusMethodNotAllowed {
+		t.Errorf("PUT on the latest/ view: %d", rw.Code)
 	}
 }
 

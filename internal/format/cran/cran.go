@@ -79,6 +79,16 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 	case strings.HasPrefix(c.Sub, "latest/bin/linux/"):
 		h.servePakIndex(w, r, c)
 		return
+	case strings.HasPrefix(c.Sub, "latest/src/contrib/"):
+		// PPM's source view of the same repository. renv derives it from the
+		// __linux__ URL (renv_ppm_normalize strips "/__linux__/{distro}/") and
+		// looks up source packages there, so it must exist.
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "read-only path", http.StatusMethodNotAllowed)
+			return
+		}
+		h.serveSub(w, r, c, strings.TrimPrefix(c.Sub, "latest/"))
+		return
 	}
 	switch {
 	case r.Method == http.MethodGet && c.Sub == "src/contrib/PACKAGES":
