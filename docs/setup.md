@@ -250,8 +250,9 @@ R's resolution order on Windows:
 1. Checks `bin/windows/contrib/{R-version}/PACKAGES` for a binary `.zip`.
 2. Falls back to `src/contrib/PACKAGES` for a source tarball.
 
-On Linux, R only uses `src/contrib/`. Packages with `NeedsCompilation: no`
-install from source on Windows without Rtools.
+On Linux, R only uses `src/contrib/` — see *Linux binary packages* below for
+how forge serves binaries there. Packages with `NeedsCompilation: no` install
+from source on Windows without Rtools.
 
 ### Verifying the index
 
@@ -263,6 +264,133 @@ curl -s http://localhost:8080/repository/cran-public/src/contrib/PACKAGES \
 # Windows binary index
 curl -s "http://localhost:8080/repository/cran-hosted/bin/windows/contrib/4.4/PACKAGES"
 ```
+
+### Linux binary packages
+
+CRAN publishes no Linux binaries, so every R install on Linux compiles. forge
+can serve them from builds you control: a **builder** (normally your CI, using
+your runtime base image) uploads each package it compiles, and every later
+install on the same platform — same distro release, R minor version and CPU —
+gets the binary through the same group URL. Anything forge cannot match
+exactly gets the source package, as before. forge never compiles or runs
+package code; it checks each upload statically (layout, `Built:`, that it was
+built from the source forge serves, and that its shared objects suit the
+platform). Background and measurements: `WORKPLAN-CRAN-LINUX.md`,
+`docs/notes/cran-linux-clients.md`.
+
+**1. Create the binary repository and add it to the group.** It must refuse
+overwrites (`noOverwrite`) and name the group whose source it builds from:
+
+```yaml
+# config file (or POST /api/v1/repos with the same fields)
+repositories:
+  - name: cran-linux
+    format: cran
+    kind: hosted
+    noOverwrite: true
+    sourceRepo: cran-public
+    anonymousRead: true
+  - name: cran-public
+    format: cran
+    kind: group
+    members: [cran-hosted, cran-proxy, cran-linux]
+```
+
+**2. Register the platform.** One registration per builder image, keyed
+`{distro}-{arch}/{rminor}`; it records the image digest uploads must report and
+the shared libraries the image provides:
+
+```bash
+scripts/cran-linux-manifest.sh ghcr.io/acme/r-base:4.6.1 > platform.json
+curl -X PUT -H "Authorization: Bearer $ADMIN" --data @platform.json \
+  "$FORGE/api/v1/cran/platforms/$(jq -r .key platform.json)"
+```
+
+…or paste the JSON object under `cranPlatforms:` in the config file. When the
+builder image changes, re-run the script and update the registration — uploads
+from an image whose digest does not match are refused.
+
+**3. Give the builder a token** that can write only its own platform's tree:
+
+```bash
+curl -X POST -H "Authorization: Bearer $ADMIN" "$FORGE/api/v1/tokens" -d '{
+  "description": "R builder noble-x86_64",
+  "grants": [{"repo": "cran-linux", "actions": ["read", "write"],
+              "selectors": ["bin/linux/noble-x86_64/**"]}]}'
+```
+
+**4. Run the helper after your build installs packages.** It uploads every
+package the binary repository lacks for this platform (packages installed from
+GitHub or local paths are skipped). It needs `curl` in the image (rocker
+images lack it). The image ID is not visible inside the container, so pass it
+in:
+
+```dockerfile
+FROM ghcr.io/acme/r-base:4.6.1
+ARG FORGE_URL FORGE_BUILDER_DIGEST
+COPY renv.lock cran-linux-upload.sh ./
+RUN --mount=type=secret,id=forge_token \
+    Rscript -e 'renv::restore()' && \
+    FORGE_TOKEN=$(cat /run/secrets/forge_token) ./cran-linux-upload.sh
+```
+
+```bash
+docker build --build-arg FORGE_URL=$FORGE \
+  --build-arg FORGE_BUILDER_DIGEST=$(docker image inspect -f '{{.Id}}' ghcr.io/acme/r-base:4.6.1) \
+  --secret id=forge_token,env=FORGE_TOKEN .
+```
+
+The first build of each package version compiles and uploads; every later one
+installs the binary. A failed upload only warns (pass `--strict` to fail).
+
+**5. Point clients at the group's Linux URL:**
+
+```r
+options(repos = c(CRAN = "https://forge.example.com/repository/cran-public/__linux__/noble/latest"))
+```
+
+- **renv** and **pak** identify R's version and CPU themselves. renv records
+  `…/cran-public/latest` in the lockfile and finds its way back to the binary
+  URL at restore (forge answers renv's `/repository/__api__/status` probe).
+- **install.packages** sends R's version only when `HTTPUserAgent` is set the
+  way rocker images set it; stock R sends `libcurl/…` and gets source:
+
+  ```r
+  options(HTTPUserAgent = sprintf("R/%s R (%s)", getRversion(),
+    paste(getRversion(), R.version["platform"], R.version["arch"], R.version["os"])))
+  ```
+
+Check what a client gets — `X-Forge-Package-Type` says `binary` or `source`:
+
+```bash
+curl -sI -A "R (4.6.1 x86_64-pc-linux-gnu x86_64 linux-gnu)" \
+  "$FORGE/repository/cran-public/__linux__/noble/latest/src/contrib/jsonlite_2.0.0.tar.gz" \
+  | grep -i x-forge-package-type
+```
+
+**Removing a bad binary.** renv does not fall back to source when a binary
+fails to load, so a broken binary blocks every client on its platform until it
+is removed. Removal is one audited call; the next build recompiles and uploads
+it again:
+
+```bash
+curl -X DELETE -H "Authorization: Bearer $ADMIN" \
+  "$FORGE/repository/cran-linux/bin/linux/noble-x86_64/contrib/4.6/jsonlite_2.0.0.tar.gz"
+```
+
+The Browse detail pane lists each version's Linux builds with their provenance
+(uploader, builder image, source digest, `LinkingTo` versions) and system
+requirements (the shared libraries they need).
+
+**Eviction** is opt-in: attach a cleanup policy with `lastDownloadedDays` to
+`cran-linux`. Each binary is judged by its own downloads (including those
+served through the group), so an unused platform's build is evicted without
+touching another platform's or the source; `keepVersions` counts per platform.
+
+**Limits.** A client on another R minor version, another CPU or an
+unregistered distro gets source. A lockfile is portable; the `__linux__` URL in
+`options(repos)` names a distro. Uploads, rejections (with the reason) and
+removals are audited and raise webhooks.
 
 ---
 
