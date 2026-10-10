@@ -43,6 +43,7 @@ type repoRequest struct {
 	QuotaGB        *float64 `json:"quotaGB,omitempty"`
 	Immutable      bool     `json:"immutable,omitempty"`   // write-once hosted repo
 	NoOverwrite    bool     `json:"noOverwrite,omitempty"` // no overwrite, deletes allowed
+	SourceRepo     string   `json:"sourceRepo,omitempty"`  // binaries must match this repo's sources
 	// Dependency-confusion protection: namespace claims (hosted repos) and
 	// the enforcement toggle (group/proxy repos; nil = enabled).
 	Claims            []string `json:"claims,omitempty"`
@@ -71,6 +72,7 @@ func (req repoRequest) toRepository() (repo.Repository, error) {
 		QuotaGB:       req.QuotaGB,
 		Immutable:     req.Immutable,
 		NoOverwrite:   req.NoOverwrite,
+		SourceRepo:    req.SourceRepo,
 		Enabled:       true, // default: new repos are online
 
 		Claims:            req.Claims,

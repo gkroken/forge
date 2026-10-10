@@ -139,3 +139,37 @@ func (s *memStore) Delete(ns, key string) error {
 	delete(s.docs, ns+"/"+key)
 	return nil
 }
+
+func TestManager_SourceRepoRules(t *testing.T) {
+	m := NewManager()
+	for _, r := range []Repository{
+		{Name: "cran-public", Format: "cran", Kind: Group},
+		{Name: "npm-hosted", Format: "npm", Kind: Hosted},
+	} {
+		if err := m.Add(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := m.Add(Repository{Name: "cran-linux", Format: "cran", Kind: Hosted, SourceRepo: "cran-public"}); err != nil {
+		t.Fatalf("valid sourceRepo refused: %v", err)
+	}
+	// Unknown names are tolerated (creation order); config validation reports them.
+	if err := m.Add(Repository{Name: "cran-later", Format: "cran", Kind: Hosted, SourceRepo: "not-yet"}); err != nil {
+		t.Fatalf("unknown sourceRepo refused: %v", err)
+	}
+	for name, r := range map[string]Repository{
+		"other format": {Name: "x1", Format: "cran", Kind: Hosted, SourceRepo: "npm-hosted"},
+		"itself":       {Name: "x2", Format: "cran", Kind: Hosted, SourceRepo: "x2"},
+		"on a group":   {Name: "x3", Format: "cran", Kind: Group, SourceRepo: "cran-public"},
+		"on a proxy":   {Name: "x4", Format: "cran", Kind: Proxy, SourceRepo: "cran-public"},
+	} {
+		if err := m.Add(r); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	// Update goes through the same rule.
+	bad := Repository{Name: "cran-linux", Format: "cran", Kind: Hosted, SourceRepo: "npm-hosted"}
+	if err := m.Update(bad); err == nil {
+		t.Error("Update accepted a sourceRepo of another format")
+	}
+}

@@ -149,6 +149,14 @@ type Repository struct {
 	// removable, after which the same coordinate may be written again.
 	// Immutable is stricter and wins when both are set.
 	NoOverwrite bool `json:"noOverwrite,omitempty"`
+
+	// SourceRepo names the repository whose source packages this HOSTED
+	// repository's binaries must match. CRAN uses it for the Linux binary
+	// repository: an uploaded binary is compared against the source tarball
+	// SourceRepo serves for that version (normally the public group), and
+	// with SourceRepo unset Linux binary uploads are refused, since there is
+	// nothing to check them against. Same format as this repository.
+	SourceRepo string `json:"sourceRepo,omitempty"`
 }
 
 // IsImmutable reports whether write-once enforcement is in force for this
@@ -228,6 +236,20 @@ func (m *Manager) PolicyViolation(r Repository) string {
 
 // policyViolation assumes the caller holds m.mu.
 func (m *Manager) policyViolation(r Repository) string {
+	if r.SourceRepo != "" {
+		if r.Kind != Hosted {
+			return fmt.Sprintf("%q: sourceRepo is only meaningful on a hosted repository", r.Name)
+		}
+		if r.SourceRepo == r.Name {
+			return fmt.Sprintf("%q names itself as its sourceRepo", r.Name)
+		}
+		// An unknown name is tolerated, as an unknown group member is: the
+		// handler refuses uploads that need it, and config validation reports it.
+		if src, ok := m.byName[r.SourceRepo]; ok && src.Format != r.Format {
+			return fmt.Sprintf("%q (%s) names %q (%s) as its sourceRepo; they must be the same format",
+				r.Name, r.Format, r.SourceRepo, src.Format)
+		}
+	}
 	if r.Kind == Group {
 		for _, memberName := range r.Members {
 			if memberName == r.Name {

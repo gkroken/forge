@@ -564,6 +564,11 @@ func validate(f File, a Appliers) error {
 				}
 			}
 		}
+		if r.SourceRepo != "" && !reposInFile[r.SourceRepo] {
+			if _, ok := a.Repos.Get(r.SourceRepo); !ok {
+				errs = append(errs, fmt.Sprintf("repository %q: sourceRepo %q not found in file or store", r.Name, r.SourceRepo))
+			}
+		}
 		if r.CleanupPolicyName != "" && !cleanupInFile[r.CleanupPolicyName] {
 			if _, ok, _ := a.Cleanup.Get(r.CleanupPolicyName); !ok {
 				errs = append(errs, fmt.Sprintf("repository %q: cleanup policy %q not found in file or store", r.Name, r.CleanupPolicyName))

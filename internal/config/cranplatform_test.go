@@ -6,6 +6,7 @@ import (
 
 	"forge/internal/config"
 	"forge/internal/cranplatform"
+	"forge/internal/repo"
 )
 
 func cranPlatform(key string) cranplatform.Platform {
@@ -98,5 +99,19 @@ func TestCheckKeys_CRANPlatforms(t *testing.T) {
 	}
 	if err := config.CheckKeys([]byte(strings.Replace(doc, "maxGlibc", "maxGlib", 1)), true); err == nil {
 		t.Fatal("misspelled key accepted")
+	}
+}
+
+func TestValidate_SourceRepoMustExist(t *testing.T) {
+	a := newAppliers(t)
+	f := config.File{Repositories: []repo.Repository{
+		{Name: "cran-linux", Format: "cran", Kind: repo.Hosted, Enabled: true, SourceRepo: "cran-public"},
+	}}
+	if _, err := config.Plan(f, a); err == nil || !strings.Contains(err.Error(), "sourceRepo") {
+		t.Fatalf("dangling sourceRepo not reported: %v", err)
+	}
+	f.Repositories = append(f.Repositories, repo.Repository{Name: "cran-public", Format: "cran", Kind: repo.Group, Enabled: true})
+	if _, err := config.Plan(f, a); err != nil {
+		t.Fatalf("sourceRepo declared in the same file refused: %v", err)
 	}
 }
