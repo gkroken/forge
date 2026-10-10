@@ -554,7 +554,31 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	c.Blob = s.repoBlob(rp)
+	// Last-downloaded retention stamps the blob a read actually served — for
+	// a group that is a member's blob, never the group path the client asked
+	// for, which names no blob at all (and left every group-served artifact
+	// looking never-downloaded to its own repository's retention).
+	if r.Method == http.MethodGet && s.Cleanup != nil {
+		c.Blob = stampDownloads{Store: c.Blob, m: s.Meta}
+	}
 	h.Serve(w, r, c)
+}
+
+// stampDownloads records a download time for every blob a read opens.
+// Async and throttled (cleanup.RecordDownload), so it adds no latency.
+// MemberCtx hands the same store to group members, so whichever member
+// serves the bytes is the one credited.
+type stampDownloads struct {
+	blob.Store
+	m meta.Store
+}
+
+func (d stampDownloads) Get(key string) (io.ReadCloser, error) {
+	rc, err := d.Store.Get(key)
+	if err == nil {
+		go cleanup.RecordDownload(d.m, key)
+	}
+	return rc, err
 }
 
 // onProxyCacheFill emits an artifact.cached webhook when a proxy repository
@@ -810,18 +834,6 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 				if repoName, _, ok := strings.Cut(rest, "/"); ok && repoName != "" {
 					s.Metrics.Downloads.WithLabelValues(repoName).Inc()
 				}
-			}
-		}
-
-		// Record per-artifact download time for last-downloaded retention. Async
-		// + throttled so it adds no request latency. Only when cleanup is
-		// configured (the sole consumer). The blob key is the path after the
-		// /repository/ prefix ("{repo}/{sub}").
-		if s.Cleanup != nil && r.Method == http.MethodGet && status == http.StatusOK &&
-			strings.HasPrefix(r.URL.Path, "/repository/") {
-			blobKey := strings.TrimPrefix(r.URL.Path, "/repository/")
-			if blobKey != "" && !strings.HasSuffix(blobKey, "/") {
-				go cleanup.RecordDownload(s.Meta, blobKey)
 			}
 		}
 
