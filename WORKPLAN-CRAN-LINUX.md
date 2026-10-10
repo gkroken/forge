@@ -1,11 +1,12 @@
 # forge — CRAN Linux Binary Cache
 
-> **Status: IN PROGRESS** — L0 done (`docs/notes/cran-linux-clients.md`); L1 done
-> (validated upload; live: `scripts/cran-linux-validate.sh`, 24/24); L2 done (one URL;
-> live with real install.packages/pak/renv: `scripts/cran-linux-serve-validate.sh`);
-> L3 done (provenance, per-binary retention, rejection audit; group downloads now
-> credit the served blob, all formats). Deviation: the Browse pane stays read-only,
-> so removal is the documented DELETE, not a button there. L4 next. Origin: Skald issue 003 (2026-10-10), "every R
+> **Status: COMPLETE (2026-10-10, not pushed)** — L0–L5 done. Live: uploads
+> `scripts/cran-linux-validate.sh` 24/24; real install.packages/pak/renv with the
+> compiler removed, through the builder helper, `scripts/cran-linux-serve-validate.sh`
+> 27/27; `scripts/repo-kind-matrix.py` 169/169; nightly CI job
+> `conformance-binary-linux`. Decisions taken along the way are in §0 and §6.
+> Deviation: the Browse pane stays read-only, so removal is the documented
+> DELETE, not a button there. Origin: Skald issue 003 (2026-10-10), "every R
 > restore on Linux compiles from source". Measured there: renv restore was 155 s of a
 > 253 s cold build for a 46-package app; tidyverse/sf/arrow-sized apps take minutes.
 
