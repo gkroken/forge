@@ -100,3 +100,19 @@ func TestCRANPlatformsAPI_AdminOnly(t *testing.T) {
 		t.Fatal("a non-admin registered a platform")
 	}
 }
+
+func TestCRANPlatformsAPI_Methods(t *testing.T) {
+	srv := newAdminServer(t)
+	for _, c := range []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/cran/platforms"},
+		{http.MethodPatch, "/api/v1/cran/platforms/noble-x86_64/4.6"},
+		{http.MethodPost, "/repository/__api__/status"},
+	} {
+		if rw := platformReq(t, srv, c.method, c.path, "", nil); rw.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s %s: %d, want 405", c.method, c.path, rw.Code)
+		}
+	}
+	if rw := platformReq(t, srv, http.MethodPut, "/api/v1/cran/platforms/noble-x86_64/4.6", "", "not an object"); rw.Code != http.StatusBadRequest {
+		t.Errorf("non-object body: %d", rw.Code)
+	}
+}

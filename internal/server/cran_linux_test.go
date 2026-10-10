@@ -15,7 +15,9 @@ import (
 	"forge/internal/cranplatform"
 	"forge/internal/format/cran"
 	"forge/internal/obs"
+	"forge/internal/queue"
 	"forge/internal/repo"
+	"forge/internal/webhook"
 )
 
 const linuxDigest = "sha256:abababababababababababababababababababababababababababababababab"
@@ -256,5 +258,18 @@ func TestCRANLinux_GroupDownloadStampsTheBinary(t *testing.T) {
 	}
 	if !stamped(t, s, "cran-linux/bin/linux/noble-x86_64/contrib/4.6/lb_1.0.tar.gz") {
 		t.Error("serving the binary through the group did not stamp the binary")
+	}
+}
+
+func TestRecordReject_RaisesPolicyViolationWebhook(t *testing.T) {
+	s := linuxServer(t, "http://127.0.0.1:1")
+	al := obs.NewAuditLog(4)
+	eng := webhook.New(s.Meta, queue.NewMem(8), nil).WithSSRFGuard(webhook.NewSSRFGuard(true))
+	s.WithAuditLog(al).WithWebhooks(eng)
+	rp, _ := s.Repos.Get("cran-linux")
+	r := httptest.NewRequest(http.MethodPut, "/repository/cran-linux/bin/linux/noble-x86_64/contrib/4.6/lb_1.0.tar.gz", nil)
+	s.recordReject(r, rp, http.StatusBadRequest, "cran-linux-binary", "built by R 4.5.1")
+	if rows := al.Recent(4); len(rows) != 1 || rows[0].Status != http.StatusBadRequest {
+		t.Fatalf("audit rows: %+v", rows)
 	}
 }
