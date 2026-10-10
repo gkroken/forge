@@ -11,7 +11,7 @@ import (
 )
 
 func TestS3_Contract(t *testing.T) {
-	cfg := testutil.StartMinio(t)
+	cfg := testutil.StartS3(t)
 	s, err := blob.NewS3(blob.S3Config{
 		Endpoint:  cfg.Endpoint,
 		AccessKey: cfg.AccessKey,

@@ -18,15 +18,15 @@ func TestStartPostgres(t *testing.T) {
 	t.Logf("postgres DSN: %s", dsn)
 }
 
-func TestStartMinio(t *testing.T) {
-	cfg := testutil.StartMinio(t)
-	resp, err := http.Get("http://" + cfg.Endpoint + "/minio/health/live")
+func TestStartS3(t *testing.T) {
+	cfg := testutil.StartS3(t)
+	resp, err := http.Get("http://" + cfg.Endpoint + "/healthz")
 	if err != nil {
-		t.Fatalf("minio health check: %v", err)
+		t.Fatalf("s3 health check: %v", err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("minio health: got %d want 200", resp.StatusCode)
+		t.Fatalf("s3 health: got %d want 200", resp.StatusCode)
 	}
-	t.Logf("minio endpoint: %s", cfg.Endpoint)
+	t.Logf("s3 endpoint: %s", cfg.Endpoint)
 }
