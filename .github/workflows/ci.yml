@@ -429,8 +429,7 @@ jobs:
     needs: [mirror-images]
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: read       # pre-pull the mirrored images from GHCR
+      contents: read       # the mirrors are public; the node pulls them anonymously
     steps:
       - uses: actions/checkout@v6
 
@@ -438,13 +437,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       # Build the forge image for amd64 only (kind is always amd64).
       - uses: docker/setup-buildx-action@v4
@@ -530,20 +522,10 @@ jobs:
       # Pre-pull all images that forge-stack needs into kind before helm install.
       # Without this, Docker Hub pulls happen during helm --wait, consuming most
       # of the timeout budget before PostgreSQL even initialises.
-      - name: Pre-pull forge-stack images into kind
-        run: |
-          helm template forge-stack deploy/helm/forge-stack \
-            --set forge.image.registry= \
-            --set forge.image.repository=forge \
-            --set forge.image.tag=ci \
-            | grep '^\s*image:' | sed 's/.*image:[[:space:]]*//' | tr -d '"' \
-            | grep -v '^forge:ci$' | sort -u \
-            | while read -r img; do
-                echo "Pulling $img"
-                docker pull "$img"
-                kind load docker-image "$img" --name forge-test
-              done
-
+      # The node pulls forge-stack's third-party images from the GHCR mirrors
+      # itself, as a real cluster would. Do not `kind load` them: a digest-pinned
+      # image loaded that way is left under an import-{date} name, and the
+      # container fails with CreateContainerError "image ... not found".
       - name: helm install forge-stack
         run: |
           helm install forge-stack deploy/helm/forge-stack \
