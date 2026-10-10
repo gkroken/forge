@@ -83,77 +83,77 @@ func (h *Handler) publishLinuxBin(w http.ResponseWriter, r *http.Request, c *for
 	// ParseKey also refuses a nested platform ("linux/a-x86_64/b"): the extra
 	// segment lands in the R version, which must be a bare minor.
 	if _, err := cranplatform.ParseKey(keyStr); err != nil {
-		http.Error(w, "not a Linux binary path: want bin/linux/{distro}-{arch}/contrib/{rminor}/{pkg}_{ver}.tar.gz", http.StatusBadRequest)
+		refuseLinux(w, c, "not a Linux binary path: want bin/linux/{distro}-{arch}/contrib/{rminor}/{pkg}_{ver}.tar.gz", http.StatusBadRequest)
 		return
 	}
 	pkg, ver, ok := nameVersionFromFilename(file)
 	if !ok || pkg == "" || ver == "" {
-		http.Error(w, "cannot read package and version from "+file, http.StatusBadRequest)
+		refuseLinux(w, c, "cannot read package and version from "+file, http.StatusBadRequest)
 		return
 	}
 	reg, ok, err := cranplatform.NewStore(c.Meta).Get(keyStr)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		refuseLinux(w, c, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if !ok {
-		http.Error(w, "platform key "+keyStr+" is not registered; an admin registers it at /api/v1/cran/platforms/"+keyStr,
+		refuseLinux(w, c, "platform key "+keyStr+" is not registered; an admin registers it at /api/v1/cran/platforms/"+keyStr,
 			http.StatusForbidden)
 		return
 	}
 	if !c.Repo.RefusesOverwrite() {
-		http.Error(w, "repository "+c.Repo.Name+" does not set noOverwrite; a Linux binary must never be replaced in place, so this repository cannot hold them",
+		refuseLinux(w, c, "repository "+c.Repo.Name+" does not set noOverwrite; a Linux binary must never be replaced in place, so this repository cannot hold them",
 			http.StatusForbidden)
 		return
 	}
 	if c.Repo.SourceRepo == "" {
-		http.Error(w, "repository "+c.Repo.Name+" has no sourceRepo to check binaries against", http.StatusForbidden)
+		refuseLinux(w, c, "repository "+c.Repo.Name+" has no sourceRepo to check binaries against", http.StatusForbidden)
 		return
 	}
 	switch digest := r.Header.Get(BuilderDigestHeader); {
 	case digest == "":
-		http.Error(w, BuilderDigestHeader+" is required: the digest of the builder image this was built in", http.StatusBadRequest)
+		refuseLinux(w, c, BuilderDigestHeader+" is required: the digest of the builder image this was built in", http.StatusBadRequest)
 		return
 	case digest != reg.BuilderDigest:
-		http.Error(w, fmt.Sprintf("built in %s, but %s is registered for builder image %s (%s)",
+		refuseLinux(w, c, fmt.Sprintf("built in %s, but %s is registered for builder image %s (%s)",
 			digest, keyStr, reg.BuilderDigest, reg.BuilderImage), http.StatusForbidden)
 		return
 	}
 	if _, exists, _ := c.Blob.Stat(c.Key(c.Sub)); exists {
-		http.Error(w, blob.ErrExists.Error(), http.StatusConflict)
+		refuseLinux(w, c, blob.ErrExists.Error(), http.StatusConflict)
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		refuseLinux(w, c, err.Error(), http.StatusBadRequest)
 		return
 	}
 	linkingTo := r.Header.Get(LinkingToHeader)
 	if len(linkingTo) > 4096 || strings.ContainsAny(linkingTo, "\r\n") {
-		http.Error(w, LinkingToHeader+" must be one line under 4 KiB", http.StatusBadRequest)
+		refuseLinux(w, c, LinkingToHeader+" must be one line under 4 KiB", http.StatusBadRequest)
 		return
 	}
 	srcDesc, srcSum, status, msg := h.linuxSourceDescription(c, pkg, ver)
 	if status != 0 {
-		http.Error(w, msg, status)
+		refuseLinux(w, c, msg, status)
 		return
 	}
 	bin, err := validateLinuxBinary(body, pkg, ver, reg, srcDesc)
 	if errors.Is(err, errBadBinary) {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		refuseLinux(w, c, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		refuseLinux(w, c, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if _, err := c.Blob.Put(c.Key(c.Sub), bytes.NewReader(body)); err != nil {
 		if blob.Refused(err) {
-			http.Error(w, err.Error(), http.StatusConflict)
+			refuseLinux(w, c, err.Error(), http.StatusConflict)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		refuseLinux(w, c, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	rec := recordFromFields(bin.Fields)
@@ -168,6 +168,17 @@ func (h *Handler) publishLinuxBin(w http.ResponseWriter, r *http.Request, c *for
 	ledger.RecordAt(c.Meta, c.Repo.Name, rec.Package, rec.Version, rec.UploadedAt)
 	w.WriteHeader(http.StatusCreated)
 	fmt.Fprintf(w, "stored Linux binary %s %s for %s\n", pkg, ver, keyStr)
+}
+
+// refuseLinux answers a refused Linux binary upload and, unless the refusal
+// is a lost race (409) or forge's own trouble (5xx), reports it through
+// c.Reject: a rejected build is something an operator needs to see, not only
+// the builder that sent it.
+func refuseLinux(w http.ResponseWriter, c *format.Context, msg string, status int) {
+	if c.Reject != nil && status != http.StatusConflict && status < 500 {
+		c.Reject(status, "cran-linux-binary", msg)
+	}
+	http.Error(w, msg, status)
 }
 
 // linuxSourceDescription returns the DESCRIPTION of the source package forge

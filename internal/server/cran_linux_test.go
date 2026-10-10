@@ -13,6 +13,7 @@ import (
 	"forge/internal/auth"
 	"forge/internal/cranplatform"
 	"forge/internal/format/cran"
+	"forge/internal/obs"
 	"forge/internal/repo"
 )
 
@@ -210,4 +211,23 @@ func TestCRANLinux_ProvenanceNamesTheUploader(t *testing.T) {
 	if d.Builds[0].Provenance[0].Value != "ci builder noble" {
 		t.Errorf("uploader recorded as %q", d.Builds[0].Provenance[0].Value)
 	}
+}
+
+// A rejected binary is audited with its reason; the request middleware alone
+// audits no 400.
+func TestCRANLinux_RejectionIsAudited(t *testing.T) {
+	s := linuxServer(t, "http://127.0.0.1:1")
+	al := obs.NewAuditLog(16)
+	s.WithAuditLog(al)
+	seedBlobBytes(t, s, http.MethodPut, "cran-src", "src/contrib/lb_1.0.tar.gz", tgzWithFile(t, "lb/DESCRIPTION", pkgDesc("lb")))
+	bad := tgzFiles(t, map[string]string{"lb/DESCRIPTION": pkgDesc("lb"), "lb/Meta/package.rds": "rds"}) // no Built:
+	if rw := putLinux(t, s, "lb", bad); rw.Code != http.StatusBadRequest {
+		t.Fatalf("upload: %d %s", rw.Code, rw.Body)
+	}
+	for _, e := range al.Recent(16) {
+		if e.Status == http.StatusBadRequest && strings.Contains(e.Detail, "cran-linux-binary") && strings.Contains(e.Detail, "Built") {
+			return
+		}
+	}
+	t.Fatalf("no audit row with the rejection reason: %+v", al.Recent(16))
 }

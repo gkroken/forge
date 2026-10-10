@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -128,6 +129,35 @@ func (s *Server) recordQuotaBlock(r *http.Request, rp repo.Repository, used, quo
 				"usedBytes":  used,
 				"quotaBytes": quota,
 			},
+		}
+		go s.Webhooks.Dispatch(context.Background(), ev)
+	}
+}
+
+// recordReject records a write a format refused on policy (format.Context.Reject):
+// an audit entry carrying the reason, and a policy.violation webhook — the
+// same surfaces as the quota and vulnerability gates.
+func (s *Server) recordReject(r *http.Request, rp repo.Repository, status int, kind, detail string) {
+	actor := actorLabel(r, s.Auth)
+	if s.AuditLog != nil {
+		s.AuditLog.Append(obs.AuditEntry{
+			Timestamp: time.Now().UTC(),
+			Actor:     actor,
+			Method:    r.Method,
+			Path:      r.URL.Path,
+			Status:    status,
+			Detail:    kind + ": rejected — " + detail,
+		})
+	}
+	if s.Webhooks != nil {
+		ev := webhook.Event{
+			Type:      webhook.EventPolicyViolation,
+			Repo:      rp.Name,
+			Format:    rp.Format,
+			Path:      strings.TrimPrefix(r.URL.Path, "/repository/"+rp.Name+"/"),
+			Actor:     actor,
+			Timestamp: time.Now().UTC(),
+			Data:      map[string]any{"kind": kind, "status": status, "reason": detail},
 		}
 		go s.Webhooks.Dispatch(context.Background(), ev)
 	}

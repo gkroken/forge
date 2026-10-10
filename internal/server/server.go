@@ -535,6 +535,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		ReadRepo:    s.readRepo,
 		Actor:       actorLabel(r, s.Auth),
 	}
+	c.Reject = func(status int, kind, detail string) { s.recordReject(r, rp, status, kind, detail) }
 	if guard != nil && rp.Kind == repo.Group {
 		c.MemberFilter = guard.memberFilter
 		c.NameClaimed = guard.claimedName

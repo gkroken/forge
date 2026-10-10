@@ -77,6 +77,12 @@ type Context struct {
 	// for records a handler keeps about a write — CRAN Linux binary
 	// provenance. Empty when unknown (in-process requests, eval mode).
 	Actor string
+
+	// Reject reports a write the format refused on policy — a rejected CRAN
+	// Linux binary — so it is audited and raised as a policy.violation
+	// webhook, not just answered to the client. kind names the policy, detail
+	// the reason as sent to the client. Nil when the server records nothing.
+	Reject func(status int, kind, detail string)
 }
 
 // Key namespaces a blob key under the repo so repos never collide in storage.

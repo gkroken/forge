@@ -214,3 +214,40 @@ func TestLinuxUpload_RecordsProvenance(t *testing.T) {
 func sha256hex(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
 
 func mustJSON(v any) string { b, _ := json.Marshal(v); return string(b) }
+
+// A policy refusal is reported (audit + webhook via c.Reject); a lost race
+// (409) and upstream trouble (502) are not policy and are not.
+func TestLinuxUpload_RejectionsAreReported(t *testing.T) {
+	digest := lbPlatform().BuilderDigest
+	for _, tc := range []struct {
+		name, sub, digest string
+		before          func(*format.Context)
+		code            int
+		reported        bool
+	}{
+		{name: "wrong builder", sub: lbPath, digest: "sha256:" + strings.Repeat("00", 32), code: 403, reported: true},
+		{name: "invalid binary", sub: "bin/linux/noble-x86_64/contrib/4.6/lb_2.0.tar.gz", digest: digest, code: 400, reported: true},
+		{name: "lost race", sub: lbPath, digest: digest, code: 409,
+			before: func(c *format.Context) { c.Blob.Put(c.Key(lbPath), bytes.NewReader([]byte("x"))) }}, //nolint:errcheck
+		{name: "upstream trouble", sub: "bin/linux/noble-x86_64/contrib/4.6/flaky_1.0.tar.gz", digest: digest, code: 502},
+	} {
+		var reads int
+		c := linuxCtx(t, &reads)
+		var got []string
+		c.Reject = func(status int, kind, detail string) { got = append(got, kind+" "+detail) }
+		if tc.before != nil {
+			tc.before(c)
+		}
+		rw := linuxPut(c, tc.sub, tc.digest, lbTarball(t, lbEntries(t)))
+		if rw.Code != tc.code {
+			t.Errorf("%s: %d, want %d", tc.name, rw.Code, tc.code)
+		}
+		if (len(got) > 0) != tc.reported {
+			t.Errorf("%s: reported %v, want reported=%v", tc.name, got, tc.reported)
+		}
+		if tc.reported && (len(got) != 1 || !strings.HasPrefix(got[0], "cran-linux-binary ") ||
+			!strings.Contains(got[0], strings.TrimSpace(rw.Body.String()))) {
+			t.Errorf("%s: report %q does not carry the reason %q", tc.name, got, rw.Body.String())
+		}
+	}
+}
