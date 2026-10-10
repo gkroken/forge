@@ -23,6 +23,7 @@ import (
 
 	"forge/internal/auth"
 	"forge/internal/cleanup"
+	"forge/internal/cranplatform"
 	"forge/internal/ldap"
 	"forge/internal/meta"
 	"forge/internal/obs"
@@ -41,6 +42,10 @@ type File struct {
 	SecurityDefault *vuln.Policy           `json:"securityDefault,omitempty"`
 	Roles           []auth.CustomRole      `json:"roles,omitempty"`
 	Webhooks        []webhook.Subscription `json:"webhooks,omitempty"`
+	// CRANPlatforms registers Linux platform keys for CRAN binary packages
+	// (internal/cranplatform). Generate each entry's libraries with
+	// scripts/cran-linux-manifest.sh in the builder image.
+	CRANPlatforms []cranplatform.Platform `json:"cranPlatforms,omitempty"`
 	// LDAP declares the directory-authentication settings honored on boot in
 	// -config mode (an alternative to the -ldap-* flags; the block wins when both
 	// are set). The bind password should be supplied via ${ENV_VAR}. It is a
@@ -68,8 +73,10 @@ type Appliers struct {
 	Vuln     *vuln.PolicyManager
 	Roles    auth.RoleStore // nil when auth is disabled
 	Webhooks *webhook.Store // nil when webhooks are not configured
-	Meta     meta.Store     // for managed-set bookkeeping
-	Audit    obs.AuditSink  // optional; records forced adoptions
+	// CRANPlatforms is the CRAN Linux platform registry; nil disables the kind.
+	CRANPlatforms *cranplatform.Store
+	Meta          meta.Store    // for managed-set bookkeeping
+	Audit         obs.AuditSink // optional; records forced adoptions
 }
 
 // Result summarises what Apply or Plan found.
@@ -79,6 +86,7 @@ type Result struct {
 	SecurityPolicies   KindResult
 	Roles              KindResult
 	Webhooks           KindResult
+	CRANPlatforms      KindResult
 	SecurityDefaultSet bool // true when the config specified SecurityDefault
 	LDAPConfigured     bool // true when the config specified an ldap block
 	// Conflicts lists objects that exist but have never been managed by this
@@ -210,6 +218,7 @@ type managedSet struct {
 	SecurityPolicies []string `json:"securityPolicies,omitempty"`
 	Roles            []string `json:"roles,omitempty"`
 	Webhooks         []string `json:"webhooks,omitempty"`
+	CRANPlatforms    []string `json:"cranPlatforms,omitempty"`
 }
 
 func loadManaged(m meta.Store) managedSet {
@@ -222,7 +231,7 @@ func saveManaged(m meta.Store, ms managedSet) error {
 	return m.PutJSON(managedNS, managedKey, ms)
 }
 
-// Object kinds, used by Conflict.Kind and Ownership.Owns. These are the five
+// Object kinds, used by Conflict.Kind and Ownership.Owns. These are the six
 // kinds a config file can manage.
 const (
 	KindRepository     = "repository"
@@ -230,6 +239,7 @@ const (
 	KindCleanupPolicy  = "cleanupPolicy"
 	KindSecurityPolicy = "securityPolicy"
 	KindWebhook        = "webhook"
+	KindCRANPlatform   = "cranPlatform"
 )
 
 // Ownership answers "does the config file own this object?" for callers outside
@@ -247,7 +257,7 @@ func LoadOwnership(m meta.Store) Ownership {
 	o := Ownership{idx: ms.index()}
 	o.empty = len(ms.Repositories) == 0 && len(ms.Roles) == 0 &&
 		len(ms.CleanupPolicies) == 0 && len(ms.SecurityPolicies) == 0 &&
-		len(ms.Webhooks) == 0
+		len(ms.Webhooks) == 0 && len(ms.CRANPlatforms) == 0
 	return o
 }
 
@@ -266,6 +276,8 @@ func (o Ownership) Owns(kind, name string) bool {
 		return o.idx.vuln[name]
 	case KindWebhook:
 		return o.idx.webhooks[name]
+	case KindCRANPlatform:
+		return o.idx.cranPlatforms[name]
 	default:
 		return false
 	}
@@ -309,16 +321,17 @@ func classify(desired, existing any, exists, managed bool) disposition {
 
 // managedIndex is the managed set as lookup maps, one per object kind.
 type managedIndex struct {
-	repos, cleanup, vuln, roles, webhooks map[string]bool
+	repos, cleanup, vuln, roles, webhooks, cranPlatforms map[string]bool
 }
 
 func (ms managedSet) index() managedIndex {
 	return managedIndex{
-		repos:    sliceSet(ms.Repositories),
-		cleanup:  sliceSet(ms.CleanupPolicies),
-		vuln:     sliceSet(ms.SecurityPolicies),
-		roles:    sliceSet(ms.Roles),
-		webhooks: sliceSet(ms.Webhooks),
+		repos:         sliceSet(ms.Repositories),
+		cleanup:       sliceSet(ms.CleanupPolicies),
+		vuln:          sliceSet(ms.SecurityPolicies),
+		roles:         sliceSet(ms.Roles),
+		webhooks:      sliceSet(ms.Webhooks),
+		cranPlatforms: sliceSet(ms.CRANPlatforms),
 	}
 }
 
@@ -436,6 +449,23 @@ func Plan(f File, a Appliers) (Result, error) {
 		res.SecurityDefaultSet = true
 	}
 	res.LDAPConfigured = f.LDAP != nil
+
+	// CRAN platforms (matched by Key).
+	if a.CRANPlatforms != nil {
+		desired := strSet(f.CRANPlatforms, func(p cranplatform.Platform) string { return p.Key })
+		for _, p := range f.CRANPlatforms {
+			existing, ok, _ := a.CRANPlatforms.Get(p.Key)
+			res.tally(&res.CRANPlatforms, KindCRANPlatform, p.Key,
+				classify(p, existing, ok, mi.cranPlatforms[p.Key]), p, existing)
+		}
+		if f.Prune {
+			for _, key := range managed.CRANPlatforms {
+				if !desired[key] {
+					res.CRANPlatforms.Deleted++
+				}
+			}
+		}
+	}
 
 	// Roles.
 	if a.Roles != nil {
@@ -560,6 +590,16 @@ func validate(f File, a Appliers) error {
 			"%d role(s) declared but role management is disabled — start forge with -auth, or remove the \"roles\" section",
 			len(f.Roles)))
 	}
+	for _, p := range f.CRANPlatforms {
+		if err := p.Validate(); err != nil {
+			errs = append(errs, fmt.Sprintf("cranPlatform %q: %v", p.Key, err))
+		}
+	}
+	if len(f.CRANPlatforms) > 0 && a.CRANPlatforms == nil {
+		errs = append(errs, fmt.Sprintf(
+			"%d CRAN platform(s) declared but the CRAN platform registry is not configured",
+			len(f.CRANPlatforms)))
+	}
 	if len(f.Webhooks) > 0 && a.Webhooks == nil {
 		errs = append(errs, fmt.Sprintf(
 			"%d webhook(s) declared but the webhook engine is not configured",
@@ -572,7 +612,8 @@ func validate(f File, a Appliers) error {
 }
 
 // Apply reconciles the current state to match f. It is idempotent.
-// Dependency order: roles → cleanup policies → security policies (+default) → repositories → webhooks.
+// Dependency order: roles → cleanup policies → security policies (+default) →
+// CRAN platforms → repositories → webhooks.
 //
 // Apply refuses, before writing anything, if the file would adopt an object it
 // has never managed whose fields differ from the desired state — set File.Adopt
@@ -727,6 +768,45 @@ func Apply(f File, a Appliers) (Result, error) {
 	}
 	res.LDAPConfigured = f.LDAP != nil
 
+	// 3b. CRAN platforms (matched by Key).
+	if a.CRANPlatforms != nil {
+		for _, p := range f.CRANPlatforms {
+			existing, ok, _ := a.CRANPlatforms.Get(p.Key)
+			d := classify(p, existing, ok, mi.cranPlatforms[p.Key])
+			switch d {
+			case dispCreate, dispUpdate, dispAdoptConflict:
+				if err := a.CRANPlatforms.Put(p); err != nil {
+					return res, fmt.Errorf("config: write CRAN platform %q: %w", p.Key, err)
+				}
+				switch d {
+				case dispCreate:
+					res.CRANPlatforms.Created++
+				case dispUpdate:
+					res.CRANPlatforms.Updated++
+				default:
+					a.auditAdoption(KindCRANPlatform, p.Key, diffFields(p, existing))
+					res.CRANPlatforms.Adopted++
+				}
+			case dispAdopt:
+				res.CRANPlatforms.Adopted++
+			default:
+				res.CRANPlatforms.Noop++
+			}
+		}
+		if f.Prune {
+			desired := strSet(f.CRANPlatforms, func(p cranplatform.Platform) string { return p.Key })
+			for _, key := range snapshot.CRANPlatforms {
+				if !desired[key] {
+					if err := a.CRANPlatforms.Delete(key); err != nil {
+						return res, fmt.Errorf("config: prune CRAN platform %q: %w", key, err)
+					}
+					res.CRANPlatforms.Deleted++
+				}
+			}
+		}
+		managed.CRANPlatforms = strSlice(f.CRANPlatforms, func(p cranplatform.Platform) string { return p.Key })
+	}
+
 	// 4. Repositories.
 	for _, r := range f.Repositories {
 		existing, ok := a.Repos.Get(r.Name)
@@ -862,6 +942,14 @@ func Export(a Appliers) (File, error) {
 			return File{}, fmt.Errorf("config export: roles: %w", err)
 		}
 		f.Roles = roles
+	}
+
+	if a.CRANPlatforms != nil {
+		ps, err := a.CRANPlatforms.List()
+		if err != nil {
+			return File{}, fmt.Errorf("config export: CRAN platforms: %w", err)
+		}
+		f.CRANPlatforms = ps
 	}
 
 	if a.Webhooks != nil {

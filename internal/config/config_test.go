@@ -10,6 +10,7 @@ import (
 	"forge/internal/auth"
 	"forge/internal/cleanup"
 	"forge/internal/config"
+	"forge/internal/cranplatform"
 	"forge/internal/ldap"
 	"forge/internal/meta"
 	"forge/internal/obs"
@@ -35,6 +36,8 @@ func newAppliers(t *testing.T) config.Appliers {
 		Roles:    auth.NewRoleStore(m),
 		Webhooks: webhook.NewStore(m),
 		Meta:     m,
+
+		CRANPlatforms: cranplatform.NewStore(m),
 	}
 }
 

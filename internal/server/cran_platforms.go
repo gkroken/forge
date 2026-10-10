@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"forge/internal/config"
 	"forge/internal/cranplatform"
 )
 
@@ -35,8 +36,12 @@ func (s *Server) handleCRANPlatforms(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		out := make([]json.RawMessage, 0, len(list))
+		for _, p := range list {
+			out = append(out, withManagedBy(p, s.managedBy(config.KindCRANPlatform, p.Key)))
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(list)
+		_ = json.NewEncoder(w).Encode(out)
 		return
 	}
 
@@ -52,7 +57,7 @@ func (s *Server) handleCRANPlatforms(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(p)
+		_ = json.NewEncoder(w).Encode(withManagedBy(p, s.managedBy(config.KindCRANPlatform, key)))
 	case http.MethodPut:
 		var p cranplatform.Platform
 		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
@@ -64,6 +69,9 @@ func (s *Server) handleCRANPlatforms(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		p.Key = key
+		if s.refuseConfigOwned(w, r, config.KindCRANPlatform, key) {
+			return
+		}
 		if err := reg.Put(p); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -71,6 +79,9 @@ func (s *Server) handleCRANPlatforms(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(p)
 	case http.MethodDelete:
+		if s.refuseConfigOwned(w, r, config.KindCRANPlatform, key) {
+			return
+		}
 		if _, ok, _ := reg.Get(key); !ok {
 			http.Error(w, "CRAN platform not registered: "+key, http.StatusNotFound)
 			return

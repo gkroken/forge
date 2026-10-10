@@ -1,7 +1,7 @@
 # Config-as-Code runbook
 
 forge can manage its own contents (repositories, cleanup policies, security
-policies, roles, and webhooks) declaratively from a YAML or JSON file. Commit the
+policies, roles, webhooks, and CRAN Linux platform keys) declaratively from a YAML or JSON file. Commit the
 file to git, mount it as a Kubernetes ConfigMap, and forge converges on boot.
 
 ## File format: YAML or JSON
@@ -65,6 +65,7 @@ mentioned are left untouched unless `prune` is enabled).
   "securityDefault":  { ...vuln.Policy...                },
   "roles":            [ ...auth.CustomRole objects...    ],
   "webhooks":         [ ...webhook.Subscription objects. ],
+  "cranPlatforms":    [ ...cranplatform.Platform objects ],
   "prune":            false,
   "adopt":            false
 }
@@ -330,7 +331,8 @@ applied and never silently skipped.
 Apply runs in this order to satisfy references:
 
 ```
-roles → cleanup policies → security policies (+default) → repositories → webhooks
+roles → cleanup policies → security policies (+default) → CRAN platforms →
+repositories → webhooks
 ```
 
 Cross-references (a repo pointing at a cleanup or security policy) are validated

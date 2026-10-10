@@ -101,6 +101,7 @@ func (s *Server) computeDrift() (driftResponse, error) {
 		"cleanupPolicies":  res.CleanupPolicies,
 		"securityPolicies": res.SecurityPolicies,
 		"webhooks":         res.Webhooks,
+		"cranPlatforms":    res.CRANPlatforms,
 	} {
 		out.Kinds[kind] = toKindOp(k)
 		out.Objects += k.Changes()

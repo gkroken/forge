@@ -25,6 +25,7 @@ import (
 	"forge/internal/blob"
 	"forge/internal/cleanup"
 	"forge/internal/config"
+	"forge/internal/cranplatform"
 	"forge/internal/formats"
 	"forge/internal/ldap"
 	"forge/internal/meta"
@@ -341,7 +342,9 @@ func main() {
 		Roles:    roleStore,
 		Webhooks: webhookEngine.Store(),
 		Meta:     metaStore,
-		Audit:    auditSink,
+		// The registry lives in the meta store, so it is always available.
+		CRANPlatforms: cranplatform.NewStore(metaStore),
+		Audit:         auditSink,
 	}
 	if *configExport {
 		asYAML := false

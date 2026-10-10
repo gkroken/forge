@@ -11,6 +11,7 @@ import (
 	"forge/internal/blob"
 	"forge/internal/cleanup"
 	"forge/internal/config"
+	"forge/internal/cranplatform"
 	"forge/internal/format"
 	"forge/internal/meta"
 	"forge/internal/obs"
@@ -352,5 +353,32 @@ func TestRepoUpdate_RejectsUnknownPolicy(t *testing.T) {
 		if rec := do(t, srv, http.MethodPut, "/api/v1/repos/t1", body); rec.Code != http.StatusBadRequest {
 			t.Errorf("dangling policy reference = %d, want 400 (%s)", rec.Code, body)
 		}
+	}
+}
+
+func TestConfigOwned_RefusesCRANPlatformWrite(t *testing.T) {
+	srv, _ := ownedServer(t, false)
+	p := cranplatform.Platform{
+		Key: "noble-x86_64/4.6", RPlatform: "x86_64-pc-linux-gnu",
+		BuilderImage: "img", BuilderDigest: "sha256:" + strings.Repeat("ab", 32),
+		MaxGlibc: "2.39", Libraries: []string{"libc.so.6"},
+	}
+	if _, err := config.Apply(config.File{CRANPlatforms: []cranplatform.Platform{p}},
+		config.Appliers{Repos: srv.Repos, Cleanup: srv.Cleanup, Meta: srv.Meta, CRANPlatforms: cranplatform.NewStore(srv.Meta)}); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"rPlatform":"x86_64-pc-linux-gnu","builderImage":"img","builderDigest":"sha256:` + strings.Repeat("ab", 32) +
+		`","maxGlibc":"2.40","libraries":["libc.so.6"]}`
+	if rec := do(t, srv, http.MethodPut, "/api/v1/cran/platforms/noble-x86_64/4.6", body); rec.Code != http.StatusConflict {
+		t.Errorf("PUT config-managed platform = %d, want 409", rec.Code)
+	}
+	if rec := do(t, srv, http.MethodDelete, "/api/v1/cran/platforms/noble-x86_64/4.6", ""); rec.Code != http.StatusConflict {
+		t.Errorf("DELETE config-managed platform = %d, want 409", rec.Code)
+	}
+	if rec := do(t, srv, http.MethodPut, "/api/v1/cran/platforms/jammy-x86_64/4.6", body); rec.Code != http.StatusOK {
+		t.Errorf("unmanaged platform must be writable, got %d %s", rec.Code, rec.Body)
+	}
+	if rec := do(t, srv, http.MethodGet, "/api/v1/cran/platforms/noble-x86_64/4.6", ""); !strings.Contains(rec.Body.String(), `"managedBy":"config"`) {
+		t.Errorf("managedBy missing: %s", rec.Body)
 	}
 }
