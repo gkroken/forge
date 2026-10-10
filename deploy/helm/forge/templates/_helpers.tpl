@@ -65,7 +65,27 @@ Service account name
 Container image reference, defaulting tag to appVersion.
 */}}
 {{- define "forge.image" -}}
-{{- printf "%s:%s" .Values.image.repository ((.Values.image.tag | default .Chart.AppVersion)) }}
+{{- include "forge.imageRef" (dict "global" .Values.global "image" (merge (dict "tag" (.Values.image.tag | default .Chart.AppVersion)) (omit .Values.image "tag"))) }}
+{{- end }}
+
+{{/*
+forge.imageRef renders an image reference: [registry/]repository:tag[@digest].
+global.imageRegistry, when set, replaces every image's own registry, so an
+air-gapped install mirrors the images under the same paths into one registry
+and sets that one value. forge-stack's templates use it too (named templates
+are shared with the parent chart).
+
+  {{ include "forge.imageRef" (dict "global" .Values.global "image" .Values.x.image) }}
+*/}}
+{{- define "forge.imageRef" -}}
+{{- $img := .image -}}
+{{- $registry := $img.registry | default "" -}}
+{{- with .global }}{{ with .imageRegistry }}{{ $registry = . }}{{ end }}{{ end -}}
+{{- $ref := $img.repository -}}
+{{- if $registry }}{{ $ref = printf "%s/%s" $registry $img.repository }}{{ end -}}
+{{- if $img.tag }}{{ $ref = printf "%s:%s" $ref (toString $img.tag) }}{{ end -}}
+{{- if $img.digest }}{{ $ref = printf "%s@%s" $ref $img.digest }}{{ end -}}
+{{- $ref -}}
 {{- end }}
 
 {{/*

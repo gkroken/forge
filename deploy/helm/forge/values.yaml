@@ -3,11 +3,21 @@
 
 replicaCount: 1
 
+# Every image the chart deploys comes from forge's registry (ghcr.io/gkroken):
+# forge's own image, and third-party images mirrored there under their
+# upstream paths, scanned and signed (deploy/third-party-images.txt). Set
+# global.imageRegistry to pull them all from your own mirror instead — copy
+# them under the same paths. "" = each image's own registry below.
+global:
+  imageRegistry: ""
+
 image:
+  registry: ghcr.io/gkroken
   repository: forge
   pullPolicy: IfNotPresent
   # Defaults to .Chart.AppVersion when empty.
   tag: ""
+  digest: ""
 
 imagePullSecrets: []
 nameOverride: ""
@@ -20,8 +30,17 @@ serviceAccount:
 
 podAnnotations: {}
 
-# initContainers run before the forge container starts. Useful in forge-stack
-# to wait for PostgreSQL and the S3 store to be reachable before forge tries to connect.
+# waitFor holds forge back until each dependency accepts TCP connections —
+# forge exits if Postgres or S3 is unreachable at startup. forge-stack sets it.
+#   waitFor: [{name: postgresql, host: forge-stack-postgresql, port: 5432}]
+waitFor: []
+waitImage:
+  registry: ghcr.io/gkroken
+  repository: library/busybox
+  tag: "1.36"
+  digest: "sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662"
+
+# initContainers are added verbatim after the waitFor ones.
 initContainers: []
 
 podSecurityContext:
