@@ -5,7 +5,7 @@ description: >
   PostgreSQL (meta store), and SeaweedFS (S3-compatible blob store) — no
   external services required beyond a Kubernetes cluster.
 type: application
-version: 0.2.0
+version: 0.3.0
 appVersion: "0.1.0"
 keywords:
   - artifact-repository
@@ -19,14 +19,8 @@ dependencies:
     version: "0.1.0"
     repository: "file://../forge"
 
-  # Bitnami PostgreSQL — schema migrations run automatically on forge startup.
-  # Uses chart >=18.0.0 which pins tag: latest (all versioned Bitnami tags were
-  # removed from Docker Hub; only :latest survives).
-  - name: postgresql
-    version: ">=18.0.0 <19.0.0"
-    repository: "https://charts.bitnami.com/bitnami"
-
-  # The S3 store is a built-in template (templates/seaweedfs.yaml) running
-  # SeaweedFS, pinned by digest. MinIO was used until its community images were
-  # removed from Docker Hub (2026-09); Bitnami's minio sub-chart was dropped
-  # earlier when Bitnami removed its versioned tags.
+  # PostgreSQL and the S3 store (SeaweedFS) are built-in templates
+  # (templates/postgresql.yaml, templates/seaweedfs.yaml), not sub-charts: the
+  # Bitnami charts could only float on :latest once Bitnami removed its
+  # versioned tags, and MinIO's images were removed from Docker Hub (2026-09).
+  # Their images are pinned by digest and mirrored to ghcr.io/gkroken.

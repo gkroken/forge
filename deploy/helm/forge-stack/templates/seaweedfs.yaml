@@ -50,7 +50,7 @@ spec:
     spec:
       containers:
         - name: seaweedfs
-          image: {{ .Values.seaweedfs.image | quote }}
+          image: {{ include "forge.imageRef" (dict "global" .Values.global "image" .Values.seaweedfs.image) }}
           args: ["server", "-s3", "-dir=/data"]
           env:
             # SeaweedFS takes S3 credentials from these when no -s3.config is given.

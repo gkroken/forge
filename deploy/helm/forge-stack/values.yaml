@@ -9,9 +9,18 @@
 #     --set forge.extraEnv.POSTGRES_DSN="postgres://postgres:<pg-password>@forge-stack-postgresql:5432/forge?sslmode=disable" \
 #     --set forge.extraEnv.S3_SECRET_KEY=<same strong-password>
 #
-# Service names: postgresql's is fixed by fullnameOverride; the bundled
-# SeaweedFS service is {release}-seaweedfs, so with another release name update
-# forge.extraEnv.S3_ENDPOINT and the wait-for-s3 init container to match.
+# Service names are {release}-postgresql and {release}-seaweedfs, so with
+# another release name update forge.extraEnv (POSTGRES_DSN, S3_ENDPOINT) and
+# forge.waitFor to match.
+
+# ── images ─────────────────────────────────────────────────────────────────────
+# Every image comes from forge's registry, ghcr.io/gkroken: forge's own, and the
+# third-party ones mirrored there under their upstream paths — copied by digest
+# (not rebuilt), scanned and signed in forge's CI (deploy/third-party-images.txt).
+# For an air-gapped install, copy them under the same paths into your registry
+# and set global.imageRegistry to it.
+global:
+  imageRegistry: ""
 #
 # IMPORTANT: the default passwords below are for local testing only.
 # Always override them before exposing forge to a network.
@@ -39,19 +48,9 @@ forge:
   # Wait for PostgreSQL and the S3 store to accept connections before forge starts.
   # Without this, forge exits immediately (no retry logic) and enters
   # CrashLoopBackOff, which can push a cold install past the Helm --wait timeout.
-  initContainers:
-    - name: wait-for-postgresql
-      image: busybox:1.36
-      command:
-        - sh
-        - -c
-        - until nc -z forge-stack-postgresql 5432; do echo "waiting for postgresql"; sleep 2; done
-    - name: wait-for-s3
-      image: busybox:1.36
-      command:
-        - sh
-        - -c
-        - until nc -z forge-stack-seaweedfs 8333; do echo "waiting for s3"; sleep 2; done
+  waitFor:
+    - {name: postgresql, host: forge-stack-postgresql, port: 5432}
+    - {name: s3, host: forge-stack-seaweedfs, port: 8333}
 
   resources:
     requests:
@@ -62,33 +61,39 @@ forge:
       memory: 512Mi
 
 # ── postgresql ─────────────────────────────────────────────────────────────────
+# Bundled metadata store (templates/postgresql.yaml): the official postgres
+# image. For production prefer a managed Postgres or an operator such as
+# CloudNativePG, and point forge.extraEnv.POSTGRES_DSN at it.
 postgresql:
-  # Fixed service name — forge's POSTGRES_DSN hard-codes this hostname.
-  # Change both together if you need a different name.
-  fullnameOverride: forge-stack-postgresql
-
+  image:
+    registry: ghcr.io/gkroken
+    repository: library/postgres
+    tag: "18.6"
+    digest: "sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336"
   auth:
-    postgresPassword: "changeme-db"   # ← CHANGE THIS
+    postgresPassword: "changeme-db"   # ← CHANGE THIS (and forge.extraEnv.POSTGRES_DSN)
     database: "forge"
-
-  primary:
-    resources:
-      requests:
-        cpu: 100m
-        memory: 256Mi
-      limits:
-        memory: 512Mi
-    persistence:
-      size: 8Gi
+  persistence:
+    size: 8Gi
+    storageClassName: ""     # "" = the cluster's default StorageClass
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
 
 # ── seaweedfs ───────────────────────────────────────────────────────────────────
 # Bundled S3-compatible store (templates/seaweedfs.yaml), a getting-started
 # convenience: production should point forge at its own S3 service.
 # MinIO was used until its community images were removed from Docker Hub
-# (2026-09). The image is pinned by digest; mirror it into your own registry
-# for air-gapped or supply-chain-controlled installs.
+# (2026-09).
 seaweedfs:
-  image: "chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d"
+  image:
+    registry: ghcr.io/gkroken
+    repository: chrislusf/seaweedfs
+    tag: "4.48"
+    digest: "sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d"
   accessKey: "forge"
   secretKey: "changeme-s3"   # ← CHANGE THIS (and forge.extraEnv.S3_SECRET_KEY)
   persistence:

@@ -335,7 +335,7 @@ helm install forge deploy/helm/forge \
   --set extraEnv.S3_ENDPOINT="https://..." \
   --set extraEnv.S3_BUCKET="forge-artifacts"
 
-# forge-stack — bundles Postgres (Bitnami) + SeaweedFS (S3), no external deps
+# forge-stack — bundles Postgres + SeaweedFS (S3), no external deps
 helm install forge-stack deploy/helm/forge-stack
 ```
 

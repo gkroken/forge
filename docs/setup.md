@@ -418,8 +418,8 @@ disposable and horizontally scalable.
 
 ### Option A — forge-stack (all-in-one, recommended for getting started)
 
-`forge-stack` bundles forge + Bitnami Postgres + SeaweedFS (an S3-compatible
-object store, with a persistent volume). No external services needed. The
+`forge-stack` bundles forge + Postgres (the official image) + SeaweedFS (an
+S3-compatible object store); both keep their data on persistent volumes. No external services needed. The
 bundled store is for getting started: in production, point forge at the S3
 service your organisation already runs (Option B). forge needs only basic S3 —
 put (with multipart), get, stat, list, delete and bucket creation — so any
@@ -448,8 +448,40 @@ kubectl -n forge get svc
 Port-forward to access locally:
 
 ```bash
-kubectl -n forge port-forward svc/forge-stack-forge 8080:8080
+kubectl -n forge port-forward svc/forge-stack 8080:8080
 ```
+
+#### Upgrading forge-stack 0.2.x → 0.3.0 (Postgres)
+
+0.3.0 replaces the Bitnami Postgres subchart, whose images also left Docker
+Hub, with a small StatefulSet on the official `postgres` image. The Service
+name (`forge-stack-postgresql`) and the `postgresql.auth` values are the same,
+so forge's `POSTGRES_DSN` does not change. `postgresql.primary.persistence.size`
+and `postgresql.primary.resources` are now `postgresql.persistence.size` and
+`postgresql.resources`.
+
+The new StatefulSet starts on a **new, empty volume**. The old volume
+(`data-forge-stack-postgresql-0`) is kept, but nothing reads it. To carry the
+metadata over, dump it before upgrading and load it into the new database
+before forge runs again:
+
+```bash
+kubectl -n forge scale deploy/forge-stack --replicas=0
+kubectl -n forge exec forge-stack-postgresql-0 -- \
+  sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -U postgres -d forge' > forge.sql
+helm upgrade forge-stack deploy/helm/forge-stack -n forge ...
+kubectl -n forge scale deploy/forge-stack --replicas=0   # the upgrade restarted it
+kubectl -n forge wait --for=condition=ready pod/forge-stack-postgres-0
+# forge initialised the new database when it started; replace that with the dump
+kubectl -n forge exec forge-stack-postgres-0 -- psql -U postgres \
+  -c 'DROP DATABASE forge WITH (FORCE)' -c 'CREATE DATABASE forge'
+kubectl -n forge exec -i forge-stack-postgres-0 -- \
+  psql -U postgres -d forge -v ON_ERROR_STOP=1 < forge.sql
+kubectl -n forge scale deploy/forge-stack --replicas=1
+```
+
+Blobs live in SeaweedFS and are unaffected. Once forge is serving, delete the
+old volume: `kubectl -n forge delete pvc data-forge-stack-postgresql-0`.
 
 ### Option B — Standalone chart with external Postgres + S3
 
