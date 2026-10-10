@@ -70,6 +70,16 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 	if !format.MutationAllowed(w, r, c) {
 		return
 	}
+	// The Linux binary URL (linux.go) is a view over this repository's source
+	// paths, so it is dispatched before them.
+	switch {
+	case strings.HasPrefix(c.Sub, "__linux__/"):
+		h.serveLinuxURL(w, r, c)
+		return
+	case strings.HasPrefix(c.Sub, "latest/bin/linux/"):
+		h.servePakIndex(w, r, c)
+		return
+	}
 	switch {
 	case r.Method == http.MethodGet && c.Sub == "src/contrib/PACKAGES":
 		if c.Repo.Kind == repo.Proxy {
