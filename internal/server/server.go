@@ -414,6 +414,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/ui/", s.handleUI)
 	// Auth middleware wraps every /repository/ route.
 	mux.Handle("/repository/", s.Enforcer.Middleware(http.HandlerFunc(s.handleRepo)))
+	// More specific than /repository/, so ServeMux sends it here; repository
+	// names starting "__" are reserved (repo.Manager.Add) so none is shadowed.
+	mux.HandleFunc("/repository/__api__/status", s.handlePPMStatus)
 	// OCI Distribution Spec: /v2/ is the API root.
 	// The base check (/v2/ or /v2) is unauthenticated (needed for auth discovery).
 	// All other /v2/ routes are protected via MiddlewareOCI.

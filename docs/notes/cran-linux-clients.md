@@ -211,12 +211,12 @@ should not).
 **Only `latest`.** forge has no snapshots, so a date segment is 404 rather than
 silently meaning "latest".
 
-**`/__api__/status` stays a 404.** Emulating it would make renv rewrite plain
-`/repository/cran-public/` URLs to `/repository/__linux__/noble/cran-public/`. That
-needs a CRAN-specific route in `server.go`, against the architecture invariant.
-Any gap between what the status endpoint advertises and what that path serves
-breaks renv with no fallback (measured). Users configure the explicit
-`__linux__` URL instead — renv, pak and `install.packages` all accept it.
+**`/__api__/status`.** *(Superseded in L2 — see §2's lockfile findings and
+workplan §0.9.)* The host root stays a 404, so plain `/repository/cran-public/`
+URLs are never rewritten. forge does answer `/repository/__api__/status`,
+where renv probes for the `{group}/latest` URL it records in lockfiles; the
+rewrite it triggers lands on `{group}/__linux__/{distro}/latest`, which forge
+serves for every CRAN repository.
 
 **Inside the CRAN handler, not routing.** Both public paths arrive at the group's
 CRAN handler as `c.Sub` (`__linux__/…` and `latest/bin/linux/…`), so `server.go` is

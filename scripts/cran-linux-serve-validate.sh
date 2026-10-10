@@ -85,11 +85,12 @@ check "pak: jsonlite loads" 1 "$(echo "$out" | grep -c 'LOADED \[1,2\] TRUE')"
 run -v "$FT":/out $IMG bash -c "mkdir /p && cd /p && echo 'library(jsonlite); library(praise)' > app.R &&
 	Rscript -e 'options(repos=c(CRAN=\"$U\")); renv::init(restart=FALSE)' >/dev/null 2>&1; cp renv.lock /out/; chown $(id -u) /out/renv.lock"
 # renv keeps lockfiles platform-neutral: it records PPM's source form of the
-# URL ({group}/latest), and must be told forge is PPM-shaped to turn it back
-# into the __linux__ URL at restore (RENV_CONFIG_PPM_URL; see
-# docs/notes/cran-linux-clients.md §2).
+# URL ({group}/latest) and at restore asks /repository/__api__/status whether
+# the client's distro has binaries before using the __linux__ URL again
+# (docs/notes/cran-linux-clients.md §2). No client setting is involved.
 check "lockfile records the source form {group}/latest" 1 "$(grep -c "\"$HD/repository/cran-public/latest\"" "$FT/renv.lock")"
-out=$(run -e RENV_CONFIG_PPM_URL=$HD/repository/cran-public/latest -v "$FT/renv.lock":/l/renv.lock:ro $IMG bash -c "$NOCC mkdir /p && cp /l/renv.lock /p && cd /p && Rscript -e 'renv::restore(prompt=FALSE); $LOAD' 2>&1 | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g'")
+check "status endpoint lists noble with binaries" 1 "$(curl -s $B/repository/__api__/status | python3 -c 'import json,sys;print(sum(1 for d in json.load(sys.stdin)["distros"] if d["binaryURL"]=="noble" and d["binaries"]))')"
+out=$(run -v "$FT/renv.lock":/l/renv.lock:ro $IMG bash -c "$NOCC mkdir /p && cp /l/renv.lock /p && cd /p && Rscript -e 'renv::restore(prompt=FALSE); $LOAD' 2>&1 | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g'")
 check "renv::restore: both installed as binaries" 2 "$(echo "$out" | grep -c 'installed binary')" "$out"
 check "renv::restore: jsonlite loads" 1 "$(echo "$out" | grep -c 'LOADED \[1,2\] TRUE')"
 

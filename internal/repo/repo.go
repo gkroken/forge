@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 )
@@ -337,6 +338,11 @@ func (m *Manager) Len() int {
 func (m *Manager) Add(r Repository) error {
 	if r.Name == "" || r.Format == "" {
 		return fmt.Errorf("repository needs name and format")
+	}
+	// /repository/__api__/… is served by forge itself (PPM-compatible status
+	// for renv), so names in that namespace are reserved.
+	if strings.HasPrefix(r.Name, "__") {
+		return fmt.Errorf("repository name %q: names starting with \"__\" are reserved", r.Name)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

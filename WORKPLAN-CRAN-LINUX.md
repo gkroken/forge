@@ -50,10 +50,15 @@ These were settled in the design discussion of 2026-10-10:
    User-Agent (closes §6 decision 2). No usable UA → source. pak's binary index
    (`{group}/latest/bin/linux/{rminor}-{distro}/contrib/{rminor}/PACKAGES.gz`) and
    every tarball path call the same decision. `Vary: User-Agent`. Only `latest`.
-9. **(L0, 2026-10-10) `/__api__/status` stays a 404.** Emulating PPM's status
-   endpoint would make renv rewrite plain URLs to a CRAN-specific top-level path,
-   and a mismatch breaks renv with no fallback. Users configure the explicit
-   `__linux__` URL.
+9. **(L2, 2026-10-10 — reverses the L0 decision) forge answers
+   `/repository/__api__/status`.** With the full `…/__linux__/{distro}/latest`
+   URL, renv records `{group}/latest` in lockfiles and at restore probes
+   `/repository/__api__/status` (not the host root L0 measured); answering it
+   makes renv rewrite to `{group}/__linux__/{distro}/latest`, which every CRAN
+   repository serves (binary or source), so the L0 hard-failure hazard does not
+   arise. Served through the optional `format.PPMStatusProvider`, so routing
+   stays format-agnostic; repository names starting `__` are reserved. The host
+   root `/__api__/status` is still a 404 (plain `…/cran-public/` URLs unaffected).
 
 ---
 

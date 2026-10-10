@@ -16,6 +16,7 @@ import (
 	"forge/internal/cranplatform"
 	"forge/internal/format"
 	"forge/internal/ledger"
+	"forge/internal/meta"
 )
 
 // Linux binary packages (WORKPLAN-CRAN-LINUX.md). A binary repository — a
@@ -392,4 +393,34 @@ func (h *Handler) pakBinaryRecords(c *format.Context, p cranplatform.Platform) [
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Package < out[j].Package })
 	return out
+}
+
+// PPMStatus implements format.PPMStatusProvider: the distros and R minor
+// versions with a registered platform key. Listing a distro makes renv rewrite
+// {repo}/latest to {repo}/__linux__/{distro}/latest, which every CRAN
+// repository serves — binaries where a group has them, source otherwise — so
+// the rewrite can never point a client at a path that does not exist.
+func (h *Handler) PPMStatus(m meta.Store) (distros, rVersions []string) {
+	ps, err := cranplatform.NewStore(m).List()
+	if err != nil {
+		return nil, nil
+	}
+	seenD, seenR := map[string]bool{}, map[string]bool{}
+	for _, p := range ps {
+		k, err := cranplatform.ParseKey(p.Key)
+		if err != nil {
+			continue
+		}
+		if !seenD[k.Distro] {
+			seenD[k.Distro] = true
+			distros = append(distros, k.Distro)
+		}
+		if !seenR[k.RMinor] {
+			seenR[k.RMinor] = true
+			rVersions = append(rVersions, k.RMinor)
+		}
+	}
+	sort.Strings(distros)
+	sort.Sort(sort.Reverse(sort.StringSlice(rVersions)))
+	return distros, rVersions
 }

@@ -590,3 +590,13 @@ func (reg *Registry) For(format string) (Handler, bool) {
 	h, ok := reg.byFormat[format]
 	return h, ok
 }
+
+// PPMStatusProvider is optional. A format that serves platform binaries on a
+// Posit-Package-Manager-shaped URL (cran: {repo}/__linux__/{distro}/latest)
+// reports the distros and R minor versions it has binaries registered for.
+// The server publishes them at /repository/__api__/status, which is where
+// renv looks before turning a lockfile's source URL ({repo}/latest) back into
+// the binary URL — without it renv restores always install from source.
+type PPMStatusProvider interface {
+	PPMStatus(m meta.Store) (distros, rVersions []string)
+}
