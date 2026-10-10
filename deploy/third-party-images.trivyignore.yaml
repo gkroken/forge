@@ -1,0 +1,195 @@
+# Exceptions to forge's image policy (HIGH/CRITICAL with a fix = fail) for
+# the third-party images in third-party-images.txt. The mirror-images CI job
+# passes this to Trivy.
+#
+# Rules for an entry:
+#   - scoped by `paths` to the one binary it was found in, so the same CVE
+#     turning up anywhere else still fails the gate;
+#   - a statement saying why it is not reachable, or why the risk is accepted;
+#   - an expired_at. When it passes, the entry stops applying and the gate goes
+#     red again: bump the image, or re-justify and extend deliberately.
+#     Unreachable: up to 90 days. Accepted reachable risk: up to 30 days.
+#
+# Remove entries when the image is bumped past them; a stale entry is harmless
+# but hides nothing, so keep the file short.
+vulnerabilities:
+  - id: CVE-2025-68121
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2025-61726
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2025-61729
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-25679
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-27145
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-32280
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-32281
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-32283
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-33811
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-33814
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-33818
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-39820
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-39821
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-39822
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-39836
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-42499
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-42504
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-56853
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-56858
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-56859
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-56860
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-56862
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-78667
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-78669
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-97031
+    paths: [usr/local/bin/gosu]
+    statement: >-
+      postgres image: gosu (Go 1.24.6) runs once in the entrypoint to drop root
+      and exec postgres; it serves no network and parses no untrusted input.
+    expired_at: 2027-01-08
+  - id: CVE-2026-78667
+    paths: [usr/bin/weed]
+    statement: >-
+      seaweedfs 4.48: REACHABLE (the S3 gateway is a Go net/http server).
+      Accepted until upstream ships a release on Go 1.26.9 / x/net 0.60.0;
+      mitigated by the S3 Service being cluster-internal (a ClusterIP Service, not exposed outside the cluster).
+    expired_at: 2026-11-09
+  - id: CVE-2026-78669
+    paths: [usr/bin/weed]
+    statement: >-
+      seaweedfs 4.48: REACHABLE (the S3 gateway is a Go net/http server).
+      Accepted until upstream ships a release on Go 1.26.9 / x/net 0.60.0;
+      mitigated by the S3 Service being cluster-internal (a ClusterIP Service, not exposed outside the cluster).
+    expired_at: 2026-11-09
+  - id: CVE-2026-97031
+    paths: [usr/bin/weed]
+    statement: >-
+      seaweedfs 4.48: REACHABLE (the S3 gateway is a Go net/http server).
+      Accepted until upstream ships a release on Go 1.26.9 / x/net 0.60.0;
+      mitigated by the S3 Service being cluster-internal (a ClusterIP Service, not exposed outside the cluster).
+    expired_at: 2026-11-09
+secrets:
+  - id: private-key
+    paths: [/etc/ssl/private/ssl-cert-snakeoil.key]  # secrets: absolute path
+    statement: >-
+      postgres image: Debian's ssl-cert snakeoil key, generated at image build
+      and so public to anyone who pulls the image. Unused: postgres runs with
+      ssl=off (the image default; forge-stack does not enable it). Never point
+      ssl_key_file at it — mount a real key if TLS is wanted.
+    expired_at: 2027-01-08

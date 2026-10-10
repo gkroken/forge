@@ -1,0 +1,14 @@
+# Third-party images forge's Helm charts deploy. CI (job mirror-images) copies
+# each one, by digest and with every architecture, to ghcr.io/gkroken/{path},
+# scans it with forge's own image policy and signs it; the charts pull only
+# from there. scripts/check-chart-images.sh fails the build if a chart renders
+# an image that is not forge's own or listed here exactly.
+#
+# To bump one: change the line and the matching chart value (repository, tag,
+# digest) in the same commit. Get a digest with
+#   docker buildx imagetools inspect IMAGE:TAG --format '{{json .Manifest}}'
+#
+# path (Docker Hub)      tag    index digest
+chrislusf/seaweedfs      4.48   sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+library/postgres         18.6   sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+library/busybox          1.36   sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662

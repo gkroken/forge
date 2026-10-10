@@ -451,6 +451,37 @@ Port-forward to access locally:
 kubectl -n forge port-forward svc/forge-stack 8080:8080
 ```
 
+#### Where the images come from
+
+Every image the charts deploy is pinned by digest and pulled from
+`ghcr.io/gkroken`: forge's own, plus copies of the third-party ones listed in
+`deploy/third-party-images.txt`. CI copies those byte for byte from Docker Hub
+(same digest, every architecture), so an install never depends on an upstream
+registry keeping an image (MinIO's vanished in 2026-09). Before it copies an
+image, CI scans it with forge's image policy (no fixable HIGH or CRITICAL
+findings), then signs the copy with cosign and attaches an SBOM. The policy's
+exceptions live in `deploy/third-party-images.trivyignore.yaml`. Each one names
+the file it applies to, gives a justification and expires, after which the gate
+fails again.
+
+For an air-gapped cluster or your own registry, copy the same digests and set
+one value; image paths and digests stay the same:
+
+```bash
+DEST=registry.example.com/forge bash scripts/mirror-images.sh   # needs crane
+crane copy ghcr.io/gkroken/forge:<tag> registry.example.com/forge/forge:<tag>
+helm install forge-stack deploy/helm/forge-stack \
+  --set global.imageRegistry=registry.example.com/forge ...
+```
+
+Verify a mirrored image's signature with:
+
+```bash
+cosign verify ghcr.io/gkroken/library/postgres@sha256:... \
+  --certificate-identity-regexp '^https://github.com/gkroken/forge/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
 #### Upgrading forge-stack 0.2.x → 0.3.0 (Postgres)
 
 0.3.0 replaces the Bitnami Postgres subchart, whose images also left Docker

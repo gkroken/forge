@@ -33,6 +33,10 @@ jobs:
           version: v3.17.3
       - name: helm lint
         run: helm lint deploy/helm/forge/
+      # Every image the charts deploy is forge's own or a third-party image
+      # mirrored by digest (deploy/third-party-images.txt).
+      - name: Chart images are pinned and mirrored
+        run: bash scripts/check-chart-images.sh
       - name: config-check example
         run: |
           go build -o /tmp/forge-check ./cmd/forge
@@ -206,11 +210,60 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
 
+  mirror-images:
+    name: Mirror third-party images
+    # Copies the third-party images the charts deploy into ghcr.io/{owner},
+    # byte for byte (same digest, all architectures), so installs never depend
+    # on an upstream registry keeping them — MinIO's images vanished from
+    # Docker Hub in 2026-09. Each is scanned with forge's own image policy,
+    # signed, and given an SBOM attestation. Idempotent: an image already
+    # mirrored is a no-op. Runs on the schedule too, as the kind job needs it.
+    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write      # push the mirrors to GHCR
+      id-token: write      # cosign keyless signing
+    steps:
+      - uses: actions/checkout@v6
+      - uses: imjasonh/setup-crane@v0.4
+      - uses: sigstore/cosign-installer@v3
+      - uses: anchore/sbom-action/download-syft@v0
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Scan upstream images (forge's image policy)
+        # The mirror is the same bytes, so scanning the upstream digest scans it.
+        # Exceptions are per finding, scoped to one file and dated: an expired
+        # one turns this red again (see the ignore file's header).
+        run: |
+          grep -vE '^\s*(#|$)' deploy/third-party-images.txt | while read -r path tag digest; do
+            echo "::group::trivy $path:$tag"
+            docker run --rm -v "$PWD/deploy/third-party-images.trivyignore.yaml:/ignore.yaml:ro" \
+              aquasec/trivy:0.75.0 image --quiet --exit-code 1 \
+              --severity HIGH,CRITICAL --ignore-unfixed --ignorefile /ignore.yaml \
+              "docker.io/$path@$digest"
+            echo "::endgroup::"
+          done
+      - name: Mirror
+        run: DEST=ghcr.io/${{ github.repository_owner }} bash scripts/mirror-images.sh | tee mirrored.txt
+      - name: Sign and attest SBOMs
+        run: |
+          while read -r ref; do
+            img="${ref%%:*}"; digest="${ref##*@}"
+            cosign sign --yes "$img@$digest"
+            syft scan "$img@$digest" --output spdx-json=sbom.spdx.json
+            cosign attest --yes --type spdxjson --predicate sbom.spdx.json "$img@$digest"
+          done < mirrored.txt
+
   publish:
     name: Publish image + chart
     # Only runs on pushes to main or version tags; never on PRs.
     if: github.event_name == 'push'
-    needs: [lint, test, integration, security]
+    needs: [lint, test, integration, security, mirror-images]
     runs-on: ubuntu-latest
     permissions:
       contents: write      # upload release assets (SBOMs)
@@ -372,7 +425,12 @@ jobs:
     # Run on push to main and nightly; skip on PRs to keep them fast.
     # workflow_dispatch too, so a manual run reproduces the nightly faithfully.
     if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # The charts pull third-party images from forge's mirror, so it must exist.
+    needs: [mirror-images]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read       # pre-pull the mirrored images from GHCR
     steps:
       - uses: actions/checkout@v6
 
@@ -380,6 +438,13 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       # Build the forge image for amd64 only (kind is always amd64).
       - uses: docker/setup-buildx-action@v4
@@ -412,6 +477,7 @@ jobs:
       - name: helm install forge
         run: |
           helm install forge deploy/helm/forge \
+            --set image.registry= \
             --set image.repository=forge \
             --set image.tag=ci \
             --set image.pullPolicy=Never \
@@ -467,6 +533,7 @@ jobs:
       - name: Pre-pull forge-stack images into kind
         run: |
           helm template forge-stack deploy/helm/forge-stack \
+            --set forge.image.registry= \
             --set forge.image.repository=forge \
             --set forge.image.tag=ci \
             | grep '^\s*image:' | sed 's/.*image:[[:space:]]*//' | tr -d '"' \
@@ -480,6 +547,7 @@ jobs:
       - name: helm install forge-stack
         run: |
           helm install forge-stack deploy/helm/forge-stack \
+            --set forge.image.registry= \
             --set forge.image.repository=forge \
             --set forge.image.tag=ci \
             --set forge.image.pullPolicy=Never \
