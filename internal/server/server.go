@@ -404,6 +404,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/v1/webhooks/", s.handleWebhooks)
 	mux.HandleFunc("/api/v1/system/", s.handleSystemAPI)
 	mux.HandleFunc("/api/v1/config/drift", s.handleConfigDrift)
+	mux.HandleFunc("/api/v1/cran/platforms", s.handleCRANPlatforms)
+	mux.HandleFunc("/api/v1/cran/platforms/", s.handleCRANPlatforms)
 	if s.OIDC != nil && s.Auth != nil {
 		mux.HandleFunc("/auth/oidc/login", s.handleOIDCLogin)
 		mux.HandleFunc("/auth/oidc/callback", s.handleOIDCCallback)
