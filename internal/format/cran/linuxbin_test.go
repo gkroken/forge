@@ -162,6 +162,12 @@ RemotePkgPlatform: source
 	if _, err := validateLinuxBinary(lbTarball(t, pure), "lb", "1.0.2", lbPlatform(), []byte(pureR)); err != nil {
 		t.Errorf("pure R: rejected: %v", err)
 	}
+	// renv's shape: NeedsCompilation: no (so an empty platform in Built:) and
+	// still a shared object for the right CPU.
+	renvLike := append(pure, tarEntry{name: "lb/libs/lb.so", body: elfFixture(t, "x86_64-plain.so")})
+	if _, err := validateLinuxBinary(lbTarball(t, renvLike), "lb", "1.0.2", lbPlatform(), []byte(pureR)); err != nil {
+		t.Errorf("empty platform with right-CPU code (renv): rejected: %v", err)
+	}
 }
 
 func TestValidateLinuxBinary_Rejects(t *testing.T) {
@@ -186,8 +192,10 @@ func TestValidateLinuxBinary_Rejects(t *testing.T) {
 		"other platform":      {body: lbTarball(t, desc(lbSrcDesc+strings.Replace(lbBuilt, "x86_64-pc-linux-gnu", "aarch64-unknown-linux-gnu", 1))), want: "built for aarch64"},
 		"windows build":       {body: lbTarball(t, desc(lbSrcDesc+strings.Replace(lbBuilt, "unix", "windows", 1))), want: "OS type"},
 		"malformed Built":     {body: lbTarball(t, desc(lbSrcDesc+"Built: R 4.6.1\n")), want: "format"},
-		"empty platform but compiled": {body: lbTarball(t, desc(lbSrcDesc+"Built: R 4.6.1; ; 2026-10-10 07:19:08 UTC; unix\n")),
-			want: "compiled code"},
+		// R leaves the platform empty for NeedsCompilation: no, so Built: says
+		// nothing about the CPU — the ELF check still does.
+		"empty platform, wrong-CPU code": {body: lbTarball(t, set(desc(lbSrcDesc+"Built: R 4.6.1; ; 2026-10-10 07:19:08 UTC; unix\n"),
+			"lb/libs/lb.so", elfFixture(t, "aarch64-plain.so"))), want: "EM_AARCH64"},
 		"different source": {body: lbTarball(t, desc(strings.Replace(lbSrcDesc, "License: MIT", "License: GPL-3", 1)+lbBuilt)),
 			want: "License"},
 		"source field missing": {body: lbTarball(t, desc(strings.Replace(lbSrcDesc, "Packaged: 2026-01-02 10:00:00 UTC; ann\n", "", 1)+lbBuilt)),

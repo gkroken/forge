@@ -145,7 +145,7 @@ func validateLinuxBinary(tgz []byte, pkg, ver string, p cranplatform.Platform, s
 	if fields["Package"] != pkg || fields["Version"] != ver {
 		return linuxBinary{}, rejectf("DESCRIPTION declares %s_%s but the path names %s_%s", fields["Package"], fields["Version"], pkg, ver)
 	}
-	if err := checkBuilt(fields["Built"], key, p, len(needs) > 0); err != nil {
+	if err := checkBuilt(fields["Built"], key, p); err != nil {
 		return linuxBinary{}, err
 	}
 	if err := matchSource(fields, dcfFields(srcDesc)); err != nil {
@@ -175,10 +175,12 @@ func validateLinuxBinary(tgz []byte, pkg, ver string, p cranplatform.Platform, s
 }
 
 // checkBuilt verifies DESCRIPTION's "Built: R 4.6.1; x86_64-pc-linux-gnu;
-// 2026-10-10 07:19:05 UTC; unix" against the key. A package with no compiled
-// code is built with an empty platform ("R 4.6.1; ; …"), which is accepted
-// only when the package really carries no ELF object.
-func checkBuilt(built string, key cranplatform.Key, p cranplatform.Platform, compiled bool) error {
+// 2026-10-10 07:19:05 UTC; unix" against the key. R leaves the platform empty
+// ("R 4.6.1; ; …") for a package that declares NeedsCompilation: no — which
+// does not mean it has no compiled code: renv declares no, yet builds and
+// ships libs/renv.so (found by the L4 live test). So an empty platform is
+// accepted, and any ELF object is judged by checkELF like any other.
+func checkBuilt(built string, key cranplatform.Key, p cranplatform.Platform) error {
 	if built == "" {
 		return rejectf("DESCRIPTION has no Built: field, so this is not a binary package")
 	}
@@ -193,10 +195,7 @@ func checkBuilt(built string, key cranplatform.Key, p cranplatform.Platform, com
 	if !ok || rMinor(rver) != key.RMinor {
 		return rejectf("built by %q, but key %s is for R %s", parts[0], key, key.RMinor)
 	}
-	switch {
-	case parts[1] == "" && compiled:
-		return rejectf("Built: names no platform but the package contains compiled code")
-	case parts[1] != "" && parts[1] != p.RPlatform:
+	if parts[1] != "" && parts[1] != p.RPlatform {
 		return rejectf("built for %s, but key %s is %s", parts[1], key, p.RPlatform)
 	}
 	if parts[3] != "unix" {
