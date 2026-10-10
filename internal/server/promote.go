@@ -123,10 +123,11 @@ func (s *Server) promoteComponent(ctx context.Context, actor string, src, tgt re
 	if !s.componentExists(src, component, version) {
 		return nil, 0, promoteErr(http.StatusNotFound, "%s@%s not found in %s", component, version, src.Name)
 	}
-	// A collision on an immutable target is a hard stop — that is the point of
-	// an immutable release. A mutable target is overwritten (like a re-publish).
-	if tgt.IsImmutable() && s.componentExists(tgt, component, version) {
-		return nil, 0, promoteErr(http.StatusConflict, "%s@%s already exists in immutable repository %s", component, version, tgt.Name)
+	// A collision on an immutable or noOverwrite target is a hard stop — that
+	// is the point of either setting. A mutable target is overwritten (like a
+	// re-publish).
+	if tgt.RefusesOverwrite() && s.componentExists(tgt, component, version) {
+		return nil, 0, promoteErr(http.StatusConflict, "%s@%s already exists in %s, which does not allow overwriting", component, version, tgt.Name)
 	}
 
 	// Quota: a promote is a hosted write, so enforce the target's quota up front

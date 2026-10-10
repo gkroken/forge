@@ -141,11 +141,26 @@ type Repository struct {
 	// natural target for a promoted release: once promoted, it cannot be
 	// mutated. Only meaningful on hosted repos; ignored on proxy/group.
 	Immutable bool `json:"immutable,omitempty"`
+
+	// NoOverwrite makes a HOSTED repository refuse to replace an existing
+	// artifact (409) while still allowing deletes, soft-delete and cleanup.
+	// It suits a build cache — the CRAN Linux binary repository: an entry is
+	// correct forever, but storage policy may evict it and a bad one must be
+	// removable, after which the same coordinate may be written again.
+	// Immutable is stricter and wins when both are set.
+	NoOverwrite bool `json:"noOverwrite,omitempty"`
 }
 
 // IsImmutable reports whether write-once enforcement is in force for this
 // repository (hosted repos only).
 func (r Repository) IsImmutable() bool { return r.Immutable && r.Kind == Hosted }
+
+// IsNoOverwrite reports whether overwrite-only protection is in force: hosted,
+// NoOverwrite set, and not already Immutable (which subsumes it).
+func (r Repository) IsNoOverwrite() bool { return r.NoOverwrite && !r.Immutable && r.Kind == Hosted }
+
+// RefusesOverwrite reports whether an existing artifact may not be replaced.
+func (r Repository) RefusesOverwrite() bool { return r.IsImmutable() || r.IsNoOverwrite() }
 
 // DepGuardEnabled reports whether dependency-confusion protection is in force
 // for this (group or proxy) repository. Unset means enabled.

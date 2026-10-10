@@ -454,7 +454,8 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 // repoBlob returns the blob store a repository must be written through.
 //
-// An immutable repository gets the write-once wrapper. This is a function
+// An immutable repository gets the write-once wrapper, a noOverwrite one the
+// overwrite-refusing wrapper (deletes allowed). This is a function
 // rather than a line inside handleRepo because handleRepo is not the only
 // route to the bytes: the browser upload form and the Nexus migration both
 // build a format.Context and dispatch to a handler in process, and both handed
@@ -462,8 +463,11 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 // through either. A guard that lives in one route is a guard on that route,
 // not on the repository.
 func (s *Server) repoBlob(rp repo.Repository) blob.Store {
-	if rp.IsImmutable() {
+	switch {
+	case rp.IsImmutable():
 		return blob.Immutable(s.Blob)
+	case rp.IsNoOverwrite():
+		return blob.NoOverwrite(s.Blob)
 	}
 	return s.Blob
 }
@@ -528,10 +532,10 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		c.MemberFilter = guard.memberFilter
 		c.NameClaimed = guard.claimedName
 	}
-	// Write-once enforcement: an immutable hosted repo rejects overwrites of an
-	// existing artifact at the blob layer (ErrImmutable → 409 in the handler).
-	// OCI is never routed here, so its content-addressed shared-layer re-pushes
-	// stay unaffected.
+	// Write-once enforcement: an immutable or noOverwrite hosted repo rejects
+	// overwrites of an existing artifact at the blob layer (→ 409 in the
+	// handler). OCI is never routed here, so its content-addressed
+	// shared-layer re-pushes stay unaffected.
 	if rp.IsImmutable() {
 		// Refuse deletes up front so the client gets a clear 409 rather than
 		// whatever each format makes of ErrImmutable from the store. The
@@ -542,8 +546,8 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 				http.StatusConflict)
 			return
 		}
-		c.Blob = s.repoBlob(rp)
 	}
+	c.Blob = s.repoBlob(rp)
 	h.Serve(w, r, c)
 }
 

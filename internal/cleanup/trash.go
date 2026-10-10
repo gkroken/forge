@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -315,6 +316,10 @@ func GetTombstone(m meta.Store, id string) (Tombstone, bool, error) {
 // the captured meta records (and the npm packument entry), and removes the
 // tombstone. Restoring over a name that was re-published since deletion
 // overwrites it — last write wins, matching a normal re-publish.
+// ErrRestoreConflict means an artifact was published at a trashed version's
+// location after the delete; restoring would overwrite it.
+var ErrRestoreConflict = errors.New("cleanup: a newer artifact occupies the restore location; delete it first")
+
 func RestoreVersion(m meta.Store, b blob.Store, id string) (*Tombstone, error) {
 	ts, ok, err := GetTombstone(m, id)
 	if err != nil {
@@ -322,6 +327,16 @@ func RestoreVersion(m meta.Store, b blob.Store, id string) (*Tombstone, error) {
 	}
 	if !ok {
 		return nil, fmt.Errorf("cleanup: trash entry %q not found", id)
+	}
+	// Restoring must not replace an artifact published since the delete: that
+	// would silently swap newer bytes for older ones, and on a noOverwrite
+	// repository it is exactly the overwrite the rule forbids. Check every
+	// original key before moving anything, so a refusal leaves nothing
+	// half-restored.
+	for _, bl := range ts.Blobs {
+		if _, ok, _ := b.Stat(bl.Orig); ok {
+			return nil, fmt.Errorf("%w: %s", ErrRestoreConflict, bl.Orig)
+		}
 	}
 	for _, bl := range ts.Blobs {
 		if _, ok, _ := b.Stat(bl.Trash); !ok {

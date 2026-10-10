@@ -1,11 +1,16 @@
 package server
 
 import (
+	"bytes"
+	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"forge/internal/blob"
+	"forge/internal/cleanup"
 	"forge/internal/repo"
 )
 
@@ -141,5 +146,103 @@ func TestGroupNesting_IsRefused(t *testing.T) {
 		Members: []string{"inner-host", "inner-proxy"}}
 	if msg := validateGroupPolicy(ok, srv.Repos); msg != "" {
 		t.Errorf("an ordinary group was refused: %s", msg)
+	}
+}
+
+// noOverwrite is the build-cache shape: no overwrite on any route, but removal
+// stays possible and frees the coordinate for a fresh write.
+func TestNoOverwrite_ProtocolPath(t *testing.T) {
+	s := newMigrationServer(t)
+	addHosted(t, s, "cache", "cran")
+	rp, _ := s.Repos.Get("cache")
+	rp.NoOverwrite = true
+	if err := s.Repos.Update(rp); err != nil {
+		t.Fatal(err)
+	}
+	v1 := tgzWithFile(t, "pkg/DESCRIPTION", "Package: pkg\nVersion: 1.0\nLicense: MIT\n")
+	v1b := tgzWithFile(t, "pkg/DESCRIPTION", "Package: pkg\nVersion: 1.0\nLicense: GPL\n")
+	do := func(method string, body []byte) int {
+		var r io.Reader
+		if body != nil {
+			r = bytes.NewReader(body)
+		}
+		req := httptest.NewRequest(method, "/repository/cache/src/contrib/pkg_1.0.tar.gz", r)
+		rw := httptest.NewRecorder()
+		s.Routes().ServeHTTP(rw, req)
+		return rw.Code
+	}
+	if c := do(http.MethodPut, v1); c != http.StatusCreated {
+		t.Fatalf("first PUT: %d", c)
+	}
+	if c := do(http.MethodPut, v1b); c != http.StatusConflict {
+		t.Fatalf("overwriting PUT: got %d, want 409", c)
+	}
+	if got := targetBlob(t, s, "cache/src/contrib/pkg_1.0.tar.gz"); !bytes.Equal(got, v1) {
+		t.Fatal("the refused PUT changed the stored bytes")
+	}
+	if c := do(http.MethodDelete, nil); c != http.StatusNoContent {
+		t.Fatalf("DELETE on a noOverwrite repo: got %d, want 204", c)
+	}
+	if c := do(http.MethodPut, v1b); c != http.StatusCreated {
+		t.Fatalf("PUT after removal: got %d, want 201", c)
+	}
+}
+
+func TestRepoBlob_NoOverwrite(t *testing.T) {
+	srv := newAdminServer(t)
+	cache := repo.Repository{Name: "cache", Format: "cran", Kind: repo.Hosted, NoOverwrite: true}
+	if _, err := srv.repoBlob(cache).Put("cache/a", strings.NewReader("one")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.repoBlob(cache).Put("cache/a", strings.NewReader("two")); !blob.Refused(err) {
+		t.Errorf("noOverwrite repo accepted an overwrite through repoBlob: %v", err)
+	}
+	if err := srv.repoBlob(cache).Delete("cache/a"); err != nil {
+		t.Errorf("noOverwrite repo refused a delete: %v", err)
+	}
+	// The setting is hosted-only, like Immutable.
+	proxy := repo.Repository{Name: "px", Format: "cran", Kind: repo.Proxy, NoOverwrite: true}
+	srv.repoBlob(proxy).Put("px/a", strings.NewReader("one")) //nolint:errcheck
+	if _, err := srv.repoBlob(proxy).Put("px/a", strings.NewReader("two")); err != nil {
+		t.Errorf("noOverwrite must not apply to a proxy: %v", err)
+	}
+}
+
+func TestPromote_NoOverwriteTargetRejectsOverwrite(t *testing.T) {
+	s := newMigrationServer(t)
+	addHosted(t, s, "cran-stage", "cran")
+	addHosted(t, s, "cran-cache", "cran")
+	body := tgzWithFile(t, "mypkg/DESCRIPTION", "Package: mypkg\nVersion: 1.0\nLicense: MIT\n")
+	seedBlobBytes(t, s, http.MethodPut, "cran-stage", "src/contrib/mypkg_1.0.tar.gz", body)
+	seedBlobBytes(t, s, http.MethodPut, "cran-cache", "src/contrib/mypkg_1.0.tar.gz", body)
+	tgt, _ := s.Repos.Get("cran-cache")
+	tgt.NoOverwrite = true
+	s.Repos.Update(tgt) //nolint:errcheck
+	src, _ := s.Repos.Get("cran-stage")
+	_, _, err := s.promoteComponent(context.Background(), "t", src, tgt, "mypkg", "1.0", "http://localhost")
+	if pe, ok := err.(*promoteError); !ok || pe.Status != http.StatusConflict {
+		t.Fatalf("want 409 promoteError, got %v", err)
+	}
+}
+
+func TestTrashRestore_OverNewerUploadIs409(t *testing.T) {
+	s := newMigrationServer(t)
+	addHosted(t, s, "cache", "cran")
+	rp, _ := s.Repos.Get("cache")
+	rp.NoOverwrite = true
+	s.Repos.Update(rp) //nolint:errcheck
+	body := tgzWithFile(t, "pkg/DESCRIPTION", "Package: pkg\nVersion: 1.0\nLicense: MIT\n")
+	seedBlobBytes(t, s, http.MethodPut, "cache", "src/contrib/pkg_1.0.tar.gz", body)
+	ts, err := cleanup.TrashVersion("cache", "cran", "pkg", "1.0", "t", s.Blob, s.Meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedBlobBytes(t, s, http.MethodPut, "cache", "src/contrib/pkg_1.0.tar.gz", body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/repos/cache/trash/restore?id="+ts.ID, nil)
+	rw := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rw, req)
+	if rw.Code != http.StatusConflict {
+		t.Fatalf("restore over a newer upload: got %d %s, want 409", rw.Code, rw.Body)
 	}
 }

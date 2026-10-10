@@ -19,7 +19,6 @@ package pypi
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -224,7 +223,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, c *format.Conte
 	project := Normalize(name)
 	info, err := c.Blob.Put(h.fileKey(c, project, filename), bytes.NewReader(body))
 	if err != nil {
-		if errors.Is(err, blob.ErrImmutable) {
+		if blob.Refused(err) {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}

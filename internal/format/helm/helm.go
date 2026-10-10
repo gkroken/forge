@@ -112,7 +112,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, c *format.Conte
 	filename := fmt.Sprintf("%s-%s.tgz", meta.Name, meta.Version)
 	info, err := c.Blob.Put(c.Key(filename), bytes.NewReader(body))
 	if err != nil {
-		if errors.Is(err, blob.ErrImmutable) {
+		if blob.Refused(err) {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}

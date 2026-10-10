@@ -1,6 +1,7 @@
 package cleanup_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -239,5 +240,28 @@ func TestTrashVersion_CRAN_BinaryOnlyRepo(t *testing.T) {
 	}
 	if len(ts.Blobs) != 1 {
 		t.Fatalf("trashed %d blobs, want 1", len(ts.Blobs))
+	}
+}
+
+// Restoring over an artifact published since the delete would swap newer bytes
+// for older ones; it is refused, and nothing is half-restored.
+func TestRestoreVersion_RefusesOccupiedLocation(t *testing.T) {
+	b, m := stores(t)
+	putBlob(t, b, "cran-linux/bin/linux/noble-x86_64/contrib/4.6/pkg_1.0.tar.gz")
+	putBlob(t, b, "cran-linux/bin/linux/noble-x86_64/contrib/4.5/pkg_1.0.tar.gz")
+	ts, err := cleanup.TrashVersion("cran-linux", "cran", "pkg", "1.0", "alice", b, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	putBlob(t, b, "cran-linux/bin/linux/noble-x86_64/contrib/4.6/pkg_1.0.tar.gz") // rebuilt since
+
+	if _, err := cleanup.RestoreVersion(m, b, ts.ID); !errors.Is(err, cleanup.ErrRestoreConflict) {
+		t.Fatalf("want ErrRestoreConflict, got %v", err)
+	}
+	if _, ok, _ := b.Stat("cran-linux/bin/linux/noble-x86_64/contrib/4.5/pkg_1.0.tar.gz"); ok {
+		t.Error("a refused restore moved part of the version back")
+	}
+	if _, ok, _ := cleanup.GetTombstone(m, ts.ID); !ok {
+		t.Error("a refused restore must keep the tombstone")
 	}
 }

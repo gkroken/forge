@@ -51,3 +51,30 @@ func (i immutable) Delete(key string) error {
 	}
 	return i.Store.Delete(key)
 }
+
+// ErrExists is returned by a NoOverwrite Store's Put when the key already
+// holds bytes. Like ErrImmutable it means 409 Conflict to a client.
+var ErrExists = errors.New("artifact already exists and this repository does not allow overwriting it")
+
+// Refused reports whether err is a write the repository's write-once rules
+// turned down (ErrImmutable or ErrExists) — a 409, not a server error.
+func Refused(err error) bool {
+	return errors.Is(err, ErrImmutable) || errors.Is(err, ErrExists)
+}
+
+// noOverwrite refuses to replace an existing key and lets every other
+// operation through, Delete included. It is the shape of a build cache: an
+// entry is correct forever, but storage policy may evict it and a bad one must
+// be removable — after which the same key may be written again. Immutable is
+// the stricter sibling that also refuses the delete.
+type noOverwrite struct{ Store }
+
+// NoOverwrite returns a view of s whose Put refuses existing keys.
+func NoOverwrite(s Store) Store { return noOverwrite{s} }
+
+func (n noOverwrite) Put(key string, r io.Reader) (Info, error) {
+	if _, exists, err := n.Store.Stat(key); err == nil && exists {
+		return Info{}, ErrExists
+	}
+	return n.Store.Put(key, r)
+}

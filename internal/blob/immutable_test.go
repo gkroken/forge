@@ -90,3 +90,30 @@ func TestImmutable_DeleteThenRepublishIsRefused(t *testing.T) {
 		t.Errorf("bytes are %q, want the original — immutability was bypassed", got)
 	}
 }
+
+func TestNoOverwrite_RefusesOverwriteAllowsDelete(t *testing.T) {
+	fs, err := NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	no := NoOverwrite(fs)
+	if _, err := no.Put("r/k", strings.NewReader("v1")); err != nil {
+		t.Fatalf("first put: %v", err)
+	}
+	if _, err := no.Put("r/k", strings.NewReader("v2")); !errors.Is(err, ErrExists) || !Refused(err) {
+		t.Fatalf("overwrite: want ErrExists, got %v", err)
+	}
+	rc, _ := no.Get("r/k")
+	got, _ := io.ReadAll(rc)
+	rc.Close()
+	if string(got) != "v1" {
+		t.Fatalf("bytes changed to %q", got)
+	}
+	// Unlike Immutable, removal is allowed, and the key may then be written again.
+	if err := no.Delete("r/k"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := no.Put("r/k", strings.NewReader("v3")); err != nil {
+		t.Fatalf("put after delete: %v", err)
+	}
+}

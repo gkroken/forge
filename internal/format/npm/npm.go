@@ -179,7 +179,7 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, c *format.Cont
 			return
 		}
 		if _, err := c.Blob.Put(tarballKey(c, pkg, ver), bytes.NewReader(data)); err != nil {
-			if errors.Is(err, blob.ErrImmutable) {
+			if blob.Refused(err) {
 				http.Error(w, err.Error(), http.StatusConflict)
 				return
 			}

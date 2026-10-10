@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"forge/internal/blob"
 	"forge/internal/cleanup"
 	"forge/internal/config"
 	"forge/internal/format"
@@ -40,7 +41,8 @@ type repoRequest struct {
 	TimeoutSecs    *int     `json:"timeoutSecs,omitempty"`
 	Retries        *int     `json:"retries,omitempty"`
 	QuotaGB        *float64 `json:"quotaGB,omitempty"`
-	Immutable      bool     `json:"immutable,omitempty"` // write-once hosted repo
+	Immutable      bool     `json:"immutable,omitempty"`   // write-once hosted repo
+	NoOverwrite    bool     `json:"noOverwrite,omitempty"` // no overwrite, deletes allowed
 	// Dependency-confusion protection: namespace claims (hosted repos) and
 	// the enforcement toggle (group/proxy repos; nil = enabled).
 	Claims            []string `json:"claims,omitempty"`
@@ -68,6 +70,7 @@ func (req repoRequest) toRepository() (repo.Repository, error) {
 		Retries:       req.Retries,
 		QuotaGB:       req.QuotaGB,
 		Immutable:     req.Immutable,
+		NoOverwrite:   req.NoOverwrite,
 		Enabled:       true, // default: new repos are online
 
 		Claims:            req.Claims,
@@ -621,7 +624,8 @@ func (s *Server) handleDeleteComponent(w http.ResponseWriter, r *http.Request, n
 //	POST /api/v1/repos/{name}/trash/restore?id=  — restore a trashed version
 //	POST /api/v1/repos/{name}/trash/purge?id=    — hard-delete one (or ?id=all)
 func (s *Server) handleTrash(w http.ResponseWriter, r *http.Request, repoName, action string) {
-	if _, ok := s.Repos.Get(repoName); !ok {
+	rp, ok := s.Repos.Get(repoName)
+	if !ok {
 		http.Error(w, "repository not found: "+repoName, http.StatusNotFound)
 		return
 	}
@@ -648,7 +652,13 @@ func (s *Server) handleTrash(w http.ResponseWriter, r *http.Request, repoName, a
 			return
 		}
 		id := r.URL.Query().Get("id")
-		ts, err := cleanup.RestoreVersion(s.Meta, s.Blob, id)
+		// Restore writes through the repository's guarded store, so a
+		// noOverwrite repository's rule holds here too.
+		ts, err := cleanup.RestoreVersion(s.Meta, s.repoBlob(rp), id)
+		if errors.Is(err, cleanup.ErrRestoreConflict) || blob.Refused(err) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
