@@ -109,6 +109,41 @@ func TestCRANLinux_SourceReadHonoursDepGuard(t *testing.T) {
 	}
 }
 
+// Once a hosted repo holds some version of a name, the guard no longer blocks
+// the name outright; it keeps the proxy member out of the group instead, so a
+// version only upstream has stays an honest 404. The source read must see the
+// same 404.
+func TestCRANLinux_SourceReadHonoursMemberFilter(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(tgzWithFile(t, "internalpkg/DESCRIPTION", pkgDesc("internalpkg"))) //nolint:errcheck
+	}))
+	defer up.Close()
+	s := linuxServer(t, up.URL)
+	seedBlobBytes(t, s, http.MethodPut, "cran-src", "src/contrib/internalpkg_0.5.tar.gz",
+		tgzWithFile(t, "internalpkg/DESCRIPTION", "Package: internalpkg\nVersion: 0.5\nLicense: MIT\n"))
+	if rw := putLinux(t, s, "internalpkg", binaryOf(t, "internalpkg")); rw.Code == http.StatusCreated {
+		t.Fatal("upstream's internalpkg 1.0 was used as the source of an owned name")
+	}
+}
+
+// A standalone proxy as sourceRepo has no member list to filter; the guard
+// refuses claimed names outright there.
+func TestCRANLinux_ProxySourceRepoHonoursClaims(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(tgzWithFile(t, "internalpkg/DESCRIPTION", pkgDesc("internalpkg"))) //nolint:errcheck
+	}))
+	defer up.Close()
+	s := linuxServer(t, up.URL)
+	rp, _ := s.Repos.Get("cran-linux")
+	rp.SourceRepo = "cran-up"
+	if err := s.Repos.Update(rp); err != nil {
+		t.Fatal(err)
+	}
+	if rw := putLinux(t, s, "internalpkg", binaryOf(t, "internalpkg")); rw.Code == http.StatusCreated {
+		t.Fatal("a proxy sourceRepo served upstream's package for a claimed name")
+	}
+}
+
 func tgzFiles(t *testing.T, files map[string]string) []byte {
 	t.Helper()
 	var buf bytes.Buffer

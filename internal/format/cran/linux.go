@@ -53,8 +53,9 @@ func (h *Handler) serveLinuxBinary(w http.ResponseWriter, r *http.Request, c *fo
 // before forge fetches any source.
 func (h *Handler) publishLinuxBin(w http.ResponseWriter, r *http.Request, c *format.Context, platform, rver, file string) {
 	keyStr := strings.TrimPrefix(platform, "linux/") + "/" + rver
-	key, err := cranplatform.ParseKey(keyStr)
-	if err != nil || platform != "linux/"+key.Distro+"-"+key.Arch {
+	// ParseKey also refuses a nested platform ("linux/a-x86_64/b"): the extra
+	// segment lands in the R version, which must be a bare minor.
+	if _, err := cranplatform.ParseKey(keyStr); err != nil {
 		http.Error(w, "not a Linux binary path: want bin/linux/{distro}-{arch}/contrib/{rminor}/{pkg}_{ver}.tar.gz", http.StatusBadRequest)
 		return
 	}
