@@ -288,3 +288,39 @@ func TestLinuxServe_PakIndex(t *testing.T) {
 		t.Errorf("inconsistent pak index path: %d", rw.Code)
 	}
 }
+
+// The detail view of a binary repository lists its builds; a group lists the
+// builds it serves, and not those of a member validated against other source.
+func TestLinuxInspect_ListsBuilds(t *testing.T) {
+	g := newServeGroup(t)
+	g.source(t, "lb", "1.0.2")
+	putBinary(t, g.bins, "noble-x86_64/4.6", "lb", "1.0.2")
+	g.bins.Meta.PutJSON(New().binNS(g.bins, "linux/noble-x86_64", "4.6"), "lb_1.0.2", pkgRecord{ //nolint:errcheck
+		Package: "lb", Version: "1.0.2", Title: "A Test Package",
+		Linux: &linuxProvenance{Uploader: "builder", BuilderImage: "img", SourceRepo: "cran-public", SHA256: "abc", Needs: []string{"libR.so"}},
+	})
+	putBinary(t, g.other, "noble-x86_64/4.6", "lb", "1.0.2")
+
+	d, ok := New().Inspect(g.bins, "http://f", "lb")
+	if !ok || len(d.Versions) != 1 || d.Description != "A Test Package" {
+		t.Fatalf("binary repo detail: %v %+v", ok, d)
+	}
+	b := d.Versions[0].Builds
+	if len(b) != 1 || b[0].Platform != "noble-x86_64/4.6" || b[0].SHA256 != "abc" ||
+		strings.Join(b[0].SystemRequirements, ",") != "libR.so" || b[0].Provenance[0].Value != "builder" ||
+		b[0].DownloadURL != "http://f/repository/cran-linux/bin/linux/noble-x86_64/contrib/4.6/lb_1.0.2.tar.gz" {
+		t.Errorf("builds: %+v", b)
+	}
+	if d.Versions[0].DownloadURL != b[0].DownloadURL {
+		t.Errorf("a binary-only version should download its build, got %s", d.Versions[0].DownloadURL)
+	}
+
+	gd, ok := New().Inspect(g.group, "http://f", "lb")
+	if !ok || len(gd.Versions) != 1 || len(gd.Versions[0].Builds) != 1 ||
+		!strings.Contains(gd.Versions[0].Builds[0].DownloadURL, "/cran-linux/") {
+		t.Errorf("group detail builds: %+v", gd.Versions)
+	}
+	if !strings.Contains(gd.Versions[0].DownloadURL, "/repository/cran-public/src/contrib/") {
+		t.Errorf("a version with source keeps its source download: %s", gd.Versions[0].DownloadURL)
+	}
+}

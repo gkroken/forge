@@ -2,6 +2,9 @@ package cran
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -164,3 +167,50 @@ func TestLinuxUpload_Refusals(t *testing.T) {
 		}
 	}
 }
+
+func TestLinuxUpload_RecordsProvenance(t *testing.T) {
+	var reads int
+	c := linuxCtx(t, &reads)
+	c.Actor = "builder-noble"
+	bin := lbTarball(t, lbEntries(t))
+	c.Sub = lbPath
+	r := httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(bin))
+	r.Header.Set(BuilderDigestHeader, lbPlatform().BuilderDigest)
+	r.Header.Set(LinkingToHeader, "Rcpp 1.0.14, BH 1.87.0-1")
+	rw := httptest.NewRecorder()
+	New().Serve(rw, r, c)
+	if rw.Code != http.StatusCreated {
+		t.Fatalf("upload: %d %s", rw.Code, rw.Body)
+	}
+	var rec pkgRecord
+	c.Meta.GetJSON(New().binNS(c, "linux/noble-x86_64", "4.6"), "lb_1.0.2", &rec) //nolint:errcheck
+	p := rec.Linux
+	if p == nil {
+		t.Fatal("no provenance recorded")
+	}
+	_, src := c.ReadRepo("cran-public", "src/contrib/lb_1.0.2.tar.gz")
+	want := linuxProvenance{
+		Key: "noble-x86_64/4.6", Uploader: "builder-noble", BuilderImage: "img", BuilderDigest: lbPlatform().BuilderDigest,
+		SourceRepo: "cran-public", SourceSHA256: sha256hex(src), SHA256: sha256hex(bin),
+		LinkingTo: "Rcpp 1.0.14, BH 1.87.0-1", Needs: []string{"libc.so.6"}, MaxGlibc: "2.14",
+	}
+	if got, _ := json.Marshal(p); string(got) != mustJSON(want) {
+		t.Errorf("provenance\n got %s\nwant %s", got, mustJSON(want))
+	}
+
+	// A LinkingTo header that could not be shown on one line is refused.
+	c2 := linuxCtx(t, &reads)
+	c2.Sub = lbPath
+	r = httptest.NewRequest(http.MethodPut, "/", bytes.NewReader(bin))
+	r.Header.Set(BuilderDigestHeader, lbPlatform().BuilderDigest)
+	r.Header.Set(LinkingToHeader, strings.Repeat("x", 5000))
+	rw = httptest.NewRecorder()
+	New().Serve(rw, r, c2)
+	if rw.Code != http.StatusBadRequest {
+		t.Errorf("oversized %s: %d", LinkingToHeader, rw.Code)
+	}
+}
+
+func sha256hex(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
+
+func mustJSON(v any) string { b, _ := json.Marshal(v); return string(b) }

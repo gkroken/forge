@@ -402,6 +402,14 @@ func (s *Server) uiBrowseDetail(w http.ResponseWriter, r *http.Request, repoName
 			resp.SHA1 = v.SHA1
 			resp.ContentType = v.ContentType
 			resp.FileName = v.FileName
+			for _, b := range v.Builds {
+				bb := browseBuild{Platform: b.Platform, DownloadURL: b.DownloadURL, SizeBytes: b.SizeBytes,
+					SHA256: b.SHA256, PublishedAt: b.PublishedAt, SystemRequirements: b.SystemRequirements}
+				for _, f := range b.Provenance {
+					bb.Provenance = append(bb.Provenance, browseField{Label: f.Label, Value: f.Value})
+				}
+				resp.Builds = append(resp.Builds, bb)
+			}
 			break
 		}
 	}
@@ -504,6 +512,24 @@ type browseDetailResponse struct {
 	// Provenance is set when this component+version was promoted (copied) into
 	// this repo from another; it records where it came from.
 	Provenance *ProvenanceRecord `json:"provenance,omitempty"`
+	// Builds are platform builds of this version (CRAN Linux binaries) with
+	// where each came from and what it needs from the system.
+	Builds []browseBuild `json:"builds,omitempty"`
+}
+
+type browseBuild struct {
+	Platform           string        `json:"platform"`
+	DownloadURL        string        `json:"download_url"`
+	SizeBytes          int64         `json:"size_bytes,omitempty"`
+	SHA256             string        `json:"sha256,omitempty"`
+	PublishedAt        time.Time     `json:"published_at,omitempty"`
+	Provenance         []browseField `json:"provenance,omitempty"`
+	SystemRequirements []string      `json:"system_requirements,omitempty"`
+}
+
+type browseField struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
 }
 
 // vulnInfo is the security panel payload for a component version.

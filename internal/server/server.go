@@ -533,6 +533,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		GlobalStats: s.GlobalStats, RetryGauge: &s.retryGauge,
 		OnCacheFill: s.onProxyCacheFill,
 		ReadRepo:    s.readRepo,
+		Actor:       actorLabel(r, s.Auth),
 	}
 	if guard != nil && rp.Kind == repo.Group {
 		c.MemberFilter = guard.memberFilter

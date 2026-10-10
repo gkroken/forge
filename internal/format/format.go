@@ -72,6 +72,11 @@ type Context struct {
 	// what it would answer a client. It returns the status and body. Nil when
 	// the server provides none; callers that need it must then refuse.
 	ReadRepo func(repoName, sub string) (status int, body []byte)
+
+	// Actor names who is making the request (a token description, a user),
+	// for records a handler keeps about a write — CRAN Linux binary
+	// provenance. Empty when unknown (in-process requests, eval mode).
+	Actor string
 }
 
 // Key namespaces a blob key under the repo so repos never collide in storage.
@@ -367,7 +372,28 @@ type VersionInfo struct {
 	SHA1        string
 	ContentType string // e.g. "application/java-archive"
 	FileName    string // e.g. "spring-core-6.2.7.jar"
+	// Builds lists platform-specific builds of this version — CRAN Linux
+	// binaries — each with where it came from. Empty for most formats.
+	Builds []BuildInfo
 }
+
+// BuildInfo is one platform build of a version.
+type BuildInfo struct {
+	Platform    string // e.g. "noble-x86_64/4.6"
+	DownloadURL string // removing the build is a DELETE here
+	SizeBytes   int64
+	SHA256      string
+	PublishedAt time.Time
+	// Provenance is what forge recorded about how the build reached it, as
+	// labelled values in display order.
+	Provenance []Field
+	// SystemRequirements are the shared libraries the build needs from the
+	// system it runs on.
+	SystemRequirements []string
+}
+
+// Field is one labelled value.
+type Field struct{ Label, Value string }
 
 // Dep is one entry in a component's dependency list.
 type Dep struct {

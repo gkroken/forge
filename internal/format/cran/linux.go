@@ -3,6 +3,8 @@ package cran
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +19,7 @@ import (
 	"forge/internal/format"
 	"forge/internal/ledger"
 	"forge/internal/meta"
+	"forge/internal/repo"
 )
 
 // Linux binary packages (WORKPLAN-CRAN-LINUX.md). A binary repository — a
@@ -33,6 +36,26 @@ import (
 // was registered with: a builder whose image moved on without the registration
 // following is refused instead of quietly publishing builds from elsewhere.
 const BuilderDigestHeader = "X-Forge-Builder-Digest"
+
+// LinkingToHeader optionally carries the versions of the packages the build
+// compiled against through LinkingTo ("Rcpp 1.0.14, BH 1.87.0-1"), as the
+// builder had them. Recorded for diagnosis: a binary built against one
+// package's headers can break when that package changes ABI (workplan §7).
+const LinkingToHeader = "X-Forge-Linking-To"
+
+// linuxProvenance is what forge records about how a Linux binary arrived.
+type linuxProvenance struct {
+	Key           string   `json:"key"`
+	Uploader      string   `json:"uploader,omitempty"`
+	BuilderImage  string   `json:"builderImage"`
+	BuilderDigest string   `json:"builderDigest"`
+	SourceRepo    string   `json:"sourceRepo"`
+	SourceSHA256  string   `json:"sourceSha256"`
+	SHA256        string   `json:"sha256"`
+	LinkingTo     string   `json:"linkingTo,omitempty"`
+	Needs         []string `json:"needs,omitempty"`
+	MaxGlibc      string   `json:"maxGlibc,omitempty"`
+}
 
 // serveLinuxBinary handles every request under bin/linux/.
 func (h *Handler) serveLinuxBinary(w http.ResponseWriter, r *http.Request, c *format.Context, platform, rver, file string) {
@@ -106,7 +129,12 @@ func (h *Handler) publishLinuxBin(w http.ResponseWriter, r *http.Request, c *for
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	srcDesc, status, msg := h.linuxSourceDescription(c, pkg, ver)
+	linkingTo := r.Header.Get(LinkingToHeader)
+	if len(linkingTo) > 4096 || strings.ContainsAny(linkingTo, "\r\n") {
+		http.Error(w, LinkingToHeader+" must be one line under 4 KiB", http.StatusBadRequest)
+		return
+	}
+	srcDesc, srcSum, status, msg := h.linuxSourceDescription(c, pkg, ver)
 	if status != 0 {
 		http.Error(w, msg, status)
 		return
@@ -130,6 +158,12 @@ func (h *Handler) publishLinuxBin(w http.ResponseWriter, r *http.Request, c *for
 	}
 	rec := recordFromFields(bin.Fields)
 	rec.UploadedAt = time.Now().UTC()
+	sum := sha256.Sum256(body)
+	rec.Linux = &linuxProvenance{
+		Key: keyStr, Uploader: c.Actor, BuilderImage: reg.BuilderImage, BuilderDigest: reg.BuilderDigest,
+		SourceRepo: c.Repo.SourceRepo, SourceSHA256: srcSum, SHA256: hex.EncodeToString(sum[:]),
+		LinkingTo: linkingTo, Needs: bin.Needed, MaxGlibc: bin.MaxGlibc,
+	}
 	c.Meta.PutJSON(h.binNS(c, platform, rver), rec.Package+"_"+rec.Version, rec) //nolint:errcheck
 	ledger.RecordAt(c.Meta, c.Repo.Name, rec.Package, rec.Version, rec.UploadedAt)
 	w.WriteHeader(http.StatusCreated)
@@ -139,10 +173,11 @@ func (h *Handler) publishLinuxBin(w http.ResponseWriter, r *http.Request, c *for
 // linuxSourceDescription returns the DESCRIPTION of the source package forge
 // serves for pkg@ver through the binary repository's sourceRepo — the current
 // path first, then CRAN's Archive. On failure it returns the HTTP status and
-// message to refuse the upload with.
-func (h *Handler) linuxSourceDescription(c *format.Context, pkg, ver string) ([]byte, int, string) {
+// message to refuse the upload with. It also returns the source tarball's
+// sha256, for provenance.
+func (h *Handler) linuxSourceDescription(c *format.Context, pkg, ver string) ([]byte, string, int, string) {
 	if c.ReadRepo == nil {
-		return nil, http.StatusInternalServerError, "source check unavailable: this server cannot read " + c.Repo.SourceRepo
+		return nil, "", http.StatusInternalServerError, "source check unavailable: this server cannot read " + c.Repo.SourceRepo
 	}
 	file := pkg + "_" + ver + ".tar.gz"
 	upstreamFailed := false
@@ -152,17 +187,18 @@ func (h *Handler) linuxSourceDescription(c *format.Context, pkg, ver string) ([]
 		case status >= 200 && status < 300:
 			desc, err := rawDescription(body)
 			if err != nil {
-				return nil, http.StatusBadGateway, "the source package " + file + " from " + c.Repo.SourceRepo + " is unreadable: " + err.Error()
+				return nil, "", http.StatusBadGateway, "the source package " + file + " from " + c.Repo.SourceRepo + " is unreadable: " + err.Error()
 			}
-			return desc, 0, ""
+			sum := sha256.Sum256(body)
+			return desc, hex.EncodeToString(sum[:]), 0, ""
 		case status >= 500:
 			upstreamFailed = true
 		}
 	}
 	if upstreamFailed {
-		return nil, http.StatusBadGateway, "could not fetch the source of " + file + " from " + c.Repo.SourceRepo + " to check the binary against; retry"
+		return nil, "", http.StatusBadGateway, "could not fetch the source of " + file + " from " + c.Repo.SourceRepo + " to check the binary against; retry"
 	}
-	return nil, http.StatusBadRequest, c.Repo.SourceRepo + " serves no source package " + file + ", so there is nothing to check this binary against"
+	return nil, "", http.StatusBadRequest, c.Repo.SourceRepo + " serves no source package " + file + ", so there is nothing to check this binary against"
 }
 
 // --- Serving: one URL, binary or source ------------------------------------
@@ -423,4 +459,75 @@ func (h *Handler) PPMStatus(m meta.Store) (distros, rVersions []string) {
 	sort.Strings(distros)
 	sort.Sort(sort.Reverse(sort.StringSlice(rVersions)))
 	return distros, rVersions
+}
+
+// linuxBuilds returns the Linux binaries of pkg this repository shows, by
+// version: its own, for a binary repository, and for a group the binaries of
+// the members it serves them from. meta is one of their index records, for a
+// package that has no source here.
+func (h *Handler) linuxBuilds(c *format.Context, baseURL, pkg string) (builds map[string][]format.BuildInfo, meta *pkgRecord) {
+	repos := linuxBinaryRepos(c)
+	if c.Repo.Kind == repo.Hosted {
+		repos = append(repos, c)
+	}
+	builds = map[string][]format.BuildInfo{}
+	for _, rc := range repos {
+		if rc.Blob == nil { // metadata-only contexts (tests, meta-driven views)
+			continue
+		}
+		keys, _ := rc.Blob.List(rc.Repo.Name + "/bin/linux/")
+		for _, bk := range keys {
+			p, ver, ok := cranBinaryParts(bk)
+			if !ok || p != pkg {
+				continue
+			}
+			platform, rver, ok := cranBinaryLocation(rc, bk)
+			if !ok {
+				continue
+			}
+			info, _, _ := rc.Blob.Stat(bk)
+			var rec pkgRecord
+			rc.Meta.GetJSON(h.binNS(rc, platform, rver), pkg+"_"+ver, &rec) //nolint:errcheck
+			if meta == nil && rec.Package != "" {
+				r := rec
+				meta = &r
+			}
+			b := format.BuildInfo{
+				Platform:    strings.TrimPrefix(platform, "linux/") + "/" + rver,
+				DownloadURL: baseURL + "/repository/" + bk,
+				SizeBytes:   info.Size,
+				PublishedAt: rec.UploadedAt,
+			}
+			if pv := rec.Linux; pv != nil {
+				b.SHA256 = pv.SHA256
+				b.SystemRequirements = pv.Needs
+				b.Provenance = pv.fields()
+			}
+			builds[ver] = append(builds[ver], b)
+		}
+	}
+	for _, bs := range builds {
+		sort.Slice(bs, func(i, j int) bool { return bs[i].Platform < bs[j].Platform })
+	}
+	return builds, meta
+}
+
+// fields presents provenance for people, in reading order.
+func (p *linuxProvenance) fields() []format.Field {
+	out := []format.Field{
+		{Label: "Uploaded by", Value: p.Uploader},
+		{Label: "Builder image", Value: p.BuilderImage},
+		{Label: "Builder digest", Value: p.BuilderDigest},
+		{Label: "Built from", Value: p.SourceRepo + " source, sha256 " + p.SourceSHA256},
+	}
+	if p.LinkingTo != "" {
+		out = append(out, format.Field{Label: "LinkingTo", Value: p.LinkingTo})
+	}
+	if p.MaxGlibc != "" {
+		out = append(out, format.Field{Label: "Needs glibc", Value: ">= " + p.MaxGlibc})
+	}
+	if out[0].Value == "" {
+		out[0].Value = "unknown"
+	}
+	return out
 }

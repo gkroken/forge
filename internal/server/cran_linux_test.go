@@ -4,11 +4,13 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"forge/internal/auth"
 	"forge/internal/cranplatform"
 	"forge/internal/format/cran"
 	"forge/internal/repo"
@@ -158,4 +160,54 @@ func tgzFiles(t *testing.T, files map[string]string) []byte {
 	tw.Close()
 	gz.Close()
 	return buf.Bytes()
+}
+
+// Provenance names the identity that uploaded — the builder token's own
+// description, as the server resolved it — and the detail view shows it.
+func TestCRANLinux_ProvenanceNamesTheUploader(t *testing.T) {
+	s, store := newAuthServer(t)
+	s.Handlers.Register(cran.New())
+	for _, r := range []repo.Repository{
+		{Name: "cran-src", Format: "cran", Kind: repo.Hosted, Enabled: true, AnonymousRead: true},
+		{Name: "cran-public", Format: "cran", Kind: repo.Group, Enabled: true, AnonymousRead: true, Members: []string{"cran-src", "cran-linux"}},
+		{Name: "cran-linux", Format: "cran", Kind: repo.Hosted, Enabled: true, AnonymousRead: true, NoOverwrite: true, SourceRepo: "cran-public"},
+	} {
+		if err := s.Repos.Add(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cranplatform.NewStore(s.Meta).Put(cranplatform.Platform{ //nolint:errcheck
+		Key: "noble-x86_64/4.6", RPlatform: "x86_64-pc-linux-gnu", BuilderImage: "img",
+		BuilderDigest: linuxDigest, MaxGlibc: "2.39", Libraries: []string{"libc.so.6"},
+	})
+	seedBlobBytes(t, s, http.MethodPut, "cran-src", "src/contrib/lb_1.0.tar.gz", tgzWithFile(t, "lb/DESCRIPTION", pkgDesc("lb")))
+	_, secret, err := store.Create("ci builder noble", []auth.Grant{{Repo: "cran-linux", Actions: []auth.Action{auth.ActionRead, auth.ActionWrite},
+		Selectors: []string{"bin/linux/noble-x86_64/**"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPut, "/repository/cran-linux/bin/linux/noble-x86_64/contrib/4.6/lb_1.0.tar.gz", bytes.NewReader(binaryOf(t, "lb")))
+	req.Header.Set("Authorization", "Bearer "+secret)
+	req.Header.Set(cran.BuilderDigestHeader, linuxDigest)
+	rw := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rw, req)
+	if rw.Code != http.StatusCreated {
+		t.Fatalf("upload: %d %s", rw.Code, rw.Body)
+	}
+
+	rw = httptest.NewRecorder()
+	s.Routes().ServeHTTP(rw, httptest.NewRequest(http.MethodGet, "/ui/browse/cran-public/detail?pkg=lb&ver=1.0", nil))
+	var d struct {
+		Builds []struct {
+			Platform   string `json:"platform"`
+			Provenance []struct{ Label, Value string }
+		} `json:"builds"`
+	}
+	json.Unmarshal(rw.Body.Bytes(), &d) //nolint:errcheck
+	if len(d.Builds) != 1 || d.Builds[0].Platform != "noble-x86_64/4.6" {
+		t.Fatalf("detail builds: %d %s", rw.Code, rw.Body)
+	}
+	if d.Builds[0].Provenance[0].Value != "ci builder noble" {
+		t.Errorf("uploader recorded as %q", d.Builds[0].Provenance[0].Value)
+	}
 }

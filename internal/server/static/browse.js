@@ -338,6 +338,9 @@ function renderDetail(d) {
   // Provenance — present only when this version was promoted (copied) here.
   h += renderProvenance(d.provenance);
 
+  // Platform builds (CRAN Linux binaries), each with its provenance.
+  h += renderBuilds(d.builds);
+
   h += '</div>';
   document.getElementById('detail-pane').innerHTML = h;
 
@@ -361,6 +364,38 @@ function renderProvenance(p) {
          '<div class="browse-cksum-label">SOURCE SHA-256</div>' +
          '<div class="browse-cksum-val">' + esc(p.sourceDigest) + '</div>' +
          '</div>';
+  }
+  return h;
+}
+
+// renderBuilds lists a version's platform builds — CRAN Linux binaries — with
+// where each came from and the system libraries it needs. Read-only like the
+// rest of Browse: a bad build is removed with one DELETE on its download URL
+// (docs/setup.md), and the next build recompiles it.
+function renderBuilds(builds) {
+  if (!builds || !builds.length) return '';
+  let h = '<div class="browse-detail-asset-label" style="margin-top:16px;">Linux binaries</div>';
+  for (const b of builds) {
+    h += '<div class="browse-build">';
+    h += '<div class="browse-detail-filename">' + esc(b.platform) +
+         ' <a href="' + esc(b.download_url) + '" class="btn btn-sm" title="Download this build">↓</a></div>';
+    h += '<dl class="browse-meta">';
+    if (b.size_bytes) h += '<dt>Size</dt><dd>' + esc(fmtBytes(b.size_bytes)) + '</dd>';
+    if (b.published_at && !b.published_at.startsWith('0001')) {
+      h += '<dt>Uploaded</dt><dd>' + esc(b.published_at.substring(0, 10)) + '</dd>';
+    }
+    for (const f of (b.provenance || [])) {
+      h += '<dt>' + esc(f.label) + '</dt><dd>' + esc(f.value) + '</dd>';
+    }
+    if (b.system_requirements && b.system_requirements.length) {
+      h += '<dt>System requirements</dt><dd>' + b.system_requirements.map(esc).join(', ') + '</dd>';
+    }
+    h += '</dl>';
+    if (b.sha256) {
+      h += '<div class="browse-checksum"><div class="browse-cksum-label">SHA-256</div>' +
+           '<div class="browse-cksum-val">' + esc(b.sha256) + '</div></div>';
+    }
+    h += '</div>';
   }
   return h;
 }

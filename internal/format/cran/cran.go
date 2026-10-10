@@ -64,6 +64,9 @@ type pkgRecord struct {
 	Archs            string    `json:"archs,omitempty"`
 	OStype           string    `json:"ostype,omitempty"`
 	UploadedAt       time.Time `json:"uploadedAt,omitempty"`
+	// Linux is the provenance of a Linux binary (linux.go); nil otherwise.
+	// Kept on the index record so trash, restore and delete carry it.
+	Linux *linuxProvenance `json:"linux,omitempty"`
 }
 
 func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Context) {
@@ -1060,11 +1063,30 @@ func (h *Handler) Inspect(c *format.Context, baseURL, comp string) (format.Compo
 			matching = append(matching, r)
 		}
 	}
-	if len(matching) == 0 {
+	builds, binMeta := h.linuxBuilds(c, baseURL, comp)
+	if len(matching) == 0 && binMeta == nil {
 		return format.ComponentDetail{}, false
+	}
+	// Versions that exist here only as Linux binaries (a binary repository,
+	// or a binary of a version the index no longer lists) are shown too.
+	listed := map[string]bool{}
+	for _, r := range matching {
+		listed[r.Version] = true
+	}
+	for ver := range builds {
+		if !listed[ver] {
+			rec := pkgRecord{Package: comp, Version: ver}
+			if binMeta != nil && binMeta.Version == ver {
+				rec = *binMeta
+			}
+			matching = append(matching, rec)
+		}
 	}
 	sort.Slice(matching, func(i, j int) bool { return matching[i].Version > matching[j].Version })
 	latest := matching[0]
+	if latest.Title == "" && binMeta != nil {
+		latest = *binMeta
+	}
 
 	// For proxy/group repos, supplement with archived versions from upstream.
 	knownVersions := map[string]bool{}
@@ -1100,6 +1122,12 @@ func (h *Handler) Inspect(c *format.Context, baseURL, comp string) (format.Compo
 			Version:     rec.Version,
 			DownloadURL: fmt.Sprintf("%s/repository/%s/src/contrib/%s_%s.tar.gz", baseURL, c.Repo.Name, rec.Package, rec.Version),
 			PublishedAt: rec.UploadedAt,
+			Builds:      builds[rec.Version],
+		}
+		if !listed[rec.Version] && len(builds[rec.Version]) > 0 {
+			// No source here: the version's own downloads are its builds.
+			versions[i].DownloadURL = builds[rec.Version][0].DownloadURL
+			versions[i].PublishedAt = builds[rec.Version][0].PublishedAt
 		}
 	}
 	deps := cranParseDeps(c.Repo.Name, latest.Depends, latest.Imports)
