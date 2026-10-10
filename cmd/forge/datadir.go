@@ -20,7 +20,7 @@ func prepareDataDir(dir string) error {
 	if err != nil {
 		abs = dir
 	}
-	if err := os.MkdirAll(abs, 0o755); err != nil {
+	if err := os.MkdirAll(abs, 0o750); err != nil {
 		return explainDataDirErr(abs, err)
 	}
 	probe, err := os.CreateTemp(abs, ".forge-write-probe-*")
