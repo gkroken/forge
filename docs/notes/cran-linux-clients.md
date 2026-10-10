@@ -33,14 +33,16 @@ and `praise` 1.0.0 (pure R). "Installed a binary" was proven by the installed
 `R (`, which is R's own default, R's libcurl method replaces it with
 `libcurl/<curl version>`. Setting the option to that same default string explicitly
 changes nothing (measured). Only a value that does *not* start with `R (` reaches
-the server, which is why PPM's docs, and rocker's `Rprofile.site`, set
-`R/x.y.z R (x.y.z platform arch os)`.
+the server, which is why rocker's `Rprofile.site` sets
+`R/x.y.z R (x.y.z platform arch os)` (a format Posit also documents). It is a
+client-side R option only: the agent goes to whatever repo the client uses —
+forge — and involves no third-party service.
 
 Consequences:
 
 - renv and pak always identify R version and arch, whatever download method.
-- Plain `install.packages` identifies them only with a PPM-style
-  `HTTPUserAgent` set (rocker images do this by default). Without it, and with
+- Plain `install.packages` identifies them only with an `HTTPUserAgent` that
+  does not start with `R (` set (rocker images do this by default). Without it, and with
   the curl/wget methods, the request is indistinguishable from `curl`.
 - renv does not override `HTTPUserAgent`, it prefixes it; pak ignores the option
   and sends its own. Neither sends anything else identifying (no custom headers).
@@ -178,8 +180,10 @@ thing every R client sends. The pak index path also carries the R minor; if it
 disagrees with the UA, the index is empty (fail toward source). Anything
 unparseable — `libcurl/…`, `curl/…`, `Wget/…`, a distro with no registered key, an
 arch with no registered key — serves source. So vanilla `install.packages`
-silently gets source; the documented fix is PPM's `HTTPUserAgent` line, which
-rocker already ships.
+silently gets source; the fix, for forge's setup docs, is one client-side R option
+(`options(HTTPUserAgent = sprintf("R/%s R (%s)", …))`), which rocker already ships.
+Nothing here contacts or depends on PPM (§0 decision 1): forge only copies the URL
+*shape* renv and pak recognise, on its own host.
 
 **`Vary: User-Agent`** on the tarball and pak-index responses (PPM omits it; we
 should not).
