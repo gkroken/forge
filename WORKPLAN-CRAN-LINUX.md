@@ -247,15 +247,15 @@ Live          — /format-live-test against a running forge before calling a pha
 
 ## 6. Open decisions (raise with the user before implementing that step)
 
-1. **Write-once vs eviction.** Today `Immutable` repos refuse soft-delete and
-   cleanup (`internal/cleanup/evict.go`). The binary repo needs "no overwrite, but
-   eviction and removal allowed". Options: (a) a new repo setting alongside
-   `Immutable`; (b) make the binary tree write-once in the CRAN handler regardless
-   of repo flags. (b) is simpler but puts a storage rule in a format; (a) is
-   reusable. Recommend (a); confirm first.
+1. ~~**Write-once vs eviction.**~~ — decided 2026-10-10: (a), a new repo setting
+   `noOverwrite` enforced by a blob-store wrapper beside `Immutable` (refuses Put on
+   an existing key, allows Delete). The Stat-then-Put race is accepted, as for
+   `Immutable`.
 2. ~~**Where R minor/arch come from**~~ — decided after L0: the User-Agent (§0.8).
-3. **Multiple builders per key.** Allowed if they share the registered image digest
-   (self-reported, so this is advisory), or one builder identity per key?
+3. ~~**Multiple builders per key.**~~ — decided 2026-10-10: any token with write on
+   the key's path may upload; the `X-Forge-Builder-Digest` header is required and
+   must equal the registered digest. One identity per key is done with existing
+   selector grants (`bin/linux/noble-x86_64/**`), documented, not new mechanism.
 
 ---
 
