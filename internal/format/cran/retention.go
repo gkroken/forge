@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"forge/internal/cranplatform"
 	"forge/internal/format"
 )
 
@@ -14,6 +15,10 @@ import (
 // binary under bin/. Keeping "the last 3 versions of ggplot2" has to mean three
 // versions everywhere, or the binaries — which are the bulky ones for an R
 // shop — accumulate forever while the source index looks tidy.
+//
+// Linux binaries are the exception: they are a build cache keyed by platform
+// (WORKPLAN-CRAN-LINUX), retained one binary at a time — see
+// linuxRetentionEntry.
 //
 // Binaries are discovered from the blob side because meta.Store cannot enumerate
 // namespaces, and the platform and R version are encoded in the path:
@@ -43,18 +48,24 @@ func (h *Handler) ListVersions(c *format.Context) ([]format.Version, error) {
 		}
 	}
 
-	// Binaries: every blob under bin/ belongs to some package+version.
+	// Binaries: every blob under bin/ belongs to some package+version —
+	// except Linux binaries, which are a build cache keyed by platform and
+	// are retained one binary at a time (see linuxRetentionEntries).
+	out := make([]format.Version, 0, len(blobs))
 	binKeys, _ := c.Blob.List(c.Repo.Name + "/bin/")
 	for _, bk := range binKeys {
 		pkg, ver, ok := cranBinaryParts(bk)
 		if !ok {
 			continue
 		}
+		if e, isLinux := h.linuxRetentionEntry(c, bk, pkg, ver); isLinux {
+			out = append(out, e)
+			continue
+		}
 		kk := key{pkg, ver}
 		blobs[kk] = append(blobs[kk], bk)
 	}
 
-	out := make([]format.Version, 0, len(blobs))
 	for kk, keys := range blobs {
 		v := format.Version{Component: kk.pkg, Version: kk.version, BlobKeys: keys}
 		if t, ok := published[kk]; ok {
@@ -72,8 +83,13 @@ func (h *Handler) ListVersions(c *format.Context) ([]format.Version, error) {
 }
 
 // DeleteVersion implements format.Handler: removes the source tarball and every
-// platform binary for this version, plus the meta records describing them.
+// Windows/macOS binary for this version, plus the meta records describing them.
+// A Linux binary entry ("pkg@{key}", see linuxRetentionEntry) removes exactly
+// that one binary; Linux binaries are never removed as part of a version.
 func (h *Handler) DeleteVersion(c *format.Context, pkg, version string) (int64, error) {
+	if name, key, ok := strings.Cut(pkg, "@"); ok {
+		return h.deleteLinuxEntry(c, name, key, version)
+	}
 	var freed int64
 
 	src := h.tarballKey(c, pkg, version)
@@ -86,7 +102,7 @@ func (h *Handler) DeleteVersion(c *format.Context, pkg, version string) (int64, 
 	binKeys, _ := c.Blob.List(c.Repo.Name + "/bin/")
 	for _, bk := range binKeys {
 		bp, bv, ok := cranBinaryParts(bk)
-		if !ok || bp != pkg || bv != version {
+		if !ok || bp != pkg || bv != version || strings.HasPrefix(bk, c.Repo.Name+"/bin/linux/") {
 			continue
 		}
 		if info, exists, _ := c.Blob.Stat(bk); exists {
@@ -132,4 +148,46 @@ func cranBinaryLocation(c *format.Context, blobKey string) (platform, rver strin
 
 func (h *Handler) tarballKey(c *format.Context, pkg, version string) string {
 	return c.Repo.Name + "/src/contrib/" + pkg + "_" + version + ".tar.gz"
+}
+
+// linuxRetentionEntry makes one retention entry of a Linux binary blob,
+// component "{pkg}@{distro}-{arch}/{rminor}". A Linux binary is correct
+// forever for its key and its keys are independent: one platform going unused
+// must not take another platform's binary — or the source — with it, and one
+// platform in use must not keep the others alive. So "not downloaded in N
+// days" judges each binary by its own downloads, and "keep N versions" keeps N
+// per platform. Its publish time is its upload time.
+func (h *Handler) linuxRetentionEntry(c *format.Context, blobKey, pkg, ver string) (format.Version, bool) {
+	platform, rver, ok := cranBinaryLocation(c, blobKey)
+	distroArch, isLinux := strings.CutPrefix(platform, "linux/")
+	if !ok || !isLinux {
+		return format.Version{}, false
+	}
+	v := format.Version{Component: pkg + "@" + distroArch + "/" + rver, Version: ver, BlobKeys: []string{blobKey}}
+	var rec pkgRecord
+	if ok, _ := c.Meta.GetJSON(h.binNS(c, platform, rver), pkg+"_"+ver, &rec); ok && !rec.UploadedAt.IsZero() {
+		v.PublishedAt = rec.UploadedAt.UTC()
+	}
+	return v, true
+}
+
+// deleteLinuxEntry removes one Linux binary and its record, and drops the
+// version's ledger row once nothing of the version remains.
+func (h *Handler) deleteLinuxEntry(c *format.Context, pkg, key, ver string) (int64, error) {
+	k, err := cranplatform.ParseKey(key)
+	if err != nil {
+		return 0, err
+	}
+	platform := "linux/" + k.Distro + "-" + k.Arch
+	bk := c.Key("bin/" + platform + "/contrib/" + k.RMinor + "/" + pkg + "_" + ver + ".tar.gz")
+	var freed int64
+	if info, exists, _ := c.Blob.Stat(bk); exists {
+		freed = info.Size
+		if err := c.Blob.Delete(bk); err != nil {
+			return 0, err
+		}
+	}
+	c.Meta.Delete(h.binNS(c, platform, k.RMinor), pkg+"_"+ver) //nolint:errcheck
+	h.forgetIfGone(c, pkg, ver)
+	return freed, nil
 }
