@@ -566,6 +566,28 @@ jobs:
       - name: CRAN macOS binary install conformance
         run: go test -tags conformance -timeout 300s -v -run TestCRAN_Binary_macOS ./internal/conformance/...
 
+  conformance-binary-linux:
+    name: CRAN Linux binaries (real R clients)
+    # Nightly only: builds R packages from source in rocker containers.
+    # scripts/cran-linux-validate.sh drives uploads and every refusal;
+    # scripts/cran-linux-serve-validate.sh proves install.packages, pak and
+    # renv::restore install binaries through one URL with the compiler removed.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Pull R images
+        run: docker pull -q rocker/r-ver:4.6.1 && docker pull -q rocker/r-ver:4.4
+      - name: Uploads and refusals
+        run: bash scripts/cran-linux-validate.sh
+      - name: One-URL serving with install.packages, pak and renv
+        run: bash scripts/cran-linux-serve-validate.sh
+
   dast:
     name: DAST — ZAP baseline scan
     # Nightly only: ZAP takes 3–5 minutes and is not worth blocking PRs.
