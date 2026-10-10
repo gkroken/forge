@@ -1,6 +1,7 @@
 # forge — CRAN Linux Binary Cache
 
-> **Status: IN PROGRESS** — L0 done (`docs/notes/cran-linux-clients.md`); L1 next. Origin: Skald issue 003 (2026-10-10), "every R
+> **Status: IN PROGRESS** — L0 done (`docs/notes/cran-linux-clients.md`); L1 done
+> (validated upload; live: `scripts/cran-linux-validate.sh`, 24/24); L2 next. Origin: Skald issue 003 (2026-10-10), "every R
 > restore on Linux compiles from source". Measured there: renv restore was 155 s of a
 > 253 s cold build for a 46-package app; tidyverse/sf/arrow-sized apps take minutes.
 
