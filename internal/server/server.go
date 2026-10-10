@@ -529,6 +529,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		RepoStats: repoStats, RepoStatsFn: s.lookupRepoStats,
 		GlobalStats: s.GlobalStats, RetryGauge: &s.retryGauge,
 		OnCacheFill: s.onProxyCacheFill,
+		ReadRepo:    s.readRepo,
 	}
 	if guard != nil && rp.Kind == repo.Group {
 		c.MemberFilter = guard.memberFilter

@@ -65,6 +65,13 @@ type Context struct {
 	// also signals that the dependency-confusion guard is active, which
 	// enables hosted-name shadowing in those merges. Nil = guard inactive.
 	NameClaimed func(name string) bool
+
+	// ReadRepo reads sub from another repository in process — a GET through
+	// that repository's own handler, with the server's read guards applied
+	// (the dependency-confusion guard included), so a group answers exactly
+	// what it would answer a client. It returns the status and body. Nil when
+	// the server provides none; callers that need it must then refuse.
+	ReadRepo func(repoName, sub string) (status int, body []byte)
 }
 
 // Key namespaces a blob key under the repo so repos never collide in storage.

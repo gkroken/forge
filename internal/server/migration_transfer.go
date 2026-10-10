@@ -19,6 +19,7 @@ import (
 	"forge/internal/format"
 	"forge/internal/format/pypi"
 	"forge/internal/nexus"
+	"forge/internal/repo"
 )
 
 // Content transfer for the Nexus migration.
@@ -104,11 +105,32 @@ func (s *Server) internalServe(ctx context.Context, method, repoName, sub, rawQu
 		return rec
 	}
 
-	h.Serve(rec, req, &format.Context{
+	c := &format.Context{
 		Repo: rp, Blob: s.repoBlob(rp), Meta: s.Meta, HTTP: s.client, Sub: sub,
 		Repos: s.Repos, Queue: s.Queue, Metrics: s.Metrics,
-	})
+		ReadRepo: s.readRepo,
+	}
+	// Reads through a group or proxy get the dependency-confusion guard, as
+	// handleRepo gives them: an in-process read must not see upstream content
+	// for a name a hosted repository owns.
+	if method == http.MethodGet || method == http.MethodHead {
+		guard := s.newDepGuard(rp, h, sub)
+		if guard.blocks(rec, req) {
+			return rec
+		}
+		if guard != nil && rp.Kind == repo.Group {
+			c.MemberFilter = guard.memberFilter
+			c.NameClaimed = guard.claimedName
+		}
+	}
+	h.Serve(rec, req, c)
 	return rec
+}
+
+// readRepo is format.Context.ReadRepo: an in-process GET with the read guards.
+func (s *Server) readRepo(repoName, sub string) (int, []byte) {
+	rec := s.internalServe(context.Background(), http.MethodGet, repoName, sub, "", nil, nil, "http://localhost")
+	return rec.code, rec.body.Bytes()
 }
 
 // migrateRepoContent dispatches to the per-format transfer strategy.

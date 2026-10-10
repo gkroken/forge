@@ -524,9 +524,18 @@ func (w *rdsWriter) sym(name string) {
 
 // parseDescription extracts control fields from {pkg}/DESCRIPTION inside the tarball.
 func parseDescription(tgz []byte) (pkgRecord, error) {
-	gz, err := gzip.NewReader(bytes.NewReader(tgz))
+	data, err := rawDescription(tgz)
 	if err != nil {
 		return pkgRecord{}, err
+	}
+	return scanDescription(data), nil
+}
+
+// rawDescription returns the bytes of the first DESCRIPTION in a .tar.gz.
+func rawDescription(tgz []byte) ([]byte, error) {
+	gz, err := gzip.NewReader(bytes.NewReader(tgz))
+	if err != nil {
+		return nil, err
 	}
 	defer gz.Close()
 	tr := tar.NewReader(gz)
@@ -536,24 +545,24 @@ func parseDescription(tgz []byte) (pkgRecord, error) {
 			break
 		}
 		if err != nil {
-			return pkgRecord{}, err
+			return nil, err
 		}
 		if path.Base(hdr.Name) == "DESCRIPTION" {
 			// Bounded: see format.ReadMetadata. A tiny .tar.gz can hold a
 			// gigabyte DESCRIPTION.
-			data, err := format.ReadMetadata(tr)
-			if err != nil {
-				return pkgRecord{}, err
-			}
-			return scanDescription(data), nil
+			return format.ReadMetadata(tr)
 		}
 	}
-	return pkgRecord{}, fmt.Errorf("DESCRIPTION not found")
+	return nil, fmt.Errorf("DESCRIPTION not found")
 }
 
 // scanDescription parses control format, joining continuation lines (leading space).
 func scanDescription(data []byte) pkgRecord {
-	fields := dcfFields(data)
+	return recordFromFields(dcfFields(data))
+}
+
+// recordFromFields maps DESCRIPTION fields onto the index record.
+func recordFromFields(fields map[string]string) pkgRecord {
 	return pkgRecord{
 		Package:          fields["Package"],
 		Version:          fields["Version"],
@@ -658,6 +667,12 @@ func (h *Handler) serveBinary(w http.ResponseWriter, r *http.Request, c *format.
 	platform, rver, file, ok := parseBinPath(c.Sub)
 	if !ok {
 		http.Error(w, "invalid binary path", http.StatusNotFound)
+		return
+	}
+	// Every request under bin/linux/ takes the Linux path, so nothing reaches
+	// that tree without its validation — not even as a .tgz.
+	if platform == "linux" || strings.HasPrefix(platform, "linux/") {
+		h.serveLinuxBinary(w, r, c, platform, rver, file)
 		return
 	}
 	switch {
