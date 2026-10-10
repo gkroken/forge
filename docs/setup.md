@@ -43,11 +43,25 @@ Flags:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-addr` | `:8080` | Listen address |
-| `-data` | `./data` | Data directory (blobs + metadata) |
+| `-addr` | `:8080` | Listen address (env `FORGE_ADDR`) |
+| `-data` | `./data` | Data directory (blobs + metadata) (env `FORGE_DATA`; the image sets `/data`) |
 | `-auth` | off | Enable token authentication (see [Authentication](auth.md)) |
 | `-drain-timeout` | `30s` | Graceful shutdown window for in-flight requests |
 | `-log-format` | `json` | Log format: `json` or `text` |
+
+### Option C — Plain `docker run`
+
+The image runs as the distroless **nonroot user, uid/gid 65532**, and keeps its
+data in `/data`. A named volume inherits the right ownership; a tmpfs or a bind
+mount does not, so give it to that user:
+
+```bash
+docker run -d -p 8080:8080 --read-only --tmpfs /data:uid=65532,gid=65532 ghcr.io/gkroken/forge
+# bind mount: sudo chown -R 65532:65532 ./forge-data && docker run -v "$PWD/forge-data:/data" ...
+```
+
+Arguments go straight to `forge` (e.g. `... ghcr.io/gkroken/forge -addr :80 -auth`);
+the data directory stays `/data` because the image sets it through `FORGE_DATA`.
 
 ### Healthcheck
 

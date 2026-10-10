@@ -39,8 +39,8 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", ":8080", "listen address")
-	data := flag.String("data", "./data", "data directory")
+	addr := flag.String("addr", envOr("FORGE_ADDR", ":8080"), "listen address (env FORGE_ADDR)")
+	data := flag.String("data", envOr("FORGE_DATA", "./data"), "data directory (env FORGE_DATA)")
 	healthcheck := flag.Bool("healthcheck", false, "probe /healthz and exit 0/1")
 	drainTimeout := flag.Duration("drain-timeout", 30*time.Second, "graceful shutdown drain timeout")
 	enableAuth := flag.Bool("auth", false, "enable token authentication (creates token store in data dir)")
@@ -120,6 +120,10 @@ func main() {
 		pgMeta    *meta.PG // non-nil when Postgres is active; used for queue wiring
 		err       error
 	)
+
+	if os.Getenv("POSTGRES_DSN") == "" || os.Getenv("S3_ENDPOINT") == "" {
+		must(prepareDataDir(*data))
+	}
 
 	if pgDSN := os.Getenv("POSTGRES_DSN"); pgDSN != "" {
 		pgMeta, err = meta.NewPG(pgDSN)

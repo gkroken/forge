@@ -28,8 +28,12 @@ COPY --from=builder /forge /forge
 # propagates this ownership when it initialises an empty named volume.
 COPY --from=builder --chown=nonroot:nonroot /data /data
 
+# The data dir comes from the environment, not CMD: any `docker run` argument
+# replaces CMD wholesale, and `-addr :80` alone would otherwise drop the data dir
+# back to the flag default ./data (read-only under --read-only).
+ENV FORGE_DATA=/data
+
 EXPOSE 8080
 VOLUME ["/data"]
 
 ENTRYPOINT ["/forge"]
-CMD ["-addr", ":8080", "-data", "/data"]
