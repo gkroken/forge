@@ -125,6 +125,17 @@ func (e *Enforcer) RequireAdmin(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// RequireAuthenticated checks for any valid credential — a Bearer token or the
+// UI session cookie — whatever its grants. For global reads that every client
+// may need but that should not be served to the internet at large.
+// Returns false and writes a 401 if the check fails.
+func (e *Enforcer) RequireAuthenticated(w http.ResponseWriter, r *http.Request) bool {
+	if e.store == nil {
+		return true // eval mode
+	}
+	return e.apiToken(w, r) != nil
+}
+
 // RequireRepoAdmin checks for a token carrying the admin action on the named
 // repository (a repo-scoped admin grant, or global admin via "*"). Used by
 // per-repository admin API routes: settings, cleanup, cache, scan, policy

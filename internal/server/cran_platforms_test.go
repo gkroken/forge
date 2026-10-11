@@ -82,22 +82,64 @@ func TestCRANPlatformsAPI_CRUD(t *testing.T) {
 }
 
 // A registration decides what every binary repository accepts for an
-// environment, so it is global-admin only — a builder's write token must not
-// be able to widen its own platform's manifest.
-func TestCRANPlatformsAPI_AdminOnly(t *testing.T) {
+// environment, so writing one is global-admin only — a builder's write token
+// must not be able to widen its own platform's manifest.
+func TestCRANPlatformsAPI_WritesAdminOnly(t *testing.T) {
 	srv, store := newAuthServer(t)
 	_, writer, err := store.Create("builder", []auth.Grant{auth.GrantForRole("*", auth.RoleWrite)}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
+	for _, method := range []string{http.MethodPut, http.MethodDelete} {
 		rw := platformReq(t, srv, method, "/api/v1/cran/platforms/noble-x86_64/4.6", writer, platformJSON(""))
-		if rw.Code != http.StatusForbidden && rw.Code != http.StatusUnauthorized {
+		if rw.Code != http.StatusForbidden {
 			t.Errorf("%s by a write token: %d, want 403", method, rw.Code)
 		}
 	}
 	if _, ok, _ := cranplatform.NewStore(srv.Meta).Get("noble-x86_64/4.6"); ok {
 		t.Fatal("a non-admin registered a platform")
+	}
+}
+
+// A client must be able to check a registration names the builder image it
+// expects before it installs binaries governed by it, so any authenticated
+// caller may read one — but not an anonymous one.
+func TestCRANPlatformsAPI_ReadsNeedAuthOnly(t *testing.T) {
+	srv, store := newAuthServer(t)
+	if err := cranplatform.NewStore(srv.Meta).Put(cranplatform.Platform{
+		Key: "noble-x86_64/4.6", RPlatform: "x86_64-pc-linux-gnu",
+		BuilderImage: "ghcr.io/acme/r-builder:4.6.1-noble", BuilderDigest: "sha256:" + strings.Repeat("cd", 32),
+		MaxGlibc: "2.39", Libraries: []string{"libc.so.6", "libR.so"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A reader scoped to one repository: no grant touches the registry itself.
+	_, reader, err := store.Create("skald", []auth.Grant{auth.GrantForRole("cran-linux", auth.RoleRead)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const p = "/api/v1/cran/platforms"
+
+	rw := platformReq(t, srv, http.MethodGet, p+"/noble-x86_64/4.6", reader, nil)
+	var got cranplatform.Platform
+	json.Unmarshal(rw.Body.Bytes(), &got) //nolint:errcheck
+	if rw.Code != http.StatusOK || got.BuilderDigest != "sha256:"+strings.Repeat("cd", 32) {
+		t.Fatalf("get by a read token: %d %s", rw.Code, rw.Body)
+	}
+	var list []cranplatform.Platform
+	if rw := platformReq(t, srv, http.MethodGet, p, reader, nil); rw.Code != http.StatusOK {
+		t.Fatalf("list by a read token: %d", rw.Code)
+	} else if json.Unmarshal(rw.Body.Bytes(), &list); len(list) != 1 { //nolint:errcheck
+		t.Fatalf("list by a read token: %s", rw.Body)
+	}
+
+	for _, path := range []string{p, p + "/noble-x86_64/4.6"} {
+		if rw := platformReq(t, srv, http.MethodGet, path, "", nil); rw.Code != http.StatusUnauthorized {
+			t.Errorf("anonymous GET %s: %d, want 401", path, rw.Code)
+		}
+		if rw := platformReq(t, srv, http.MethodGet, path, "not-a-token", nil); rw.Code != http.StatusUnauthorized {
+			t.Errorf("GET %s with an invalid token: %d, want 401", path, rw.Code)
+		}
 	}
 }
 

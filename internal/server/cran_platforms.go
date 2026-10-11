@@ -17,10 +17,17 @@ import (
 //	DELETE /api/v1/cran/platforms/{key}         unregister
 //
 // A key contains a slash ("noble-x86_64/4.6"), so everything after the prefix
-// is the key. Global admin only: a registration decides what every binary
-// repository accepts for that environment.
+// is the key. Writes are global admin only: a registration decides what every
+// binary repository accepts for that environment. Reads are open to any
+// authenticated caller: the registration decides which binaries a client is
+// served, so a client must be able to check it names the image it expects
+// before installing from or uploading to that platform's tree.
 func (s *Server) handleCRANPlatforms(w http.ResponseWriter, r *http.Request) {
-	if !s.Enforcer.RequireAdmin(w, r) {
+	if r.Method == http.MethodGet {
+		if !s.Enforcer.RequireAuthenticated(w, r) {
+			return
+		}
+	} else if !s.Enforcer.RequireAdmin(w, r) {
 		return
 	}
 	reg := cranplatform.NewStore(s.Meta)

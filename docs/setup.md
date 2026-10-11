@@ -310,6 +310,11 @@ curl -X PUT -H "Authorization: Bearer $ADMIN" --data @platform.json \
 builder image changes, re-run the script and update the registration — uploads
 from an image whose digest does not match are refused.
 
+Registering is admin-only, but any authenticated token can read a registration
+(`GET $FORGE/api/v1/cran/platforms/{key}`, or the list without a key), so a
+builder or client can check `builderDigest` names the image it expects before
+it uploads or installs binaries for that key.
+
 **3. Give the builder a token** that can write only its own platform's tree:
 
 ```bash
