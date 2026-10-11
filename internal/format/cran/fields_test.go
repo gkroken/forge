@@ -104,3 +104,59 @@ func TestIndex_UpgradesOldRecords(t *testing.T) {
 		t.Errorf("record without a tarball dropped:\n%s", idx)
 	}
 }
+
+// A record that cannot be upgraded is marked current, so it is not re-read on
+// every index request; its fields stay as they were.
+func TestIndex_FailedUpgradeIsNotRetried(t *testing.T) {
+	c := newCRANCtx(t)
+	other := lbTarball(t, []tarEntry{{name: "linked/DESCRIPTION", body: []byte(strings.Replace(linkedDesc, "1.0", "9.9", 1))}})
+	c.Blob.Put(c.Key("src/contrib/linked_1.0.tar.gz"), bytes.NewReader(other))              //nolint:errcheck
+	c.Meta.PutJSON(New().ns(c), "linked_1.0", pkgRecord{Package: "linked", Version: "1.0"}) //nolint:errcheck
+	c.Meta.PutJSON(New().ns(c), "gone_1.0", pkgRecord{Package: "gone", Version: "1.0"})     //nolint:errcheck
+	cranServe(c, http.MethodGet, "src/contrib/PACKAGES", nil)
+	for _, k := range []string{"linked_1.0", "gone_1.0"} {
+		var rec pkgRecord
+		c.Meta.GetJSON(New().ns(c), k, &rec) //nolint:errcheck
+		if rec.Schema != recordSchema || rec.LinkingTo != "" {
+			t.Errorf("%s: schema %d linkingTo %q, want marked current and unchanged", k, rec.Schema, rec.LinkingTo)
+		}
+	}
+}
+
+// deletingStore deletes the tarball (and its record) right after the upgrade
+// reads it, as a concurrent delete would.
+type deletingStore struct {
+	blob.Store
+	after func()
+}
+
+func (s deletingStore) Get(key string) (io.ReadCloser, error) {
+	rc, err := s.Store.Get(key)
+	if err == nil && s.after != nil {
+		body, _ := io.ReadAll(rc)
+		rc.Close()
+		s.after()
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
+	return rc, err
+}
+
+// An upgrade racing a delete must not bring the deleted record back.
+func TestIndex_UpgradeDoesNotUndoADelete(t *testing.T) {
+	c := newCRANCtx(t)
+	tgz := lbTarball(t, []tarEntry{{name: "linked/DESCRIPTION", body: []byte(linkedDesc)}})
+	key := c.Key("src/contrib/linked_1.0.tar.gz")
+	c.Blob.Put(key, bytes.NewReader(tgz))                                                   //nolint:errcheck
+	c.Meta.PutJSON(New().ns(c), "linked_1.0", pkgRecord{Package: "linked", Version: "1.0"}) //nolint:errcheck
+	inner := c.Blob
+	c.Blob = deletingStore{Store: inner, after: func() {
+		inner.Delete(key)                        //nolint:errcheck
+		c.Meta.Delete(New().ns(c), "linked_1.0") //nolint:errcheck
+	}}
+	if idx := cranServe(c, http.MethodGet, "src/contrib/PACKAGES", nil).Body.String(); strings.Contains(idx, "Package: linked") {
+		t.Errorf("index lists a version deleted during the request:\n%s", idx)
+	}
+	if ok, _ := c.Meta.GetJSON(New().ns(c), "linked_1.0", &pkgRecord{}); ok {
+		t.Error("the upgrade re-created a deleted record")
+	}
+}

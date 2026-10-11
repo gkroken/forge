@@ -283,7 +283,9 @@ func (h *Handler) pkgRecords(c *format.Context) []pkgRecord {
 		var rec pkgRecord
 		if ok, _ := c.Meta.GetJSON(h.ns(c), k, &rec); ok {
 			if rec.Schema < recordSchema {
-				rec = h.upgradeRecord(c, k, rec)
+				if rec, ok = h.upgradeRecord(c, k, rec); !ok {
+					continue
+				}
 			}
 			recs = append(recs, rec)
 		}
@@ -294,27 +296,44 @@ func (h *Handler) pkgRecords(c *format.Context) []pkgRecord {
 // upgradeRecord re-reads an older record's fields from its source tarball and
 // stores the result, once; what the record knows that DESCRIPTION does not
 // (publish time, Linux provenance) is kept. A record whose tarball cannot be
-// read is returned as it was.
-func (h *Handler) upgradeRecord(c *format.Context, key string, old pkgRecord) pkgRecord {
+// read, or does not match it, is stored unchanged but marked current, so it is
+// not re-read on every index request. ok is false when the record turned out
+// to be deleted meanwhile.
+func (h *Handler) upgradeRecord(c *format.Context, key string, old pkgRecord) (rec pkgRecord, ok bool) {
 	if c.Blob == nil { // metadata-only contexts (tests, meta-driven views)
-		return old
+		return old, true
 	}
-	rc, err := c.Blob.Get(h.tarballKey(c, old.Package, old.Version))
+	tarball := h.tarballKey(c, old.Package, old.Version)
+	rec = old
+	body, err := readBlob(c.Blob, tarball)
+	read := err == nil
+	if read {
+		if fresh, err := parseDescription(body); err == nil && fresh.Package == old.Package && fresh.Version == old.Version {
+			fresh.UploadedAt, fresh.Linux = old.UploadedAt, old.Linux
+			rec = fresh
+		}
+	}
+	rec.Schema = recordSchema
+	c.Meta.PutJSON(h.ns(c), key, rec) //nolint:errcheck
+	// This write happens on a read path. A delete that removed the record and
+	// its tarball after they were read here would be undone by it, leaving the
+	// index listing a version that 404s, so the record is taken back out. (A
+	// tarball that was already missing is drift for integrity verify to
+	// report, not something an index request decides.)
+	if _, still, _ := c.Blob.Stat(tarball); read && !still {
+		c.Meta.Delete(h.ns(c), key) //nolint:errcheck
+		return old, false
+	}
+	return rec, true
+}
+
+func readBlob(s blob.Store, key string) ([]byte, error) {
+	rc, err := s.Get(key)
 	if err != nil {
-		return old
+		return nil, err
 	}
 	defer rc.Close()
-	body, err := io.ReadAll(rc)
-	if err != nil {
-		return old
-	}
-	rec, err := parseDescription(body)
-	if err != nil || rec.Package != old.Package || rec.Version != old.Version {
-		return old
-	}
-	rec.UploadedAt, rec.Linux = old.UploadedAt, old.Linux
-	c.Meta.PutJSON(h.ns(c), key, rec) //nolint:errcheck
-	return rec
+	return io.ReadAll(rc)
 }
 
 // groupPkgRecords merges package records from all members, deduplicating by
