@@ -121,12 +121,11 @@ var warned sync.Map
 // upstream PACKAGES.
 func (h *Handler) serveProxyIndex(w http.ResponseWriter, c *format.Context) {
 	pins := h.loadPins(c)
-	if len(pins.MD5) == 0 {
-		h.proxy(w, c)
-		return
-	}
 	text, ok := h.upstreamIndexText(c)
-	if !ok {
+	// UpstreamMD5sum is forge's statement, so one upstream wrote is dropped;
+	// with nothing to correct and nothing to drop, upstream's files pass
+	// through byte for byte.
+	if !ok || (len(pins.MD5) == 0 && !bytes.Contains(text, []byte(upstreamMD5Field+":"))) {
 		h.proxy(w, c)
 		return
 	}
@@ -172,6 +171,18 @@ func (h *Handler) correctMD5s(c *format.Context, text []byte, pins pinDoc) ([]by
 	changed := false
 	stanza := []string{}
 	flush := func() {
+		kept := stanza[:0]
+		inUpstreamField := false
+		for _, l := range stanza {
+			cont := l[0] == ' ' || l[0] == '\t'
+			if strings.HasPrefix(l, upstreamMD5Field+":") || (cont && inUpstreamField) {
+				inUpstreamField, changed = true, true
+				continue
+			}
+			inUpstreamField = false
+			kept = append(kept, l)
+		}
+		stanza = kept
 		pkg, ver, md5Line := "", "", -1
 		for i, l := range stanza {
 			switch {

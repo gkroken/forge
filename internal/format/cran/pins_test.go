@@ -25,8 +25,9 @@ func md5hex(b []byte) string { s := md5.Sum(b); return hex.EncodeToString(s[:]) 
 
 // fakeCRAN is an upstream that can republish a version with other bytes.
 type fakeCRAN struct {
-	mu  sync.Mutex
-	tar map[string][]byte // filename → bytes
+	mu     sync.Mutex
+	tar    map[string][]byte // filename → bytes
+	forged bool              // the index carries UpstreamMD5sum lines of its own
 }
 
 func (u *fakeCRAN) set(file string, b []byte) { u.mu.Lock(); u.tar[file] = b; u.mu.Unlock() }
@@ -34,8 +35,12 @@ func (u *fakeCRAN) set(file string, b []byte) { u.mu.Lock(); u.tar[file] = b; u.
 func (u *fakeCRAN) index() string {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	return "Package: other\nVersion: 2.0\nImports: a,\n    b\nMD5sum: " + md5hex(u.tar["other_2.0.tar.gz"]) + "\nNeedsCompilation: no\n\n" +
-		"Package: pinned\nVersion: 1.0\nMD5sum: " + md5hex(u.tar["pinned_1.0.tar.gz"]) + "\nLicense: MIT\n\n"
+	forged := ""
+	if u.forged {
+		forged = "UpstreamMD5sum: 0000\n    continued\n"
+	}
+	return "Package: other\nVersion: 2.0\nImports: a,\n    b\nMD5sum: " + md5hex(u.tar["other_2.0.tar.gz"]) + "\n" + forged + "NeedsCompilation: no\n\n" +
+		"Package: pinned\nVersion: 1.0\n" + forged + "MD5sum: " + md5hex(u.tar["pinned_1.0.tar.gz"]) + "\nLicense: MIT\n\n"
 }
 
 func (u *fakeCRAN) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -161,5 +166,33 @@ func TestProxyPins_LegacyCacheEntry(t *testing.T) {
 	cranServe(c, http.MethodGet, "src/contrib/pinned_1.0.tar.gz", nil)
 	if got := New().loadPins(c).MD5["pinned_1.0"]; got != md5hex([]byte("old bytes")) {
 		t.Errorf("legacy pin %q", got)
+	}
+}
+
+// UpstreamMD5sum is forge's statement: one the upstream index writes itself is
+// dropped, so the field cannot be forged or doubled (review of 78a4a66, N1).
+func TestProxyPins_UpstreamCannotSupplyTheField(t *testing.T) {
+	v1, v2 := []byte("tarball one"), []byte("tarball TWO")
+	up := &fakeCRAN{tar: map[string][]byte{"pinned_1.0.tar.gz": v1, "other_2.0.tar.gz": []byte("other")}, forged: true}
+	srv := httptest.NewServer(up)
+	defer srv.Close()
+	dir := t.TempDir()
+	b, _ := blob.NewFS(filepath.Join(dir, "b"))
+	m, _ := meta.NewFS(filepath.Join(dir, "m"))
+	tiny := time.Nanosecond
+	c := &format.Context{Repo: repo.Repository{Name: "cran-proxy", Format: "cran", Kind: repo.Proxy, Upstream: srv.URL,
+		ContentMaxAge: &tiny, MetadataMaxAge: &tiny}, Blob: b, Meta: m, HTTP: srv.Client()}
+	get := func(sub string) string { return cranServe(c, http.MethodGet, sub, nil).Body.String() }
+
+	// Nothing cached, nothing to correct: the forged lines still go.
+	clean := strings.ReplaceAll(up.index(), "UpstreamMD5sum: 0000\n    continued\n", "")
+	if got := get("src/contrib/PACKAGES"); got != clean {
+		t.Errorf("upstream's UpstreamMD5sum served:\n%s", got)
+	}
+	get("src/contrib/pinned_1.0.tar.gz")
+	up.set("pinned_1.0.tar.gz", v2)
+	idx := get("src/contrib/PACKAGES")
+	if n := strings.Count(idx, "UpstreamMD5sum:"); n != 1 || !strings.Contains(idx, "MD5sum: "+md5hex(v1)+"\nUpstreamMD5sum: "+md5hex(v2)+"\n") {
+		t.Errorf("want exactly forge's one UpstreamMD5sum (%d found):\n%s", n, idx)
 	}
 }
