@@ -86,6 +86,11 @@ type CacheEntry struct {
 	LastModified string    `json:"lastModified,omitempty"`
 	NotFound     bool      `json:"notFound,omitempty"` // negative-cache flag
 	ContentType  string    `json:"contentType,omitempty"`
+	// MD5 and SHA256 are the checksums of the blob this entry describes, as
+	// the store computed them when the fetch stored it. Empty on entries
+	// written before they were recorded, and on negative entries.
+	MD5    string `json:"md5,omitempty"`
+	SHA256 string `json:"sha256,omitempty"`
 }
 
 // Config controls caching and upstream-fetch behaviour.
@@ -513,7 +518,9 @@ func (f *Fetcher) Fetch(blobKey, cacheNS, upURL string, blobs blob.Store, metas 
 				ContentType:  ct,
 			}
 			// Streamed, so memory is one copy buffer rather than one artifact.
-			blobs.Put(blobKey, upResp.body) //nolint:errcheck
+			if info, err := blobs.Put(blobKey, upResp.body); err == nil {
+				newEntry.MD5, newEntry.SHA256 = info.MD5, info.SHA256
+			}
 			metas.PutJSON(cacheNS, blobKey, newEntry)
 			metas.PutJSON(cacheNS, HealthKey, HealthRecord{OK: true, CheckedAt: now}) //nolint:errcheck
 			if f.cfg.RecordMiss != nil {

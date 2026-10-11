@@ -265,6 +265,24 @@ curl -s http://localhost:8080/repository/cran-public/src/contrib/PACKAGES \
 curl -s "http://localhost:8080/repository/cran-hosted/bin/windows/contrib/4.4/PACKAGES"
 ```
 
+### Proxy caching: a version's bytes never change
+
+A CRAN proxy keeps the first bytes it cached for each package version and
+serves them from then on — CRAN never republishes a version, and a Linux binary
+built from those bytes stays valid. `contentMaxAge` does not apply to package
+tarballs; the index (`PACKAGES*`) is refreshed per `metadataMaxAge`.
+
+If the upstream does republish a version with other bytes (a resynced mirror,
+an internal CRAN-like repository), the proxy's index still gives the
+`MD5sum` of the file forge serves, and forge logs `cran proxy: upstream changed
+a published version`. To take upstream's new bytes, expire the cached file;
+the next download fetches it again:
+
+```bash
+curl -X DELETE -H "Authorization: Bearer $ADMIN" \
+  "$FORGE/api/v1/repos/cran-proxy/cache/src/contrib/mypkg_1.0.tar.gz"
+```
+
 ### Linux binary packages
 
 CRAN publishes no Linux binaries, so every R install on Linux compiles. forge

@@ -96,14 +96,14 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 	switch {
 	case r.Method == http.MethodGet && c.Sub == "src/contrib/PACKAGES":
 		if c.Repo.Kind == repo.Proxy {
-			h.proxy(w, c)
+			h.serveProxyIndex(w, c)
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain")
 		w.Write(h.packages(c))
 	case r.Method == http.MethodGet && c.Sub == "src/contrib/PACKAGES.gz":
 		if c.Repo.Kind == repo.Proxy {
-			h.proxy(w, c)
+			h.serveProxyIndex(w, c)
 			return
 		}
 		w.Header().Set("Content-Type", "application/gzip")
@@ -112,7 +112,7 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 		gz.Close()
 	case r.Method == http.MethodGet && c.Sub == "src/contrib/PACKAGES.rds":
 		if c.Repo.Kind == repo.Proxy {
-			h.proxy(w, c)
+			h.serveProxyIndex(w, c)
 			return
 		}
 		w.Header().Set("Content-Type", "application/octet-stream")
@@ -190,6 +190,10 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, c *format.Con
 			http.NotFound(w, r)
 		}
 		return
+	}
+	if c.Repo.Kind == repo.Proxy {
+		// Pinned once served (pins.go), so the index can describe it.
+		defer h.pinTarball(c, c.Sub)
 	}
 	rc, err := c.Blob.Get(c.Key(c.Sub))
 	if err != nil {
@@ -427,7 +431,13 @@ func buildPackages(recs []pkgRecord) []byte {
 
 func buildPackagesRDS(recs []pkgRecord) []byte {
 	cols := []string{"Package", "Version", "Depends", "Imports", "License", "NeedsCompilation", "Built", "Archs", "OS_type"}
-	nrows, ncols := len(recs), len(cols)
+	return writeRDSMatrix(cols, len(recs), func(r, c int) string { return pkgField(recs[r], cols[c]) })
+}
+
+// writeRDSMatrix serializes a character matrix with column names cols and
+// nrows rows, cell(r, c) giving each value ("" is NA), as saveRDS writes it.
+func writeRDSMatrix(cols []string, nrows int, cell func(r, c int) string) []byte {
+	ncols := len(cols)
 
 	var w rdsWriter
 	w.raw([]byte("X\n"))
@@ -451,7 +461,7 @@ func buildPackagesRDS(recs []pkgRecord) []byte {
 	w.i32(int32(nrows * ncols)) // #nosec G115 -- package counts never approach int32 overflow
 	for c := 0; c < ncols; c++ {
 		for r := 0; r < nrows; r++ {
-			w.charsxp(pkgField(recs[r], cols[c]))
+			w.charsxp(cell(r, c))
 		}
 	}
 
