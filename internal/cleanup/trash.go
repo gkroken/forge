@@ -190,6 +190,8 @@ func trashCRAN(ts *Tombstone, repoName, pkg, version string, b blob.Store, m met
 	if err := ts.moveToTrash(b, repoName+"/src/contrib/"+pkg+"_"+version+".tar.gz"); err != nil {
 		return err
 	}
+	// Blob before record: cran's upgradeRecord undoes a racing delete only
+	// if the tarball is already gone when the record goes.
 	if err := ts.captureMeta(m, repoName+"+cran", pkg+"_"+version); err != nil {
 		return err
 	}

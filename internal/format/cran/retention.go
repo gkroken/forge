@@ -97,6 +97,7 @@ func (h *Handler) DeleteVersion(c *format.Context, pkg, version string) (int64, 
 		freed += info.Size
 		c.Blob.Delete(src) //nolint:errcheck
 	}
+	// Blob before record: upgradeRecord's undo of a racing delete depends on it.
 	c.Meta.Delete(h.ns(c), pkg+"_"+version) //nolint:errcheck
 
 	binKeys, _ := c.Blob.List(c.Repo.Name + "/bin/")

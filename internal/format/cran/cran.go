@@ -724,7 +724,8 @@ func (h *Handler) deletePkg(w http.ResponseWriter, c *format.Context) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Meta key mirrors what publish() stores: "{Package}_{Version}"
+	// Meta key mirrors what publish() stores: "{Package}_{Version}". Blob
+	// before record: upgradeRecord's undo of a racing delete depends on it.
 	metaKey := strings.TrimSuffix(path.Base(c.Sub), ".tar.gz")
 	c.Meta.Delete(h.ns(c), metaKey) //nolint:errcheck
 	if pkg, ver, ok := strings.Cut(metaKey, "_"); ok {
