@@ -56,14 +56,23 @@ type pkgRecord struct {
 	Version          string    `json:"version"`
 	Title            string    `json:"title,omitempty"`
 	Description      string    `json:"description,omitempty"`
+	Priority         string    `json:"priority,omitempty"`
 	Depends          string    `json:"depends,omitempty"`
 	Imports          string    `json:"imports,omitempty"`
+	LinkingTo        string    `json:"linkingTo,omitempty"`
+	Suggests         string    `json:"suggests,omitempty"`
+	Enhances         string    `json:"enhances,omitempty"`
 	License          string    `json:"license,omitempty"`
+	LicenseIsFOSS    string    `json:"licenseIsFOSS,omitempty"`
+	LicenseRestricts string    `json:"licenseRestrictsUse,omitempty"`
 	NeedsCompilation string    `json:"needsCompilation,omitempty"`
 	Built            string    `json:"built,omitempty"`
 	Archs            string    `json:"archs,omitempty"`
 	OStype           string    `json:"ostype,omitempty"`
 	UploadedAt       time.Time `json:"uploadedAt,omitempty"`
+	// Schema is recordSchema for a record parsed with every field above;
+	// older hosted records are re-read from their tarball (pkgRecords).
+	Schema int `json:"schema,omitempty"`
 	// Linux is the provenance of a Linux binary (linux.go); nil otherwise.
 	// Kept on the index record so trash, restore and delete carry it.
 	Linux *linuxProvenance `json:"linux,omitempty"`
@@ -273,10 +282,39 @@ func (h *Handler) pkgRecords(c *format.Context) []pkgRecord {
 	for _, k := range keys {
 		var rec pkgRecord
 		if ok, _ := c.Meta.GetJSON(h.ns(c), k, &rec); ok {
+			if rec.Schema < recordSchema {
+				rec = h.upgradeRecord(c, k, rec)
+			}
 			recs = append(recs, rec)
 		}
 	}
 	return recs
+}
+
+// upgradeRecord re-reads an older record's fields from its source tarball and
+// stores the result, once; what the record knows that DESCRIPTION does not
+// (publish time, Linux provenance) is kept. A record whose tarball cannot be
+// read is returned as it was.
+func (h *Handler) upgradeRecord(c *format.Context, key string, old pkgRecord) pkgRecord {
+	if c.Blob == nil { // metadata-only contexts (tests, meta-driven views)
+		return old
+	}
+	rc, err := c.Blob.Get(h.tarballKey(c, old.Package, old.Version))
+	if err != nil {
+		return old
+	}
+	defer rc.Close()
+	body, err := io.ReadAll(rc)
+	if err != nil {
+		return old
+	}
+	rec, err := parseDescription(body)
+	if err != nil || rec.Package != old.Package || rec.Version != old.Version {
+		return old
+	}
+	rec.UploadedAt, rec.Linux = old.UploadedAt, old.Linux
+	c.Meta.PutJSON(h.ns(c), key, rec) //nolint:errcheck
+	return rec
 }
 
 // groupPkgRecords merges package records from all members, deduplicating by
@@ -332,16 +370,7 @@ func parsePackagesFile(data []byte) []pkgRecord {
 	var curKey string
 	flush := func() {
 		if fields["Package"] != "" {
-			rec := pkgRecord{
-				Package:          fields["Package"],
-				Version:          fields["Version"],
-				Title:            fields["Title"],
-				Description:      fields["Description"],
-				Depends:          fields["Depends"],
-				Imports:          fields["Imports"],
-				License:          fields["License"],
-				NeedsCompilation: fields["NeedsCompilation"],
-			}
+			rec := recordFromFields(fields)
 			if pub := fields["Published"]; pub != "" {
 				// Format: "2026-04-22 09:10:03 UTC"
 				if t, err := time.Parse("2006-01-02 15:04:05 UTC", pub); err == nil {
@@ -379,32 +408,21 @@ func parsePackagesFile(data []byte) []pkgRecord {
 func buildPackages(recs []pkgRecord) []byte {
 	var b strings.Builder
 	for _, rec := range recs {
-		fmt.Fprintf(&b, "Package: %s\nVersion: %s\n", rec.Package, rec.Version)
-		if rec.Depends != "" {
-			fmt.Fprintf(&b, "Depends: %s\n", rec.Depends)
-		}
-		if rec.Imports != "" {
-			fmt.Fprintf(&b, "Imports: %s\n", rec.Imports)
-		}
-		if rec.License != "" {
-			fmt.Fprintf(&b, "License: %s\n", rec.License)
-		}
-		if rec.NeedsCompilation != "" {
-			fmt.Fprintf(&b, "NeedsCompilation: %s\n", rec.NeedsCompilation)
-		}
-		if rec.Built != "" {
-			fmt.Fprintf(&b, "Built: %s\n", rec.Built)
-		}
-		if rec.Archs != "" {
-			fmt.Fprintf(&b, "Archs: %s\n", rec.Archs)
-		}
-		if rec.OStype != "" {
-			fmt.Fprintf(&b, "OS_type: %s\n", rec.OStype)
+		for _, col := range indexColumns {
+			if v := pkgField(rec, col); v != "" {
+				fmt.Fprintf(&b, "%s: %s\n", col, v)
+			}
 		}
 		b.WriteString("\n")
 	}
 	return []byte(b.String())
 }
+
+// indexColumns are the fields forge's generated PACKAGES and PACKAGES.rds
+// carry, in R's order; both are written from this one list, so they cannot
+// disagree about what a client may install.
+var indexColumns = []string{"Package", "Version", "Priority", "Depends", "Imports", "LinkingTo", "Suggests",
+	"Enhances", "License", "License_is_FOSS", "License_restricts_use", "NeedsCompilation", "Built", "Archs", "OS_type"}
 
 // --- PACKAGES.rds: R XDR serialization ------------------------------------
 //
@@ -430,8 +448,7 @@ func buildPackages(recs []pkgRecord) []byte {
 //	    NILVALUE_SXP           end of pairlist
 
 func buildPackagesRDS(recs []pkgRecord) []byte {
-	cols := []string{"Package", "Version", "Depends", "Imports", "License", "NeedsCompilation", "Built", "Archs", "OS_type"}
-	return writeRDSMatrix(cols, len(recs), func(r, c int) string { return pkgField(recs[r], cols[c]) })
+	return writeRDSMatrix(indexColumns, len(recs), func(r, c int) string { return pkgField(recs[r], indexColumns[c]) })
 }
 
 // writeRDSMatrix serializes a character matrix with column names cols and
@@ -503,12 +520,24 @@ func pkgField(rec pkgRecord, col string) string {
 		return rec.Package
 	case "Version":
 		return rec.Version
+	case "Priority":
+		return rec.Priority
 	case "Depends":
 		return rec.Depends
 	case "Imports":
 		return rec.Imports
+	case "LinkingTo":
+		return rec.LinkingTo
+	case "Suggests":
+		return rec.Suggests
+	case "Enhances":
+		return rec.Enhances
 	case "License":
 		return rec.License
+	case "License_is_FOSS":
+		return rec.LicenseIsFOSS
+	case "License_restricts_use":
+		return rec.LicenseRestricts
 	case "NeedsCompilation":
 		return rec.NeedsCompilation
 	case "Built":
@@ -611,15 +640,28 @@ func recordFromFields(fields map[string]string) pkgRecord {
 		Version:          fields["Version"],
 		Title:            fields["Title"],
 		Description:      fields["Description"],
+		Priority:         fields["Priority"],
 		Depends:          fields["Depends"],
 		Imports:          fields["Imports"],
+		LinkingTo:        fields["LinkingTo"],
+		Suggests:         fields["Suggests"],
+		Enhances:         fields["Enhances"],
 		License:          fields["License"],
+		LicenseIsFOSS:    fields["License_is_FOSS"],
+		LicenseRestricts: fields["License_restricts_use"],
 		NeedsCompilation: fields["NeedsCompilation"],
 		Built:            fields["Built"],
 		Archs:            fields["Archs"],
 		OStype:           fields["OS_type"],
+		Schema:           recordSchema,
 	}
 }
+
+// recordSchema 1: the record carries R's standard repository fields
+// (tools:::.get_standard_repository_db_fields). Before it, LinkingTo was
+// dropped, and install.packages through forge's index never installed a
+// package's LinkingTo dependencies, so the compile failed.
+const recordSchema = 1
 
 // --- delete ----------------------------------------------------------------
 
