@@ -52,7 +52,16 @@ fi
 
 # config_digest IMAGE prints IMAGE's config digest (see above).
 config_digest() {
-	if ! docker info -f '{{json .DriverStatus}}' | grep -q io.containerd.snapshotter; then
+	# Captured, not piped into grep -q: under pipefail, grep exiting at its
+	# first match can fail docker with SIGPIPE, and that would read as
+	# "classic store" and print the wrong digest. Checked explicitly for the
+	# same reason: set -e does not reach inside the caller's $(…).
+	local status
+	status=$(docker info -f '{{json .DriverStatus}}') || {
+		echo "cran-linux-manifest: docker info failed, so the image store (and the digest) is unknown" >&2
+		return 1
+	}
+	if [[ $status != *io.containerd.snapshotter* ]]; then
 		docker image inspect -f '{{.Id}}' "$1"
 		return
 	fi
