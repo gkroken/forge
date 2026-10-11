@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -283,37 +284,122 @@ func linuxBinSub(p cranplatform.Platform, pkg, ver string) string {
 }
 
 // linuxBinaryRepos returns the repositories whose binaries this group may
-// serve: hosted members whose sourceRepo is this group. Membership keeps the
-// group's read rules (a group is never more public than a member); the
-// sourceRepo match means every binary was validated against exactly the
-// source this group serves. Only groups have members, and only hosted
-// repositories can name a sourceRepo, so anything but a group has none.
+// serve: hosted members whose sourceRepo is this group or another of its
+// members. Membership keeps the group's read rules (a group is never more
+// public than a member). Whether one binary is served is then decided per
+// package version (linuxSources.servable), because the sourceRepo is what
+// each binary was checked against, and a client must only get a binary built
+// from the source this group serves. Only groups have members, and only
+// hosted repositories can name a sourceRepo, so anything but a group has none.
 func linuxBinaryRepos(c *format.Context) []*format.Context {
 	var out []*format.Context
 	for _, name := range c.Repo.Members {
 		mc, ok := c.MemberCtx(name)
-		if ok && mc.Repo.SourceRepo == c.Repo.Name {
+		if ok && (mc.Repo.SourceRepo == c.Repo.Name || slices.Contains(c.Repo.Members, mc.Repo.SourceRepo)) {
 			out = append(out, mc)
 		}
 	}
 	return out
 }
 
+// linuxSources decides, for one request to group c, whether a binary
+// repository's binaries match the source the group serves.
+type linuxSources struct {
+	h     *Handler
+	c     *format.Context
+	repos []*format.Context
+	owns  map[string]bool // OwnsComponent, memoized per "{member}\x00{pkg}"
+}
+
+func (h *Handler) linuxSources(c *format.Context) *linuxSources {
+	return &linuxSources{h: h, c: c, repos: linuxBinaryRepos(c), owns: map[string]bool{}}
+}
+
+// servable reports whether bin's binary of pkg@ver may be served by the
+// group. A binary checked against the group itself was checked against what
+// the group served at upload. One checked against a member is served only
+// while the group answers pkg@ver's source from that member.
+func (ls *linuxSources) servable(bin *format.Context, pkg, ver string) bool {
+	return bin.Repo.SourceRepo == ls.c.Repo.Name || ls.servedFrom(bin.Repo.SourceRepo, pkg, ver)
+}
+
+// servedFrom reports whether the group answers pkg@ver's source from its
+// member src. It follows how the group serves a source tarball, and where it
+// cannot tell cheaply it answers false, so the client gets source (slow, but
+// never a binary of other source):
+//   - a hosted member shadows a proxy member for every name it holds (the
+//     dependency-confusion guard filters the proxy, and the index merge drops
+//     its entries), and a claim shadows a name nothing holds yet;
+//   - otherwise members answer in order: a hosted member before src answers
+//     first when it holds pkg@ver, and a proxy before src might, so it is
+//     assumed to.
+func (ls *linuxSources) servedFrom(src, pkg, ver string) bool {
+	var from *format.Context
+	for _, name := range ls.c.Repo.Members {
+		mc, ok := ls.c.MemberCtx(name)
+		if !ok {
+			continue
+		}
+		if name == src {
+			from = mc
+			break
+		}
+		if mc.Repo.Kind == repo.Proxy || ls.holds(mc, pkg, ver) {
+			return false
+		}
+	}
+	switch {
+	case from == nil: // not a member, or filtered out for this package
+		return false
+	case from.Repo.Kind == repo.Hosted:
+		return ls.holds(from, pkg, ver)
+	case from.Repo.Kind != repo.Proxy:
+		return false
+	case ls.c.NameClaimed != nil && ls.c.NameClaimed(pkg):
+		return false
+	}
+	for _, name := range ls.c.Repo.Members {
+		if mc, ok := ls.c.MemberCtx(name); ok && mc.Repo.Kind == repo.Hosted && ls.ownsName(mc, pkg) {
+			return false
+		}
+	}
+	return true
+}
+
+// holds reports whether hosted member mc publishes pkg@ver as source.
+func (ls *linuxSources) holds(mc *format.Context, pkg, ver string) bool {
+	if mc.Repo.Kind != repo.Hosted {
+		return false
+	}
+	ok, _ := mc.Meta.GetJSON(ls.h.ns(mc), pkg+"_"+ver, &pkgRecord{})
+	return ok
+}
+
+func (ls *linuxSources) ownsName(mc *format.Context, pkg string) bool {
+	k := mc.Repo.Name + "\x00" + pkg
+	owns, seen := ls.owns[k]
+	if !seen {
+		owns = ls.h.OwnsComponent(mc, pkg)
+		ls.owns[k] = owns
+	}
+	return owns
+}
+
 // resolveLinux is the decision: the member context (with Sub set) holding the
 // binary of pkg@ver for the platform this request is for, or nil to serve
 // source.
-func resolveLinux(c *format.Context, r *http.Request, distro, pkg, ver string) *format.Context {
+func (h *Handler) resolveLinux(c *format.Context, r *http.Request, distro, pkg, ver string) *format.Context {
 	p, ok := linuxPlatform(c, r, distro)
 	if !ok {
 		return nil
 	}
-	return linuxBinaryIn(linuxBinaryRepos(c), p, pkg, ver)
+	return h.linuxSources(c).binaryIn(p, pkg, ver)
 }
 
-func linuxBinaryIn(repos []*format.Context, p cranplatform.Platform, pkg, ver string) *format.Context {
+func (ls *linuxSources) binaryIn(p cranplatform.Platform, pkg, ver string) *format.Context {
 	sub := linuxBinSub(p, pkg, ver)
-	for _, mc := range repos {
-		if _, ok, _ := mc.Blob.Stat(mc.Key(sub)); ok {
+	for _, mc := range ls.repos {
+		if _, ok, _ := mc.Blob.Stat(mc.Key(sub)); ok && ls.servable(mc, pkg, ver) {
 			mc.Sub = sub
 			return mc
 		}
@@ -342,7 +428,7 @@ func (h *Handler) serveLinuxURL(w http.ResponseWriter, r *http.Request, c *forma
 		return
 	}
 	w.Header().Set("Vary", "User-Agent")
-	if mc := resolveLinux(c, r, distro, pkg, ver); mc != nil {
+	if mc := h.resolveLinux(c, r, distro, pkg, ver); mc != nil {
 		w.Header().Set("X-Forge-Package-Type", "binary")
 		h.downloadBin(w, r, mc)
 		return
@@ -413,13 +499,13 @@ func (h *Handler) servePakIndex(w http.ResponseWriter, r *http.Request, c *forma
 
 // pakBinaryRecords lists the source records of packages whose every indexed
 // version has a binary for p. Listing a repository's binaries only narrows the
-// candidates; each version is decided by linuxBinaryIn, as a download would be.
+// candidates; each version is decided by binaryIn, as a download would be.
 func (h *Handler) pakBinaryRecords(c *format.Context, p cranplatform.Platform) []pkgRecord {
-	repos := linuxBinaryRepos(c)
+	ls := h.linuxSources(c)
 	k, _ := cranplatform.ParseKey(p.Key)
 	prefix := "bin/linux/" + k.Distro + "-" + k.Arch + "/contrib/" + k.RMinor + "/"
 	candidates := map[string]bool{}
-	for _, mc := range repos {
+	for _, mc := range ls.repos {
 		keys, _ := mc.Blob.List(mc.Key(prefix))
 		for _, key := range keys {
 			if pkg, _, ok := cranBinaryParts(key); ok {
@@ -440,7 +526,7 @@ func (h *Handler) pakBinaryRecords(c *format.Context, p cranplatform.Platform) [
 	for _, recs := range byName {
 		all := true
 		for _, rec := range recs {
-			if linuxBinaryIn(repos, p, rec.Package, rec.Version) == nil {
+			if ls.binaryIn(p, rec.Package, rec.Version) == nil {
 				all = false
 				break
 			}
@@ -488,7 +574,8 @@ func (h *Handler) PPMStatus(m meta.Store) (distros, rVersions []string) {
 // the members it serves them from. meta is one of their index records, for a
 // package that has no source here.
 func (h *Handler) linuxBuilds(c *format.Context, baseURL, pkg string) (builds map[string][]format.BuildInfo, meta *pkgRecord) {
-	repos := linuxBinaryRepos(c)
+	ls := h.linuxSources(c)
+	repos := ls.repos
 	if c.Repo.Kind == repo.Hosted {
 		repos = append(repos, c)
 	}
@@ -500,7 +587,7 @@ func (h *Handler) linuxBuilds(c *format.Context, baseURL, pkg string) (builds ma
 		keys, _ := rc.Blob.List(rc.Repo.Name + "/bin/linux/")
 		for _, bk := range keys {
 			p, ver, ok := cranBinaryParts(bk)
-			if !ok || p != pkg {
+			if !ok || p != pkg || (c.Repo.Kind == repo.Group && !ls.servable(rc, pkg, ver)) {
 				continue
 			}
 			platform, rver, ok := cranBinaryLocation(rc, bk)

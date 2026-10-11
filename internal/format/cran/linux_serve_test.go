@@ -351,3 +351,141 @@ func TestLinuxServe_CaseInsensitiveStoreIsNotAKeyMatch(t *testing.T) {
 		t.Errorf("the registered distro lost its binary on a case-folding store")
 	}
 }
+
+// A binary repository may name a group MEMBER as its sourceRepo — the CRAN
+// proxy, so that every binary is checked against the public source and never
+// against a hosted package of the same name (forge-issues/005). The group
+// serves such a binary only while it answers that version's source from that
+// member; anything it cannot tell cheaply gets source.
+func TestLinuxServe_MemberSourceRepo(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/src/contrib/pub_1.0.tar.gz", "/src/contrib/shadow_1.0.tar.gz", "/src/contrib/named_2.0.tar.gz",
+			"/src/contrib/claimed_1.0.tar.gz":
+			w.Write([]byte("UPSTREAM SOURCE " + r.URL.Path)) //nolint:errcheck
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer upstream.Close()
+
+	build := func(t *testing.T, members []string, filter func(repo.Repository) bool) *serveGroup {
+		t.Helper()
+		dir := t.TempDir()
+		b, _ := blob.NewFS(filepath.Join(dir, "b"))
+		m, _ := meta.NewFS(filepath.Join(dir, "m"))
+		mgr := repo.NewManager()
+		for _, r := range []repo.Repository{
+			{Name: "cran-hosted", Format: "cran", Kind: repo.Hosted},
+			{Name: "cran-proxy", Format: "cran", Kind: repo.Proxy, Upstream: upstream.URL},
+			{Name: "cran-proxy2", Format: "cran", Kind: repo.Proxy, Upstream: upstream.URL},
+			{Name: "cran-pub", Format: "cran", Kind: repo.Hosted, NoOverwrite: true, SourceRepo: "cran-proxy"},
+			{Name: "cran-int", Format: "cran", Kind: repo.Hosted, NoOverwrite: true, SourceRepo: "cran-hosted"},
+			{Name: "cran-public", Format: "cran", Kind: repo.Group, Members: members},
+		} {
+			if err := mgr.Add(r); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := cranplatform.NewStore(m).Put(lbPlatform()); err != nil {
+			t.Fatal(err)
+		}
+		ctx := func(name string) *format.Context {
+			r, _ := mgr.Get(name)
+			return &format.Context{Repo: r, Blob: b, Meta: m, Repos: mgr, HTTP: upstream.Client(),
+				MemberFilter: filter, NameClaimed: func(n string) bool { return n == "claimed" }}
+		}
+		g := &serveGroup{group: ctx("cran-public"), src: ctx("cran-hosted"), bins: ctx("cran-pub"), other: ctx("cran-int"), srcB: map[string][]byte{}}
+		g.source(t, "shadow", "1.0") // a hosted package with a CRAN name and version
+		g.source(t, "named", "0.5")  // a hosted package with a CRAN name, another version
+		for _, pv := range [][2]string{{"pub", "1.0"}, {"shadow", "1.0"}, {"named", "2.0"}, {"claimed", "1.0"}} {
+			putBinary(t, g.bins, "noble-x86_64/4.6", pv[0], pv[1])
+		}
+		putBinary(t, g.other, "noble-x86_64/4.6", "shadow", "1.0")
+		putBinary(t, g.other, "noble-x86_64/4.6", "pub", "1.0")
+		return g
+	}
+	pkgType := func(g *serveGroup, file string) string {
+		return getUA(g.group, lx+file, uaRocker).Header().Get("X-Forge-Package-Type")
+	}
+	std := []string{"cran-hosted", "cran-proxy", "cran-pub", "cran-int"}
+
+	g := build(t, std, nil)
+	for file, want := range map[string]string{
+		"pub_1.0.tar.gz":     "binary", // public source, nothing shadows it
+		"shadow_1.0.tar.gz":  "binary", // the hosted package, from cran-int (sourceRepo cran-hosted)
+		"named_2.0.tar.gz":   "source", // hosted holds the name: the proxy is shadowed for every version
+		"claimed_1.0.tar.gz": "source", // claimed: the proxy never answers it
+	} {
+		if got := pkgType(g, file); got != want {
+			t.Errorf("%s: %s, want %s", file, got, want)
+		}
+	}
+	// shadow's binary comes from cran-int, never from cran-pub's public build.
+	if rw := getUA(g.group, lx+"shadow_1.0.tar.gz", uaRocker); !strings.Contains(rw.Body.String(), "shadow_1.0") ||
+		!bytes.Equal(rw.Body.Bytes(), []byte("BINARY noble-x86_64/4.6 shadow_1.0")) {
+		t.Errorf("shadow: %q", rw.Body.String())
+	}
+	if _, ok, _ := g.other.Blob.Stat(g.other.Key(linuxBinSub(lbPlatform(), "shadow", "1.0"))); !ok {
+		t.Fatal("fixture: cran-int has no shadow binary")
+	}
+
+	// The group's detail and pak's list follow the same decision.
+	if d, _ := New().Inspect(g.group, "http://f", "named"); len(d.Versions) > 0 {
+		for _, v := range d.Versions {
+			if len(v.Builds) != 0 {
+				t.Errorf("named %s lists builds the group never serves: %+v", v.Version, v.Builds)
+			}
+		}
+	}
+	idx := getUA(g.group, "latest/bin/linux/4.6-noble/contrib/4.6/PACKAGES", uaPak).Body.String()
+	if !strings.Contains(idx, "Package: shadow") || strings.Contains(idx, "Package: named") {
+		t.Errorf("pak index:\n%s", idx)
+	}
+
+	// Members answer in order: a proxy before cran-proxy might answer first.
+	g = build(t, []string{"cran-hosted", "cran-proxy2", "cran-proxy", "cran-pub"}, nil)
+	if got := pkgType(g, "pub_1.0.tar.gz"); got != "source" {
+		t.Errorf("another proxy first: %s, want source", got)
+	}
+	// A proxy after cran-proxy cannot answer first.
+	g = build(t, []string{"cran-hosted", "cran-proxy", "cran-proxy2", "cran-pub"}, nil)
+	if got := pkgType(g, "pub_1.0.tar.gz"); got != "binary" {
+		t.Errorf("another proxy after: %s, want binary", got)
+	}
+	// A proxy listed before the hosted source answers first when nothing
+	// filters it (the guard off): the group serves upstream's shadow 1.0, so
+	// the hosted build must not be served. With the guard filtering the proxy
+	// for that package, as the server does for a hosted-owned name, the hosted
+	// source answers and its build is served.
+	order := []string{"cran-proxy", "cran-pub", "cran-int", "cran-hosted"}
+	g = build(t, order, nil)
+	if got := pkgType(g, "shadow_1.0.tar.gz"); got != "source" {
+		t.Errorf("hosted source behind an unfiltered proxy: %s, want source", got)
+	}
+	g = build(t, order, func(r repo.Repository) bool { return r.Kind != repo.Proxy })
+	if got := pkgType(g, "shadow_1.0.tar.gz"); got != "binary" {
+		t.Errorf("hosted source, proxy filtered by the guard: %s, want binary", got)
+	}
+	// A binary repository listed first holds no source, so it answers nothing.
+	g = build(t, []string{"cran-int", "cran-hosted", "cran-proxy"}, nil)
+	if got := pkgType(g, "shadow_1.0.tar.gz"); got != "binary" {
+		t.Errorf("binary repo before its hosted source: %s, want binary", got)
+	}
+	// A hosted sourceRepo that does not hold the version is not its source:
+	// cran-int's pub build is never served (the proxy answers pub).
+	g = build(t, []string{"cran-hosted", "cran-proxy", "cran-int"}, nil)
+	if got := pkgType(g, "pub_1.0.tar.gz"); got != "source" {
+		t.Errorf("hosted sourceRepo without the version: %s, want source", got)
+	}
+	// The source member filtered out for this request (the guard) is not the answer.
+	g = build(t, std, func(r repo.Repository) bool { return r.Name != "cran-proxy" })
+	if got := pkgType(g, "pub_1.0.tar.gz"); got != "source" {
+		t.Errorf("source member filtered: %s, want source", got)
+	}
+	// A sourceRepo that is not a member serves nothing.
+	g = build(t, []string{"cran-hosted", "cran-pub", "cran-int"}, nil)
+	if got := pkgType(g, "pub_1.0.tar.gz"); got != "source" {
+		t.Errorf("sourceRepo not a member: %s, want source", got)
+	}
+}

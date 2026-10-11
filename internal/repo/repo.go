@@ -154,7 +154,8 @@ type Repository struct {
 	// SourceRepo names the repository whose source packages this HOSTED
 	// repository's binaries must match. CRAN uses it for the Linux binary
 	// repository: an uploaded binary is compared against the source tarball
-	// SourceRepo serves for that version (normally the public group), and
+	// SourceRepo serves for that version (normally the CRAN proxy, a member
+	// of the group that serves the binaries; see linuxSources), and
 	// with SourceRepo unset Linux binary uploads are refused, since there is
 	// nothing to check them against. Same format as this repository.
 	SourceRepo string `json:"sourceRepo,omitempty"`

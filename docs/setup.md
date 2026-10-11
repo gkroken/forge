@@ -279,7 +279,8 @@ platform). Background and measurements: `WORKPLAN-CRAN-LINUX.md`,
 `docs/notes/cran-linux-clients.md`.
 
 **1. Create the binary repository and add it to the group.** It must refuse
-overwrites (`noOverwrite`) and name the group whose source it builds from:
+overwrites (`noOverwrite`) and name the source it builds from, `sourceRepo`:
+the CRAN proxy member, so every binary is checked against CRAN's own source:
 
 ```yaml
 # config file (or POST /api/v1/repos with the same fields)
@@ -288,13 +289,22 @@ repositories:
     format: cran
     kind: hosted
     noOverwrite: true
-    sourceRepo: cran-public
+    sourceRepo: cran-proxy
     anonymousRead: true
   - name: cran-public
     format: cran
     kind: group
     members: [cran-hosted, cran-proxy, cran-linux]
 ```
+
+The group serves a binary only while it serves that version's source from
+the binary repository's `sourceRepo`. A package `cran-hosted` also publishes
+under a CRAN name (an internal fork) therefore gets source, never the public
+build. To serve binaries of your hosted packages too, add a second binary
+repository with `sourceRepo: cran-hosted` to the group. A `sourceRepo` that is
+the group itself also works, but then a binary is checked against whichever
+member answered at upload, and a hosted package can satisfy the check for a
+CRAN name.
 
 **2. Register the platform.** One registration per builder image, keyed
 `{distro}-{arch}/{rminor}`; it records the image digest uploads must report and
