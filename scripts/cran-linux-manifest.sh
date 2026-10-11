@@ -8,10 +8,20 @@
 #
 # or paste the object into the cranPlatforms section of the config file.
 #
+#   scripts/cran-linux-manifest.sh --digest IMAGE
+#
+# prints only builderDigest: what the upload helper must send as
+# X-Forge-Builder-Digest.
+#
 # Runs on a host with docker. The key, R platform, glibc version and library
-# manifest are read inside IMAGE; builderDigest is the image ID
-# (docker image inspect -f '{{.Id}}') — identical on every host for the same
-# image, and what the upload helper must send as X-Forge-Builder-Digest.
+# manifest are read inside IMAGE. builderDigest is the image's CONFIG digest —
+# the config.digest its registry manifest names, so the same on every host.
+# It is not always the image ID: `docker image inspect -f '{{.Id}}'` is the
+# config digest on Docker's classic image store but the manifest or index
+# digest on the containerd image store (the default from Docker Engine 29), so
+# a registration and an upload computed on the two kinds of host would never
+# match. On the containerd store the digest is read from `docker save`'s
+# manifest.json instead, which names the config on both stores.
 #
 # The manifest is every soname the dynamic loader can find in the image:
 # `ldconfig -p`, plus the directories R adds to LD_LIBRARY_PATH at startup
@@ -40,11 +50,35 @@ if [ "${1:-}" = "--inside" ]; then
 	exit 0
 fi
 
-image=${1:?usage: $0 IMAGE}
-digest=$(docker image inspect -f '{{.Id}}' "$image" 2>/dev/null) || {
-	docker pull -q "$image" >/dev/null
-	digest=$(docker image inspect -f '{{.Id}}' "$image")
+# config_digest IMAGE prints IMAGE's config digest (see above).
+config_digest() {
+	if ! docker info -f '{{json .DriverStatus}}' | grep -q io.containerd.snapshotter; then
+		docker image inspect -f '{{.Id}}' "$1"
+		return
+	fi
+	local manifest configs
+	manifest=$(docker save "$1" | tar -xO manifest.json) || {
+		echo "cran-linux-manifest: docker save $1 failed — is it present locally for this host's platform?" >&2
+		return 1
+	}
+	configs=$(printf '%s' "$manifest" | grep -oE '"Config":"(blobs/sha256/)?[0-9a-f]{64}(\.json)?"' |
+		grep -oE '[0-9a-f]{64}')
+	if [ "$(printf '%s\n' "$configs" | grep -c .)" != 1 ]; then
+		echo "cran-linux-manifest: docker save's manifest.json for $1 does not name exactly one config: $manifest" >&2
+		return 1
+	fi
+	echo "sha256:$configs"
 }
+
+digest_only=0
+if [ "${1:-}" = "--digest" ]; then digest_only=1; shift; fi
+image=${1:?usage: $0 [--digest] IMAGE}
+docker image inspect "$image" >/dev/null 2>&1 || docker pull -q "$image" >/dev/null
+digest=$(config_digest "$image")
+if [ "$digest_only" = 1 ]; then
+	echo "$digest"
+	exit 0
+fi
 # The script goes in as an argument, not on stdin: Rscript would swallow the
 # rest of a script that bash is still reading from stdin.
 docker run --rm --entrypoint bash "$image" -c "$(cat "$0")" manifest --inside "$image" "$digest"

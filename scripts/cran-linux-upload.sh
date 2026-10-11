@@ -8,12 +8,13 @@
 #   FORGE_URL=https://forge.example.com \
 #   FORGE_TOKEN=forge_…            # write grant on the binary repo (scope it
 #                                  # with selectors: bin/linux/noble-x86_64/**)
-#   FORGE_BUILDER_DIGEST=sha256:…  # the builder image ID, as registered
+#   FORGE_BUILDER_DIGEST=sha256:…  # the builder image's config digest, as registered
 #   scripts/cran-linux-upload.sh [--repo cran-linux] [--lib PATH] [--strict]
 #
-# The image ID is not visible from inside a container, so the pipeline passes
-# it in: `docker image inspect -f '{{.Id}}' IMAGE`, the same value
-# scripts/cran-linux-manifest.sh registered.
+# The image's digest is not visible from inside a container, so the pipeline
+# passes it in: `scripts/cran-linux-manifest.sh --digest IMAGE`, the same value
+# that script registered. Not `docker image inspect -f '{{.Id}}'`: on Docker's
+# containerd image store that is the manifest digest, which never matches.
 #
 # For every package in the library (default: the first of .libPaths(), which
 # is the project library under renv) that was not installed from GitHub, a
@@ -36,7 +37,7 @@ while [ $# -gt 0 ]; do
 	*) echo "usage: $0 [--repo NAME] [--lib PATH] [--strict]" >&2; exit 2 ;;
 	esac
 done
-: "${FORGE_URL:?FORGE_URL is required}" "${FORGE_TOKEN:?FORGE_TOKEN is required}" "${FORGE_BUILDER_DIGEST:?FORGE_BUILDER_DIGEST is required (the builder image ID)}"
+: "${FORGE_URL:?FORGE_URL is required}" "${FORGE_TOKEN:?FORGE_TOKEN is required}" "${FORGE_BUILDER_DIGEST:?FORGE_BUILDER_DIGEST is required (the builder image config digest)}"
 command -v curl >/dev/null || { echo "cran-linux-upload: curl is required" >&2; exit 2; }
 command -v Rscript >/dev/null || { echo "cran-linux-upload: Rscript is required" >&2; exit 2; }
 

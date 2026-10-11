@@ -327,8 +327,8 @@ curl -X POST -H "Authorization: Bearer $ADMIN" "$FORGE/api/v1/tokens" -d '{
 **4. Run the helper after your build installs packages.** It uploads every
 package the binary repository lacks for this platform (packages installed from
 GitHub or local paths are skipped). It needs `curl` in the image (rocker
-images lack it). The image ID is not visible inside the container, so pass it
-in:
+images lack it). The builder image's digest is not visible inside the
+container, so pass it in:
 
 ```dockerfile
 FROM ghcr.io/acme/r-base:4.6.1
@@ -349,9 +349,15 @@ correct but noisy.
 
 ```bash
 docker build --build-arg FORGE_URL=$FORGE \
-  --build-arg FORGE_BUILDER_DIGEST=$(docker image inspect -f '{{.Id}}' ghcr.io/acme/r-base:4.6.1) \
+  --build-arg FORGE_BUILDER_DIGEST=$(scripts/cran-linux-manifest.sh --digest ghcr.io/acme/r-base:4.6.1) \
   --secret id=forge_token,env=FORGE_TOKEN .
 ```
+
+The digest is the image's config digest (`config.digest` in its registry
+manifest), the same on every host. Do not use `docker image inspect -f
+'{{.Id}}'`: on Docker's containerd image store, the default from Engine 29, that
+is the manifest digest, and every upload would be refused 403 as built in
+another image.
 
 The first build of each package version compiles and uploads; every later one
 installs the binary. A failed upload only warns (pass `--strict` to fail).
