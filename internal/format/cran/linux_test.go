@@ -5,11 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"forge/internal/blob"
 	"forge/internal/cranplatform"
@@ -209,6 +212,46 @@ func TestLinuxUpload_RecordsProvenance(t *testing.T) {
 	New().Serve(rw, r, c2)
 	if rw.Code != http.StatusBadRequest {
 		t.Errorf("oversized %s: %d", LinkingToHeader, rw.Code)
+	}
+}
+
+// A body forge could not read is not a verdict on the binary: a builder
+// treats 400 as final, so a broken transfer must be told apart from a bad
+// binary (issue: forge-issues/007).
+func TestLinuxUpload_UnreadableBody(t *testing.T) {
+	digest := lbPlatform().BuilderDigest
+	bin := lbTarball(t, lbEntries(t))
+	for _, tc := range []struct {
+		name string
+		body func(w http.ResponseWriter) io.ReadCloser
+		code int
+	}{
+		{name: "reset mid-upload", code: http.StatusRequestTimeout, body: func(http.ResponseWriter) io.ReadCloser {
+			return io.NopCloser(io.MultiReader(bytes.NewReader(bin[:10]), iotest.ErrReader(errors.New("connection reset by peer"))))
+		}},
+		{name: "over the upload limit", code: http.StatusRequestEntityTooLarge, body: func(w http.ResponseWriter) io.ReadCloser {
+			return http.MaxBytesReader(w, io.NopCloser(bytes.NewReader(bin)), 10)
+		}},
+	} {
+		var reads int
+		c := linuxCtx(t, &reads)
+		var reported []string
+		c.Reject = func(status int, kind, detail string) { reported = append(reported, detail) }
+		c.Sub = lbPath
+		rw := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPut, "/", nil)
+		r.Body = tc.body(rw)
+		r.Header.Set(BuilderDigestHeader, digest)
+		New().Serve(rw, r, c)
+		if rw.Code != tc.code {
+			t.Errorf("%s: %d %q, want %d", tc.name, rw.Code, strings.TrimSpace(rw.Body.String()), tc.code)
+		}
+		if tc.code == http.StatusRequestTimeout && len(reported) != 0 {
+			t.Errorf("%s: a broken transfer was reported as a rejected build: %v", tc.name, reported)
+		}
+		if keys, _ := c.Blob.List(c.Repo.Name + "/"); len(keys) != 0 {
+			t.Errorf("%s: stored %v", tc.name, keys)
+		}
 	}
 }
 

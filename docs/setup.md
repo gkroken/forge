@@ -356,6 +356,13 @@ docker build --build-arg FORGE_URL=$FORGE \
 The first build of each package version compiles and uploads; every later one
 installs the binary. A failed upload only warns (pass `--strict` to fail).
 
+A builder of its own can read the upload's status: **201** stored; **409**
+someone uploaded that binary first (done); **400** the request or the binary
+itself is wrong, and sending it again will be refused again; **403** the key,
+repository or builder digest does not allow it, until an admin changes that;
+**413** larger than forge's upload limit (5 GiB); **408**, **502** and other **5xx** are
+transient (a broken transfer, or the source could not be fetched), so retry.
+
 **5. Point clients at the group's Linux URL:**
 
 ```r

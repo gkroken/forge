@@ -126,7 +126,15 @@ func (h *Handler) publishLinuxBin(w http.ResponseWriter, r *http.Request, c *for
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		refuseLinux(w, c, err.Error(), http.StatusBadRequest)
+		// Not the binary's fault, so never 400, which a builder must treat
+		// as final: an over-limit body is 413, anything else (a reset, a
+		// proxy timeout) is a broken transfer to retry.
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			refuseLinux(w, c, err.Error(), http.StatusRequestEntityTooLarge)
+			return
+		}
+		refuseLinux(w, c, "the upload body could not be read ("+err.Error()+"); retry", http.StatusRequestTimeout)
 		return
 	}
 	linkingTo := r.Header.Get(LinkingToHeader)
@@ -171,11 +179,11 @@ func (h *Handler) publishLinuxBin(w http.ResponseWriter, r *http.Request, c *for
 }
 
 // refuseLinux answers a refused Linux binary upload and, unless the refusal
-// is a lost race (409) or forge's own trouble (5xx), reports it through
-// c.Reject: a rejected build is something an operator needs to see, not only
-// the builder that sent it.
+// is a lost race (409), a broken transfer (408) or forge's own trouble (5xx),
+// reports it through c.Reject: a rejected build is something an operator
+// needs to see, not only the builder that sent it.
 func refuseLinux(w http.ResponseWriter, c *format.Context, msg string, status int) {
-	if c.Reject != nil && status != http.StatusConflict && status < 500 {
+	if c.Reject != nil && status != http.StatusConflict && status != http.StatusRequestTimeout && status < 500 {
 		c.Reject(status, "cran-linux-binary", msg)
 	}
 	http.Error(w, msg, status)
