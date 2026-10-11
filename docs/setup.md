@@ -274,8 +274,9 @@ tarballs; the index (`PACKAGES*`) is refreshed per `metadataMaxAge`.
 
 If the upstream does republish a version with other bytes (a resynced mirror,
 an internal CRAN-like repository), the proxy's index still gives the
-`MD5sum` of the file forge serves, and forge logs `cran proxy: upstream changed
-a published version`. To take upstream's new bytes, expire the cached file;
+`MD5sum` of the file forge serves, adds `UpstreamMD5sum` with the one upstream
+lists (so a client can still refuse such a version; R ignores the field), and
+forge logs `cran proxy: upstream changed a published version`. To take upstream's new bytes, expire the cached file;
 the next download fetches it again:
 
 ```bash

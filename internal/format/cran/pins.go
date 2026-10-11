@@ -31,8 +31,8 @@ import (
 // does) gets a mismatch it cannot explain. So the proxy's index always
 // describes the file forge serves: when an MD5sum disagrees with a pinned
 // tarball, PACKAGES, PACKAGES.gz and PACKAGES.rds are all derived from the
-// upstream PACKAGES with that file's MD5sum, and forge logs that upstream
-// changed a published version. Deleting the cached tarball takes upstream's
+// upstream PACKAGES with that file's MD5sum (and upstream's in
+// UpstreamMD5sum), and forge logs that upstream changed a published version. Deleting the cached tarball takes upstream's
 // new bytes on the next download.
 //
 // The pins are one document per proxy — {pkg}_{ver} → MD5 of the cached file
@@ -43,6 +43,10 @@ import (
 // ignored, and a re-fetch replaces it.
 
 const pinsKey = "src"
+
+// upstreamMD5Field is added to a corrected index entry, giving the MD5sum
+// upstream's index gives for that version.
+const upstreamMD5Field = "UpstreamMD5sum"
 
 type pinDoc struct {
 	MD5 map[string]string `json:"md5"` // "{pkg}_{ver}" → MD5 of the cached tarball
@@ -184,7 +188,10 @@ func (h *Handler) correctMD5s(c *format.Context, text []byte, pins pinDoc) ([]by
 			upstream := strings.TrimSpace(strings.TrimPrefix(stanza[md5Line], "MD5sum:"))
 			if upstream != pin {
 				if cur, ok := h.cachedMD5(c, "src/contrib/"+pv+".tar.gz", pin); ok && cur == pin {
-					stanza[md5Line] = "MD5sum: " + pin
+					// upstream's claim stays visible, so a client can still
+					// refuse a version whose first bytes upstream disowns;
+					// R and pak ignore fields they do not know.
+					stanza[md5Line] = "MD5sum: " + pin + "\n" + upstreamMD5Field + ": " + upstream
 					changed = true
 					if _, seen := warned.LoadOrStore(c.Repo.Name+"\x00"+pv+"\x00"+upstream, true); !seen {
 						slog.Warn("cran proxy: upstream changed a published version; serving the bytes cached first",

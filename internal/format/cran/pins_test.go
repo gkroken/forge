@@ -114,15 +114,15 @@ func TestProxyPins_IndexDescribesTheServedFile(t *testing.T) {
 	if md5Of(idx, "pinned") != md5hex(v1) {
 		t.Errorf("PACKAGES MD5sum %s, want the served file's %s:\n%s", md5Of(idx, "pinned"), md5hex(v1), idx)
 	}
-	if want := strings.Replace(up.index(), md5hex(v2), md5hex(v1), 1); idx != want {
+	if want := strings.Replace(up.index(), "MD5sum: "+md5hex(v2), "MD5sum: "+md5hex(v1)+"\nUpstreamMD5sum: "+md5hex(v2), 1); idx != want {
 		t.Errorf("PACKAGES changed beyond the one MD5sum:\n got %q\nwant %q", idx, want)
 	}
 	if gz := gunzip(t, get("src/contrib/PACKAGES.gz")); gz != idx {
 		t.Errorf("PACKAGES.gz differs from PACKAGES:\n%s", gz)
 	}
 	rds := gunzip(t, get("src/contrib/PACKAGES.rds"))
-	if !strings.Contains(rds, md5hex(v1)) || strings.Contains(rds, md5hex(v2)) || !strings.Contains(rds, "a,\nb") {
-		t.Errorf("PACKAGES.rds does not carry the served file's MD5sum (or lost a continuation line)")
+	if !strings.Contains(rds, md5hex(v1)) || !strings.Contains(rds, "UpstreamMD5sum") || !strings.Contains(rds, "a,\nb") {
+		t.Errorf("PACKAGES.rds does not carry the served file's MD5sum, upstream's, or lost a continuation line")
 	}
 
 	// A pin is only trusted while that file is cached: once it is gone (any
