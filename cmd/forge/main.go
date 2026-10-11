@@ -451,6 +451,9 @@ func main() {
 		}
 	}
 
+	// After seeding or the config file, so the warnings describe what serves.
+	mgr.LogSourceRepoWarnings()
+
 	// configPlanner re-reads the file on every call, so a ConfigMap update is
 	// reflected in drift without a restart.
 	var configPlanner func() (config.Result, error)
@@ -660,6 +663,7 @@ func main() {
 					"roles", res.Roles.Changes(),
 					"webhooks", res.Webhooks.Changes(),
 				)
+				mgr.LogSourceRepoWarnings()
 			})
 		}()
 	}

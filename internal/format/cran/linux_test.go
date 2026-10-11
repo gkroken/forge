@@ -88,6 +88,12 @@ func TestLinuxUpload_StoresValidatedBinary(t *testing.T) {
 	if _, ok := ledger.Load(c.Meta, c.Repo.Name)[ledger.Key("lb", "1.0.2")]; !ok {
 		t.Error("upload not recorded in the ledger")
 	}
+	// The group serves member-sourced binaries only while no hosted member
+	// owns the name (linuxSources.servedFrom); the binary repository is a
+	// hosted member, so its own uploads must never make it own one.
+	if New().OwnsComponent(c, "lb") {
+		t.Error("a Linux binary upload made the binary repository own the package name")
+	}
 
 	// A second upload of the key is a 409 — before any source is fetched.
 	before := reads

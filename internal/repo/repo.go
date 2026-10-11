@@ -12,6 +12,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -304,6 +306,84 @@ func (m *Manager) policyViolation(r Repository) string {
 		}
 	}
 	return ""
+}
+
+// SourceRepoWarning is a binary repository setup forge accepts but that
+// defeats its purpose. Repos names every repository it concerns.
+type SourceRepoWarning struct {
+	Repos []string
+	Msg   string
+}
+
+// SourceRepoWarnings reports every hosted repository with a sourceRepo (a
+// CRAN Linux binary repository) whose binaries no group can serve, or whose
+// check cannot tell a hosted package from the public one. Neither is refused:
+// a binary repository is created before it is added to its group, and a group
+// sourceRepo is what existing installs use. But both fail silently otherwise —
+// uploads are accepted and then never served, or a hosted package with a
+// public name and version passes the check for the public package.
+func (m *Manager) SourceRepoWarnings() []SourceRepoWarning {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	names := make([]string, 0, len(m.byName))
+	for name := range m.byName {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var out []SourceRepoWarning
+	for _, name := range names {
+		b := m.byName[name]
+		if b.Kind != Hosted || b.SourceRepo == "" {
+			continue
+		}
+		var groups []string
+		for _, gname := range names {
+			if g := m.byName[gname]; g.Kind == Group && slices.Contains(g.Members, name) {
+				groups = append(groups, gname)
+			}
+		}
+		if len(groups) == 0 {
+			out = append(out, SourceRepoWarning{Repos: []string{name}, Msg: fmt.Sprintf(
+				"%q has sourceRepo %q but no group lists it as a member, so no group serves its binaries",
+				name, b.SourceRepo)})
+		}
+		for _, gname := range groups {
+			if g := m.byName[gname]; b.SourceRepo != gname && !slices.Contains(g.Members, b.SourceRepo) {
+				out = append(out, SourceRepoWarning{Repos: []string{name, gname, b.SourceRepo}, Msg: fmt.Sprintf(
+					"group %q never serves %q's binaries: its sourceRepo %q is neither the group nor one of its members",
+					gname, name, b.SourceRepo)})
+			}
+		}
+		src, ok := m.byName[b.SourceRepo]
+		if !ok || src.Kind != Group {
+			continue
+		}
+		var hosted []string
+		for _, mn := range src.Members {
+			// Other binary repositories hold no source, so they answer nothing.
+			if r, ok := m.byName[mn]; ok && r.Kind == Hosted && r.SourceRepo == "" {
+				hosted = append(hosted, mn)
+			}
+		}
+		if len(hosted) > 0 {
+			out = append(out, SourceRepoWarning{Repos: append([]string{name, b.SourceRepo}, hosted...), Msg: fmt.Sprintf(
+				"%q checks binaries against group %q, which also answers from hosted %s: a hosted package "+
+					"with a public name and version passes the check for the public package. Name the proxy "+
+					"member as sourceRepo instead (docs/setup.md, Linux binary packages)",
+				name, b.SourceRepo, strings.Join(hosted, ", "))})
+		}
+	}
+	return out
+}
+
+// LogSourceRepoWarnings logs SourceRepoWarnings, only those concerning one of
+// names when any are given.
+func (m *Manager) LogSourceRepoWarnings(names ...string) {
+	for _, w := range m.SourceRepoWarnings() {
+		if len(names) == 0 || slices.ContainsFunc(names, func(n string) bool { return slices.Contains(w.Repos, n) }) {
+			slog.Warn("repository: " + w.Msg)
+		}
+	}
 }
 
 // closePublicGroupsOverPrivateMembers downgrades any loaded group that is

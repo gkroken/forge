@@ -421,6 +421,7 @@ func (s *Server) createRepo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
+	s.Repos.LogSourceRepoWarnings(newRepo.Name)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(newRepo)
@@ -471,6 +472,7 @@ func (s *Server) updateRepo(w http.ResponseWriter, r *http.Request, name string)
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
+	s.Repos.LogSourceRepoWarnings(updated.Name)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(updated)
 }
