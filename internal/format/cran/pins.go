@@ -41,6 +41,21 @@ import (
 // it is checked against the proxy's cache entry, so a tarball deleted by any
 // path (delete, retention, trash) needs no hook here: its stale pin is
 // ignored, and a re-fetch replaces it.
+//
+// Limits, measured or reasoned, not yet a problem at the scale this serves
+// (hundreds to low thousands of cached versions per proxy):
+//   - every proxy tarball download reads and decodes the whole pin document
+//     (~40 bytes per pinned version), and the first download of a version
+//     rewrites it, so filling a cold cache writes O(n²) bytes in total;
+//   - every proxy index request reads the cached upstream PACKAGES (CRAN's is
+//     ~7 MB) to scan it — 28 ms with 2000 pins and nothing to correct — and,
+//     when nothing needs correcting, the requested file is then streamed as a
+//     second read;
+//   - only PACKAGES is scanned, so a PACKAGES.gz or .rds from a different
+//     upstream snapshot passes through as it is.
+// For a proxy caching most of CRAN, shard the pin document (by first letter,
+// say) and remember per cached PACKAGES (by its cache entry) whether it needs
+// correcting, instead of scanning it per request.
 
 const pinsKey = "src"
 
