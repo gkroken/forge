@@ -61,13 +61,13 @@ type linuxProvenance struct {
 // serveLinuxBinary handles every request under bin/linux/.
 func (h *Handler) serveLinuxBinary(w http.ResponseWriter, r *http.Request, c *format.Context, platform, rver, file string) {
 	switch {
-	case r.Method == http.MethodGet && (file == "PACKAGES" || file == "PACKAGES.gz" || file == "PACKAGES.rds"):
+	case isRead(r) && (file == "PACKAGES" || file == "PACKAGES.gz" || file == "PACKAGES.rds"):
 		h.serveBinIndex(w, c, platform, rver, file)
 	case !strings.HasSuffix(file, ".tar.gz"):
 		http.Error(w, "Linux binary packages are {package}_{version}.tar.gz", http.StatusNotFound)
 	case r.Method == http.MethodPut:
 		h.publishLinuxBin(w, r, c, platform, rver, file)
-	case r.Method == http.MethodGet || r.Method == http.MethodHead:
+	case isRead(r):
 		h.downloadBin(w, r, c)
 	case r.Method == http.MethodDelete:
 		h.deleteBin(w, c, platform, rver, file)

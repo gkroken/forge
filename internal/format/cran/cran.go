@@ -34,6 +34,7 @@ import (
 	"net/http"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -103,14 +104,14 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 		return
 	}
 	switch {
-	case r.Method == http.MethodGet && c.Sub == "src/contrib/PACKAGES":
+	case isRead(r) && c.Sub == "src/contrib/PACKAGES":
 		if c.Repo.Kind == repo.Proxy {
 			h.serveProxyIndex(w, c)
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain")
 		w.Write(h.packages(c))
-	case r.Method == http.MethodGet && c.Sub == "src/contrib/PACKAGES.gz":
+	case isRead(r) && c.Sub == "src/contrib/PACKAGES.gz":
 		if c.Repo.Kind == repo.Proxy {
 			h.serveProxyIndex(w, c)
 			return
@@ -119,7 +120,7 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 		gz := gzip.NewWriter(w)
 		gz.Write(h.packages(c))
 		gz.Close()
-	case r.Method == http.MethodGet && c.Sub == "src/contrib/PACKAGES.rds":
+	case isRead(r) && c.Sub == "src/contrib/PACKAGES.rds":
 		if c.Repo.Kind == repo.Proxy {
 			h.serveProxyIndex(w, c)
 			return
@@ -128,20 +129,25 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 		w.Write(buildPackagesRDS(h.allPkgRecords(c)))
 	case r.Method == http.MethodPut && strings.HasPrefix(c.Sub, "src/contrib/") && strings.HasSuffix(c.Sub, ".tar.gz"):
 		h.publish(w, r, c)
-	case r.Method == http.MethodGet && strings.HasSuffix(c.Sub, ".tar.gz"):
+	case isRead(r) && strings.HasSuffix(c.Sub, ".tar.gz"):
 		h.download(w, r, c)
 	case r.Method == http.MethodDelete && strings.HasPrefix(c.Sub, "src/contrib/") && strings.HasSuffix(c.Sub, ".tar.gz"):
 		h.deletePkg(w, c)
 	case strings.HasPrefix(c.Sub, "bin/"):
 		h.serveBinary(w, r, c)
 	default:
-		if c.Repo.Kind == repo.Proxy && r.Method == http.MethodGet {
+		if c.Repo.Kind == repo.Proxy && isRead(r) {
 			h.proxy(w, c)
 			return
 		}
 		http.Error(w, "unsupported cran request", http.StatusNotFound)
 	}
 }
+
+// isRead reports a GET or a HEAD. Every read route answers both: a HEAD gets
+// what the GET would, without the body (forge-issues/009 — a HEAD fell
+// through the GET-only routes to 404 for files a GET served).
+func isRead(r *http.Request) bool { return r.Method == http.MethodGet || r.Method == http.MethodHead }
 
 // nameVersionFromFilename splits CRAN's "{Package}_{Version}.tar.gz".
 func nameVersionFromFilename(sub string) (pkg, version string, ok bool) {
@@ -215,8 +221,20 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, c *format.Con
 		return
 	}
 	defer rc.Close()
-	w.Header().Set("Content-Type", "application/gzip")
-	io.Copy(w, rc)
+	serveStored(w, r, c, rc, "application/gzip")
+}
+
+// serveStored answers a read of a stored file: its type and length, and the
+// bytes unless the request is a HEAD.
+func serveStored(w http.ResponseWriter, r *http.Request, c *format.Context, rc io.Reader, contentType string) {
+	w.Header().Set("Content-Type", contentType)
+	if info, ok, _ := c.Blob.Stat(c.Key(c.Sub)); ok {
+		w.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
+	}
+	if r.Method == http.MethodHead {
+		return
+	}
+	io.Copy(w, rc) //nolint:errcheck
 }
 
 // isCRANIndexPath reports whether a sub-path is one of CRAN's index files
@@ -760,7 +778,7 @@ func (h *Handler) forgetIfGone(c *format.Context, pkg, ver string) {
 // serveBinary dispatches requests under /bin/.
 func (h *Handler) serveBinary(w http.ResponseWriter, r *http.Request, c *format.Context) {
 	// Platform enumeration: GET bin/{platform}/contrib/ — no rver or file segment.
-	if r.Method == http.MethodGet {
+	if isRead(r) {
 		if rest, ok := strings.CutPrefix(c.Sub, "bin/"); ok {
 			if idx := strings.Index(rest, "/contrib/"); idx >= 0 && rest[idx+len("/contrib/"):] == "" {
 				h.servePlatformVersions(w, c, rest[:idx])
@@ -781,11 +799,11 @@ func (h *Handler) serveBinary(w http.ResponseWriter, r *http.Request, c *format.
 		return
 	}
 	switch {
-	case r.Method == http.MethodGet && (file == "PACKAGES" || file == "PACKAGES.gz" || file == "PACKAGES.rds"):
+	case isRead(r) && (file == "PACKAGES" || file == "PACKAGES.gz" || file == "PACKAGES.rds"):
 		h.serveBinIndex(w, c, platform, rver, file)
 	case r.Method == http.MethodPut && (strings.HasSuffix(file, ".zip") || strings.HasSuffix(file, ".tgz")):
 		h.publishBin(w, r, c, platform, rver, file)
-	case r.Method == http.MethodGet && (strings.HasSuffix(file, ".zip") || strings.HasSuffix(file, ".tgz")):
+	case isRead(r) && (strings.HasSuffix(file, ".zip") || strings.HasSuffix(file, ".tgz")):
 		h.downloadBin(w, r, c)
 	case r.Method == http.MethodDelete && (strings.HasSuffix(file, ".zip") || strings.HasSuffix(file, ".tgz")):
 		h.deleteBin(w, c, platform, rver, file)
@@ -871,12 +889,11 @@ func (h *Handler) downloadBin(w http.ResponseWriter, r *http.Request, c *format.
 		return
 	}
 	defer rc.Close()
+	ct := "application/gzip"
 	if strings.HasSuffix(c.Sub, ".zip") {
-		w.Header().Set("Content-Type", "application/zip")
-	} else {
-		w.Header().Set("Content-Type", "application/gzip")
+		ct = "application/zip"
 	}
-	io.Copy(w, rc)
+	serveStored(w, r, c, rc, ct)
 }
 
 // groupDownloadBin fans out a binary download across group members, trying
