@@ -179,10 +179,12 @@ To keep the cluster but stop it costing anything while you do not need it:
 `docker stop forge-control-plane` (and `docker start forge-control-plane`
 later; the API server takes a minute to come back).
 
-A cluster created without `deploy/kind/cluster.yaml` keeps etcd fsyncing to
-disk. On WSL2 that can restart-loop the control plane with nothing deployed —
-`docker exec forge-control-plane crictl ps -a` shows kube-scheduler with
-attempt counts in the hundreds. Recreate it with the config.
+A cluster created without the current `deploy/kind/cluster.yaml` keeps etcd
+fsyncing to disk and kube-scheduler and kube-controller-manager electing a
+leader. On WSL2, or on any busy host, that can restart-loop the control
+plane — `docker exec forge-control-plane crictl ps -a` shows kube-scheduler
+with climbing attempt counts. Recreate it with the config; the settings are
+kubeadm flags, so they only take effect when the cluster is created.
 
 ---
 

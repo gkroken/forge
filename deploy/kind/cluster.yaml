@@ -15,6 +15,15 @@
 # WSL VM, so `wsl --shutdown` or a Windows reboot counts, not only a crash.
 # The worst case is recreating the cluster, which is acceptable for a
 # throwaway dev cluster. Never use this setting outside one.
+#
+# kube-scheduler and kube-controller-manager run without leader election.
+# Fsync was not the only way to miss a renewal: on a busy host (load ~8)
+# the API server and etcd still stall past the 10 s renew deadline now and
+# then, and a component that loses its lease exits by design, adding the
+# load of its own restart (010 relapsed: 26-28 restarts in four hours).
+# With one replica of each there is nothing to elect, so there is no lease
+# to lose; a slow API server just makes them slow. Production clusters run
+# several replicas and need leader election; this is for kind only.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
@@ -26,3 +35,9 @@ nodes:
           local:
             extraArgs:
               unsafe-no-fsync: "true"
+        scheduler:
+          extraArgs:
+            leader-elect: "false"
+        controllerManager:
+          extraArgs:
+            leader-elect: "false"
