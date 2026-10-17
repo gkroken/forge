@@ -10,9 +10,11 @@
 # and the API server restart in a loop, keeping the host busy even with
 # nothing deployed (forge-issues/010: ~1,500 scheduler restarts, 300-400
 # slow fdatasyncs an hour). Without fsync etcd's data still survives a
-# restart of the node container; only a crash of the host itself can lose
-# its last writes, which is acceptable for a throwaway dev cluster. Never
-# use this setting outside one.
+# restart of the node container; what can lose its last writes is the
+# machine holding them in its page cache going away — on WSL2 that is the
+# WSL VM, so `wsl --shutdown` or a Windows reboot counts, not only a crash.
+# The worst case is recreating the cluster, which is acceptable for a
+# throwaway dev cluster. Never use this setting outside one.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
