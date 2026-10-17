@@ -7,9 +7,11 @@ package format
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -631,4 +633,25 @@ func (reg *Registry) For(format string) (Handler, bool) {
 // the binary URL — without it renv restores always install from source.
 type PPMStatusProvider interface {
 	PPMStatus(m meta.Store) (distros, rVersions []string)
+}
+
+// ServeBlob answers a read (GET or HEAD) of the stored file at key: its type
+// and length, and the bytes unless r is a HEAD. It reports false, having
+// written nothing, when there is no such file. Every format's download path
+// uses it, so a HEAD is answered like the GET it stands for everywhere
+// (forge-issues/009).
+func ServeBlob(w http.ResponseWriter, r *http.Request, s blob.Store, key, contentType string) bool {
+	rc, err := s.Get(key)
+	if err != nil {
+		return false
+	}
+	defer rc.Close() //nolint:errcheck
+	w.Header().Set("Content-Type", contentType)
+	if info, ok, _ := s.Stat(key); ok {
+		w.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
+	}
+	if r.Method != http.MethodHead {
+		io.Copy(w, rc) //nolint:errcheck
+	}
+	return true
 }

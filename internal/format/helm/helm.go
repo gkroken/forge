@@ -67,18 +67,19 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 	if !format.MutationAllowed(w, r, c) {
 		return
 	}
+	read := r.Method == http.MethodGet || r.Method == http.MethodHead
 	switch {
-	case r.Method == http.MethodGet && c.Sub == "index.yaml":
+	case read && c.Sub == "index.yaml":
 		h.index(w, c)
-	case r.Method == http.MethodGet && c.Sub == "api/charts":
+	case read && c.Sub == "api/charts":
 		h.listAll(w, c)
-	case r.Method == http.MethodGet && strings.HasPrefix(c.Sub, "api/charts/"):
+	case read && strings.HasPrefix(c.Sub, "api/charts/"):
 		h.listOne(w, c, strings.TrimPrefix(c.Sub, "api/charts/"))
 	case r.Method == http.MethodPost && c.Sub == "api/charts":
 		h.upload(w, r, c)
 	case r.Method == http.MethodDelete && strings.HasPrefix(c.Sub, "api/charts/"):
 		h.delete(w, c, strings.TrimPrefix(c.Sub, "api/charts/"))
-	case r.Method == http.MethodGet && strings.HasSuffix(c.Sub, ".tgz"):
+	case read && strings.HasSuffix(c.Sub, ".tgz"):
 		h.download(w, r, c)
 	default:
 		http.Error(w, "unsupported helm request", http.StatusNotFound)
@@ -147,14 +148,9 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, c *format.Con
 		h.proxyChart(w, r, c)
 		return
 	}
-	rc, err := c.Blob.Get(c.Key(path.Base(c.Sub)))
-	if err != nil {
+	if !format.ServeBlob(w, r, c.Blob, c.Key(path.Base(c.Sub)), "application/gzip") {
 		http.NotFound(w, nil)
-		return
 	}
-	defer rc.Close()
-	w.Header().Set("Content-Type", "application/gzip")
-	io.Copy(w, rc)
 }
 
 // proxyChart serves a chart from upstream through the caching fetcher.

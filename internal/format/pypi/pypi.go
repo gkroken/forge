@@ -116,19 +116,20 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 		return
 	}
 
+	read := r.Method == http.MethodGet || r.Method == http.MethodHead
 	switch {
 	case r.Method == http.MethodPost && (c.Sub == "" || c.Sub == "/"):
 		h.upload(w, r, c)
 
-	case r.Method == http.MethodGet && (c.Sub == "simple" || c.Sub == "simple/"):
+	case read && (c.Sub == "simple" || c.Sub == "simple/"):
 		h.simpleIndex(w, c)
 
-	case r.Method == http.MethodGet && strings.HasPrefix(c.Sub, "simple/"):
+	case read && strings.HasPrefix(c.Sub, "simple/"):
 		project := Normalize(strings.Trim(strings.TrimPrefix(c.Sub, "simple/"), "/"))
 		h.simpleProject(w, r, c, project)
 
-	case r.Method == http.MethodGet && strings.HasPrefix(c.Sub, "packages/"):
-		h.download(w, c)
+	case read && strings.HasPrefix(c.Sub, "packages/"):
+		h.download(w, r, c)
 
 	case r.Method == http.MethodDelete && strings.HasPrefix(c.Sub, "packages/"):
 		h.deleteFile(w, c)
@@ -321,15 +322,10 @@ func (h *Handler) simpleProject(w http.ResponseWriter, r *http.Request, c *forma
 
 // --- download / delete ------------------------------------------------------
 
-func (h *Handler) download(w http.ResponseWriter, c *format.Context) {
-	rc, err := c.Blob.Get(c.Key(c.Sub))
-	if err != nil {
+func (h *Handler) download(w http.ResponseWriter, r *http.Request, c *format.Context) {
+	if !format.ServeBlob(w, r, c.Blob, c.Key(c.Sub), "application/octet-stream") {
 		http.NotFound(w, nil)
-		return
 	}
-	defer rc.Close() //nolint:errcheck
-	w.Header().Set("Content-Type", "application/octet-stream")
-	io.Copy(w, rc) //nolint:errcheck
 }
 
 func (h *Handler) deleteFile(w http.ResponseWriter, c *format.Context) {

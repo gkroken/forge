@@ -83,7 +83,7 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 	// Tarball path: {pkg}/-/{filename}
 	if strings.Contains(sub, "/-/") {
 		switch r.Method {
-		case http.MethodGet:
+		case http.MethodGet, http.MethodHead:
 			h.tarball(w, r, c, sub)
 		case http.MethodDelete:
 			h.deleteTarball(w, c, sub)
@@ -95,7 +95,7 @@ func (h *Handler) Serve(w http.ResponseWriter, r *http.Request, c *format.Contex
 
 	// Package-level operations.
 	switch r.Method {
-	case http.MethodGet:
+	case http.MethodGet, http.MethodHead:
 		h.packument(w, r, c, sub)
 	case http.MethodPut:
 		h.publish(w, r, c, sub)
@@ -119,11 +119,11 @@ func (h *Handler) serveAPI(w http.ResponseWriter, r *http.Request, c *format.Con
 	case strings.HasPrefix(sub, "-/npm/v1/security/audits") && r.Method == http.MethodPost:
 		h.audit(w)
 
-	case sub == "-/ping" && r.Method == http.MethodGet:
+	case sub == "-/ping" && (r.Method == http.MethodGet || r.Method == http.MethodHead):
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, "{}\n")
 
-	case sub == "-/whoami" && r.Method == http.MethodGet:
+	case sub == "-/whoami" && (r.Method == http.MethodGet || r.Method == http.MethodHead):
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"username": "anonymous"})
 
@@ -362,7 +362,7 @@ func (h *Handler) distTags(w http.ResponseWriter, r *http.Request, c *format.Con
 	// pointing "latest" at a version of your choosing, for every client
 	// installing through it. Publish, unpublish and delete are all refused on
 	// a non-hosted repository; this write path was not.
-	if r.Method != http.MethodGet && c.Repo.Kind != repo.Hosted {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && c.Repo.Kind != repo.Hosted {
 		http.Error(w, "cannot change dist-tags on a non-hosted repository", http.StatusMethodNotAllowed)
 		return
 	}
@@ -378,7 +378,7 @@ func (h *Handler) distTags(w http.ResponseWriter, r *http.Request, c *format.Con
 
 	w.Header().Set("Content-Type", "application/json")
 	switch r.Method {
-	case http.MethodGet:
+	case http.MethodGet, http.MethodHead:
 		if tag == "" {
 			json.NewEncoder(w).Encode(distTags)
 		} else {
@@ -749,14 +749,9 @@ func (h *Handler) tarball(w http.ResponseWriter, r *http.Request, c *format.Cont
 	key := c.Key(sub)
 	// Hosted: serve directly from blob store.
 	if c.Repo.Kind != repo.Proxy {
-		rc, err := c.Blob.Get(key)
-		if err != nil {
+		if !format.ServeBlob(w, r, c.Blob, key, "application/octet-stream") {
 			http.NotFound(w, nil)
-			return
 		}
-		defer rc.Close()
-		w.Header().Set("Content-Type", "application/octet-stream")
-		io.Copy(w, rc)
 		return
 	}
 	// Proxy: use the shared Fetcher (TTL, ETag, stale-on-error, retries, auth).

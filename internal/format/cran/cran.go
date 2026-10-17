@@ -34,7 +34,6 @@ import (
 	"net/http"
 	"path"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -210,31 +209,15 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, c *format.Con
 		// Pinned once served (pins.go), so the index can describe it.
 		defer h.pinTarball(c, c.Sub)
 	}
-	rc, err := c.Blob.Get(c.Key(c.Sub))
-	if err != nil {
-		// Proxy repos fetch from upstream on a cache miss.
-		if c.Repo.Kind == repo.Proxy {
-			h.proxy(w, c)
-			return
-		}
-		http.NotFound(w, nil)
+	if format.ServeBlob(w, r, c.Blob, c.Key(c.Sub), "application/gzip") {
 		return
 	}
-	defer rc.Close()
-	serveStored(w, r, c, rc, "application/gzip")
-}
-
-// serveStored answers a read of a stored file: its type and length, and the
-// bytes unless the request is a HEAD.
-func serveStored(w http.ResponseWriter, r *http.Request, c *format.Context, rc io.Reader, contentType string) {
-	w.Header().Set("Content-Type", contentType)
-	if info, ok, _ := c.Blob.Stat(c.Key(c.Sub)); ok {
-		w.Header().Set("Content-Length", strconv.FormatInt(info.Size, 10))
-	}
-	if r.Method == http.MethodHead {
+	// Proxy repos fetch from upstream on a cache miss.
+	if c.Repo.Kind == repo.Proxy {
+		h.proxy(w, c)
 		return
 	}
-	io.Copy(w, rc) //nolint:errcheck
+	http.NotFound(w, nil)
 }
 
 // isCRANIndexPath reports whether a sub-path is one of CRAN's index files
@@ -879,21 +862,18 @@ func (h *Handler) downloadBin(w http.ResponseWriter, r *http.Request, c *format.
 		}
 		return
 	}
-	rc, err := c.Blob.Get(c.Key(c.Sub))
-	if err != nil {
-		if c.Repo.Kind == repo.Proxy {
-			h.proxy(w, c)
-			return
-		}
-		http.NotFound(w, nil)
-		return
-	}
-	defer rc.Close()
 	ct := "application/gzip"
 	if strings.HasSuffix(c.Sub, ".zip") {
 		ct = "application/zip"
 	}
-	serveStored(w, r, c, rc, ct)
+	if format.ServeBlob(w, r, c.Blob, c.Key(c.Sub), ct) {
+		return
+	}
+	if c.Repo.Kind == repo.Proxy {
+		h.proxy(w, c)
+		return
+	}
+	http.NotFound(w, nil)
 }
 
 // groupDownloadBin fans out a binary download across group members, trying

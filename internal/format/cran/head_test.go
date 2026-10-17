@@ -52,6 +52,7 @@ func TestHead_AnswersWhatGetWould(t *testing.T) {
 		{"hosted Windows binary", g.src, "bin/windows/contrib/4.4/winpkg_1.0.0.zip", "", true},
 		{"hosted Windows PACKAGES", g.src, "bin/windows/contrib/4.4/PACKAGES", "", false},
 		{"binary platform list", g.src, "bin/windows/contrib/", "", false},
+		{"Linux binary tree PACKAGES", g.bins, "bin/linux/noble-x86_64/contrib/4.6/PACKAGES", "", false},
 	} {
 		get := serveMethod(tc.c, http.MethodGet, tc.sub, tc.ua)
 		head := serveMethod(tc.c, http.MethodHead, tc.sub, tc.ua)
