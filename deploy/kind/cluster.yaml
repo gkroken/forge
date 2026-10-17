@@ -1,0 +1,26 @@
+# kind cluster for local forge development: docs/setup.md, "Local Kubernetes
+# development (kind)".
+#
+#   kind create cluster --name forge --config deploy/kind/cluster.yaml
+#
+# etcd runs with --unsafe-no-fsync. On a slow or contended disk — Docker on
+# WSL2 keeps kind's /var on a virtual disk — every etcd write waits for an
+# fsync that can take seconds; the API server then misses the control
+# plane's 5 s lease renewals, and kube-scheduler, kube-controller-manager
+# and the API server restart in a loop, keeping the host busy even with
+# nothing deployed (forge-issues/010: ~1,500 scheduler restarts, 300-400
+# slow fdatasyncs an hour). Without fsync etcd's data still survives a
+# restart of the node container; only a crash of the host itself can lose
+# its last writes, which is acceptable for a throwaway dev cluster. Never
+# use this setting outside one.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: ClusterConfiguration
+        etcd:
+          local:
+            extraArgs:
+              unsafe-no-fsync: "true"

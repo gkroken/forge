@@ -95,8 +95,9 @@ enabled so that `docker` and `kind` share the same daemon.
 ### First-time cluster setup
 
 ```bash
-# Create a single-node cluster
-kind create cluster --name forge
+# Create a single-node cluster (the config keeps etcd off the slow fsync path
+# of WSL2's virtual disk; see the comment in the file)
+kind create cluster --name forge --config deploy/kind/cluster.yaml
 
 # Build the image and load it into the cluster
 docker build -t forge:local .
@@ -173,6 +174,15 @@ go build -o forge ./cmd/forge && bash test.sh
 pkill -f "kubectl port-forward"
 kind delete cluster --name forge
 ```
+
+To keep the cluster but stop it costing anything while you do not need it:
+`docker stop forge-control-plane` (and `docker start forge-control-plane`
+later; the API server takes a minute to come back).
+
+A cluster created without `deploy/kind/cluster.yaml` keeps etcd fsyncing to
+disk. On WSL2 that can restart-loop the control plane with nothing deployed —
+`docker exec forge-control-plane crictl ps -a` shows kube-scheduler with
+attempt counts in the hundreds. Recreate it with the config.
 
 ---
 
